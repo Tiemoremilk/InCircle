@@ -364,6 +364,129 @@ function safeFilePart(value, fallback) {
     .slice(0, 80) || fallback || "file";
 }
 
+function normalizeQrEnvVersion(value) {
+  const envVersion = String(value || "release").trim();
+  return ["develop", "trial", "release"].includes(envVersion) ? envVersion : "release";
+}
+
+function managedUploadRelativePath(value) {
+  const normalized = String(value || "")
+    .replace(/\\/g, "/")
+    .replace(/^\/+/, "");
+  if (!normalized || normalized.split("/").includes("..")) return "";
+  return normalized;
+}
+
+function qrCodeAbsolutePath(config, relativePath) {
+  const normalized = managedUploadRelativePath(relativePath);
+  if (!/^qrcodes\/[a-zA-Z0-9_-]+\.(?:png|jpg)$/.test(normalized)) return "";
+  const uploadRoot = path.resolve(config.uploadDir);
+  const absolutePath = path.resolve(uploadRoot, ...normalized.split("/"));
+  if (!absolutePath.startsWith(`${uploadRoot}${path.sep}`)) return "";
+  return absolutePath;
+}
+
+function qrImageExtension(buffer) {
+  if (!Buffer.isBuffer(buffer)) return "";
+  if (
+    buffer.length >= 8
+    && buffer[0] === 0x89
+    && buffer[1] === 0x50
+    && buffer[2] === 0x4e
+    && buffer[3] === 0x47
+    && buffer[4] === 0x0d
+    && buffer[5] === 0x0a
+    && buffer[6] === 0x1a
+    && buffer[7] === 0x0a
+  ) return "png";
+  if (buffer.length >= 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) return "jpg";
+  return "";
+}
+
+function usableQrCodeFile(config, relativePath) {
+  const absolutePath = qrCodeAbsolutePath(config, relativePath);
+  if (!absolutePath) return false;
+  try {
+    const stat = fs.statSync(absolutePath);
+    if (!stat.isFile() || stat.size < 100) return false;
+    const handle = fs.openSync(absolutePath, "r");
+    const header = Buffer.alloc(8);
+    try {
+      fs.readSync(handle, header, 0, header.length, 0);
+    } finally {
+      fs.closeSync(handle);
+    }
+    return absolutePath.endsWith(`.${qrImageExtension(header)}`);
+  } catch (error) {
+    return false;
+  }
+}
+
+function writeQrCodeFile(config, relativePath, buffer) {
+  const absolutePath = qrCodeAbsolutePath(config, relativePath);
+  if (!absolutePath) throw new AppError("二维码存储路径无效", { statusCode: 500, errCode: "QRCODE_PATH_INVALID" });
+  if (!Buffer.isBuffer(buffer) || buffer.length < 100 || !absolutePath.endsWith(`.${qrImageExtension(buffer)}`)) {
+    throw new AppError("微信返回的二维码图片无效", { statusCode: 502, errCode: "WECHAT_MINI_CODE_INVALID" });
+  }
+  fs.mkdirSync(path.dirname(absolutePath), { recursive: true });
+  const temporaryPath = `${absolutePath}.${crypto.randomUUID()}.tmp`;
+  try {
+    fs.writeFileSync(temporaryPath, buffer, { flag: "wx" });
+    try {
+      fs.renameSync(temporaryPath, absolutePath);
+    } catch (error) {
+      if (!["EEXIST", "EPERM"].includes(error.code)) throw error;
+      fs.rmSync(absolutePath, { force: true });
+      fs.renameSync(temporaryPath, absolutePath);
+    }
+  } finally {
+    if (fs.existsSync(temporaryPath)) fs.rmSync(temporaryPath, { force: true });
+  }
+}
+
+function cleanupOtherCircleQrFiles(config, circleId, keepRelativePath) {
+  const folder = path.join(config.uploadDir, "qrcodes");
+  const prefix = `${safeFilePart(circleId, "circle")}-`;
+  const keepPath = qrCodeAbsolutePath(config, keepRelativePath);
+  const failed = [];
+  try {
+    if (!fs.existsSync(folder)) return { failed };
+    fs.readdirSync(folder).forEach((filename) => {
+      if (!filename.startsWith(prefix)) return;
+      const absolutePath = path.resolve(folder, filename);
+      if (keepPath && absolutePath === keepPath) return;
+      try {
+        if (fs.statSync(absolutePath).isFile()) fs.rmSync(absolutePath, { force: true });
+      } catch (error) {
+        failed.push({ path: absolutePath, error: error.message });
+      }
+    });
+  } catch (error) {
+    failed.push({ path: folder, error: error.message });
+  }
+  return { failed };
+}
+
+function publicInviteQrCode(config, request, circle, row, reused) {
+  const relativePath = managedUploadRelativePath(row.relative_path);
+  const imageUrl = publicUrl(config, path.posix.join("uploads", relativePath), request);
+  const page = row.page || "pages/circle-join/index";
+  const joinCode = row.join_code || circle.join_code || "";
+  return {
+    joinCode,
+    page,
+    path: `/${page}?code=${joinCode}`,
+    fileID: "",
+    imageUrl,
+    url: imageUrl,
+    scene: joinCode,
+    envVersion: row.env_version || "release",
+    kind: "wechat-miniprogram-code",
+    reused: !!reused,
+    createdAt: row.created_at,
+  };
+}
+
 function uploadPathFromUrl(config, value) {
   const raw = String(value || "").split("?")[0];
   if (!raw || raw === "/images/avatar.png") return "";
@@ -1557,6 +1680,7 @@ class InCircleService {
     this.config = app.config;
     this.request = options && options.request;
     this.identityCache = new Map();
+    this.createMiniProgramCode = app.createMiniProgramCode || createMiniProgramCode;
   }
 
   enforceAuthRateLimit(action, identity, account) {
@@ -2725,7 +2849,10 @@ class InCircleService {
     const circleId = String(body.circleId || "");
     const settings = await this.circleSettings(Object.assign({}, body, { circleId }));
     if (!settings.canDissolve) throw new AppError("只有圈主可以解散圈子", { statusCode: 403, errCode: "FORBIDDEN" });
-    return this.db.withTransaction(async () => {
+    const mediaPaths = await this.collectCircleUploadPaths([circleId]);
+    const result = await this.db.withTransaction(async () => {
+      const locked = await this.db.query("SELECT id FROM incircle_circles WHERE id = $1 FOR UPDATE", [circleId]);
+      if (!locked.rows[0]) throw new AppError("圈子不存在", { statusCode: 404, errCode: "CIRCLE_NOT_FOUND" });
       await this.logOperation(circleId, auth, "解散圈子", "circle", circleId, {
         circleName: settings.circle && settings.circle.name,
       });
@@ -2741,6 +2868,13 @@ class InCircleService {
         deletedCircleId: circleId,
       });
     });
+    const cleanup = bestEffortCleanupManagedUploads(this.config, { relativePaths: mediaPaths, circleIds: [circleId] });
+    if (cleanup.failed.length) {
+      await this.logOperation(null, auth, "圈子媒体清理待处理", "circle", circleId, {
+        failedCount: cleanup.failed.length,
+      }).catch(() => {});
+    }
+    return Object.assign({}, result, { mediaCleanupFailedCount: cleanup.failed.length });
   }
 
   async requireCircleContext(body, options) {
@@ -5692,11 +5826,16 @@ class InCircleService {
     const tables = [
       "incircle_activities", "incircle_bills", "incircle_votes", "incircle_checkins", "incircle_docs", "incircle_decision_makers",
     ];
-    const resultSets = await Promise.all(
-      tables.map((table) => this.db.query(`SELECT payload FROM ${table} WHERE circle_id = ANY($1::uuid[])`, [circleIds]))
-    );
+    const [resultSets, qrCodes] = await Promise.all([
+      Promise.all(tables.map((table) => this.db.query(`SELECT payload FROM ${table} WHERE circle_id = ANY($1::uuid[])`, [circleIds]))),
+      this.db.query("SELECT relative_path FROM incircle_circle_qr_codes WHERE circle_id = ANY($1::uuid[])", [circleIds]),
+    ]);
     const paths = new Set();
     resultSets.forEach((result) => result.rows.forEach((row) => collectUploadRelativePaths(row.payload, paths)));
+    qrCodes.rows.forEach((row) => {
+      const relativePath = managedUploadRelativePath(row.relative_path);
+      if (relativePath) paths.add(relativePath);
+    });
     return Array.from(paths);
   }
 
@@ -6048,32 +6187,57 @@ class InCircleService {
 
   async inviteQrCode(body) {
     const settings = await this.circleSettings(body);
+    const circleId = String(settings.circle && settings.circle.id || "");
     const page = "pages/circle-join/index";
-    const pathValue = `/${page}?code=${settings.inviteCode}`;
-    const scene = settings.inviteCode;
-    const envVersion = String(body.envVersion || this.config.wechatQrEnvVersion || "release");
-    const folder = path.join(this.config.uploadDir, "qrcodes");
-    fs.mkdirSync(folder, { recursive: true });
-    const miniCode = await createMiniProgramCode(this.config, {
-      scene,
-      page,
-      envVersion,
+    const envVersion = normalizeQrEnvVersion(this.config.wechatQrEnvVersion);
+    const generated = await this.db.withTransaction(async () => {
+      const circleResult = await this.db.query(
+        "SELECT id, join_code FROM incircle_circles WHERE id = $1 FOR UPDATE",
+        [circleId]
+      );
+      const circle = circleResult.rows[0];
+      if (!circle) throw new AppError("圈子不存在", { statusCode: 404, errCode: "CIRCLE_NOT_FOUND" });
+
+      const existingResult = await this.db.query(
+        "SELECT * FROM incircle_circle_qr_codes WHERE circle_id = $1 LIMIT 1",
+        [circleId]
+      );
+      const existing = existingResult.rows[0];
+      const reusable = existing
+        && existing.join_code === circle.join_code
+        && existing.page === page
+        && existing.env_version === envVersion
+        && usableQrCodeFile(this.config, existing.relative_path);
+      if (reusable) return { circle, row: existing, reused: true };
+
+      const miniCode = await this.createMiniProgramCode(this.config, {
+        scene: circle.join_code,
+        page,
+        envVersion,
+      });
+      const extension = miniCode.extension === "jpg" ? "jpg" : "png";
+      const filename = `${safeFilePart(circle.id, "circle")}-invite-wxacode.${extension}`;
+      const relativePath = path.posix.join("qrcodes", filename);
+      writeQrCodeFile(this.config, relativePath, miniCode.buffer);
+      const stored = await this.db.query(
+        `
+        INSERT INTO incircle_circle_qr_codes (
+          circle_id, join_code, page, env_version, relative_path
+        ) VALUES ($1, $2, $3, $4, $5)
+        ON CONFLICT (circle_id) DO UPDATE SET
+          join_code = EXCLUDED.join_code,
+          page = EXCLUDED.page,
+          env_version = EXCLUDED.env_version,
+          relative_path = EXCLUDED.relative_path,
+          updated_at = now()
+        RETURNING *
+        `,
+        [circle.id, circle.join_code, page, miniCode.envVersion || envVersion, relativePath]
+      );
+      return { circle, row: stored.rows[0], reused: false };
     });
-    const filename = `${safeFilePart(settings.circle && settings.circle.id, "circle")}-${settings.inviteCode}-wxacode.${miniCode.extension}`;
-    const absolutePath = path.join(folder, filename);
-    fs.writeFileSync(absolutePath, miniCode.buffer);
-    const imageUrl = `${publicUrl(this.config, path.join("uploads", "qrcodes", filename))}?v=${Date.now()}`;
-    return {
-      joinCode: settings.inviteCode,
-      page,
-      path: pathValue,
-      fileID: "",
-      imageUrl,
-      url: imageUrl,
-      scene,
-      envVersion: miniCode.envVersion || envVersion,
-      kind: "wechat-miniprogram-code",
-    };
+    cleanupOtherCircleQrFiles(this.config, circleId, generated.row.relative_path);
+    return publicInviteQrCode(this.config, this.request, generated.circle, generated.row, generated.reused);
   }
 }
 
@@ -6085,5 +6249,7 @@ module.exports = {
     memberCardFromRow,
     normalizeCheckinMedia,
     scoreLeaderboard,
+    cleanupManagedUploads,
+    usableQrCodeFile,
   },
 };
