@@ -1,0 +1,269 @@
+.ai-fab-shell {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 16;
+  width: 88rpx;
+  height: 88rpx;
+  border-radius: 50%;
+  opacity: 1;
+  transition: none;
+  will-change: transform, opacity;
+}
+
+.ai-fab-shell.motion-ready {
+  transition: transform 320ms cubic-bezier(0.22, 0.82, 0.28, 1);
+}
+
+.ai-fab-shell.motion-ready.snapping {
+  transition-duration: 440ms;
+  transition-timing-function: cubic-bezier(0.2, 1.24, 0.34, 1);
+}
+
+.ai-fab-shell.reduce-motion,
+.ai-fab-shell.reduce-motion.motion-ready {
+  transition: none;
+}
+
+.ai-fab-pulse {
+  position: absolute;
+  inset: -3rpx;
+  border: 2rpx solid var(--theme-primary, #2f7d50);
+  border-radius: 50%;
+  opacity: 0.18;
+  transform: scale(1);
+  transition: opacity 180ms ease, transform 220ms ease;
+}
+
+.ai-fab-glow {
+  position: absolute;
+  inset: 4rpx;
+  border-radius: 50%;
+  background: var(--theme-primary, #2f7d50);
+  box-shadow: 0 12rpx 28rpx var(--theme-hero-shadow, rgba(47, 125, 80, 0.24));
+  opacity: 0.24;
+  transform: scale(1.1);
+  transition: opacity 180ms ease, transform 220ms ease;
+}
+
+.ai-fab-face {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border: 2rpx solid rgba(255, 255, 255, 0.62);
+  border-radius: 50%;
+  background: linear-gradient(145deg, var(--theme-primary, #2f7d50), var(--theme-primary-dark, #1c5638));
+  color: #ffffff;
+  box-shadow: 0 10rpx 24rpx var(--theme-hero-shadow, rgba(47, 125, 80, 0.24)), inset 0 2rpx 0 rgba(255, 255, 255, 0.28);
+  transform: scale(1);
+  transition: transform 180ms ease;
+}
+
+.ai-fab-shine {
+  position: absolute;
+  top: 7rpx;
+  left: 18rpx;
+  width: 34rpx;
+  height: 12rpx;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.16);
+  transform: rotate(-18deg);
+  pointer-events: none;
+}
+
+.ai-fab-label {
+  color: #ffffff;
+  font-size: 28rpx;
+  line-height: 1;
+  font-weight: 800;
+  letter-spacing: 0;
+  text-shadow: 0 2rpx 5rpx rgba(0, 0, 0, 0.14);
+}
+
+.ai-spark {
+  position: absolute;
+  width: 7rpx;
+  height: 7rpx;
+  border-radius: 50%;
+  background: #ffffff;
+  opacity: 0.9;
+}
+
+.ai-spark-one {
+  top: 19rpx;
+  right: 20rpx;
+}
+
+.ai-spark-two {
+  left: 20rpx;
+  bottom: 20rpx;
+  width: 4rpx;
+  height: 4rpx;
+  opacity: 0.66;
+}
+
+.ai-bubble-cluster {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 180ms ease;
+}
+
+.ai-bubble {
+  position: absolute;
+  border: 2rpx solid rgba(255, 255, 255, 0.72);
+  border-radius: 50%;
+  background: var(--theme-primary, #2f7d50);
+  box-shadow: 0 5rpx 12rpx var(--theme-hero-shadow, rgba(47, 125, 80, 0.24));
+  opacity: 0;
+}
+
+.ai-bubble-one {
+  top: 9rpx;
+  width: 17rpx;
+  height: 17rpx;
+}
+
+.ai-bubble-two {
+  top: 35rpx;
+  width: 11rpx;
+  height: 11rpx;
+}
+
+.ai-bubble-three {
+  bottom: 7rpx;
+  width: 8rpx;
+  height: 8rpx;
+}
+
+.ai-fab-shell.docked .ai-bubble-cluster {
+  opacity: 1;
+}
+
+.ai-fab-shell.docked {
+  animation: ai-fab-docked-presence 3.4s ease-in-out infinite;
+}
+
+.ai-fab-shell.docked-right .ai-bubble-one {
+  left: -11rpx;
+  animation: ai-bubble-float-left 3.4s ease-in-out 120ms infinite;
+}
+
+.ai-fab-shell.docked-right .ai-bubble-two {
+  left: -17rpx;
+  animation: ai-bubble-float-left 3.4s ease-in-out 520ms infinite;
+}
+
+.ai-fab-shell.docked-right .ai-bubble-three {
+  left: -7rpx;
+  animation: ai-bubble-float-left 3.4s ease-in-out 880ms infinite;
+}
+
+.ai-fab-shell.docked-left .ai-bubble-one {
+  right: -11rpx;
+  animation: ai-bubble-float-right 3.4s ease-in-out 120ms infinite;
+}
+
+.ai-fab-shell.docked-left .ai-bubble-two {
+  right: -17rpx;
+  animation: ai-bubble-float-right 3.4s ease-in-out 520ms infinite;
+}
+
+.ai-fab-shell.docked-left .ai-bubble-three {
+  right: -7rpx;
+  animation: ai-bubble-float-right 3.4s ease-in-out 880ms infinite;
+}
+
+.ai-fab-shell.docked .ai-fab-pulse {
+  animation: ai-fab-halo 3.4s ease-in-out infinite;
+}
+
+.ai-fab-shell.docked .ai-fab-glow {
+  opacity: 0.2;
+  transform: scale(1.06);
+}
+
+.ai-fab-shell.docked .ai-fab-face {
+  animation: ai-fab-breathe 3.4s ease-in-out infinite;
+}
+
+.ai-fab-shell.docked .ai-spark-one {
+  animation: ai-fab-sparkle 3.4s ease-in-out 320ms infinite;
+}
+
+.ai-fab-shell.pressed .ai-bubble-cluster {
+  opacity: 0;
+}
+
+.ai-fab-shell.pressed {
+  animation: none;
+  opacity: 1;
+}
+
+.ai-fab-shell.pressed .ai-fab-face {
+  animation: none;
+  transform: scale(0.92);
+  box-shadow: 0 6rpx 16rpx var(--theme-hero-shadow, rgba(47, 125, 80, 0.24)), inset 0 2rpx 0 rgba(255, 255, 255, 0.24);
+}
+
+.ai-fab-shell.reduce-motion .ai-fab-pulse,
+.ai-fab-shell.reduce-motion .ai-fab-glow,
+.ai-fab-shell.reduce-motion .ai-fab-face,
+.ai-fab-shell.reduce-motion .ai-bubble,
+.ai-fab-shell.reduce-motion .ai-spark {
+  animation: none;
+  transition: none;
+}
+
+.ai-fab-shell.reduce-motion.docked {
+  animation: none;
+  opacity: 0.72;
+}
+
+.ai-fab-shell.reduce-motion.docked .ai-bubble {
+  opacity: 0.56;
+}
+
+@keyframes ai-fab-halo {
+  0%, 100% {
+    opacity: 0.12;
+    transform: scale(0.98);
+  }
+  50% {
+    opacity: 0.3;
+    transform: scale(1.12);
+  }
+}
+
+@keyframes ai-fab-docked-presence {
+  0%, 100% {
+    opacity: 0.56;
+  }
+  45%, 55% {
+    opacity: 1;
+  }
+}
+
+@keyframes ai-fab-breathe {
+  0%, 100% { transform: translateY(0) scale(1); }
+  50% { transform: translateY(-1rpx) scale(0.985); }
+}
+
+@keyframes ai-fab-sparkle {
+  0%, 100% { opacity: 0.38; transform: scale(0.72); }
+  50% { opacity: 1; transform: scale(1.18); }
+}
+
+@keyframes ai-bubble-float-left {
+  0%, 100% { opacity: 0.24; transform: translate3d(4rpx, 2rpx, 0) scale(0.72); }
+  50% { opacity: 0.82; transform: translate3d(-3rpx, -2rpx, 0) scale(1); }
+}
+
+@keyframes ai-bubble-float-right {
+  0%, 100% { opacity: 0.24; transform: translate3d(-4rpx, 2rpx, 0) scale(0.72); }
+  50% { opacity: 0.82; transform: translate3d(3rpx, -2rpx, 0) scale(1); }
+}

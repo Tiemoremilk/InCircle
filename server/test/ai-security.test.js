@@ -1,0 +1,1627 @@
+const assert = require("node:assert/strict");
+const crypto = require("node:crypto");
+const dns = require("node:dns").promises;
+const { EventEmitter } = require("node:events");
+const fs = require("node:fs");
+const https = require("node:https");
+const path = require("node:path");
+const { Readable } = require("node:stream");
+const test = require("node:test");
+
+const {
+  decryptCredential,
+  encryptCredential,
+  maskedCredential,
+} = require("../src/services/ai/credentials");
+const { blockedIp, parseHttpsUrl, requestOnce } = require("../src/services/ai/network");
+const {
+  completionRequest,
+  consumeEventStream,
+  jsonDelta,
+  listProviderPresets,
+  normalizeProviderStreamError,
+  providerModelMetadata,
+  providerFinishReason,
+  reasoningCapability,
+  resolveReasoningMode,
+  streamProviderCompletion,
+} = require("../src/services/ai/providers");
+const { validEncryptionKey } = require("../src/config");
+const { aiAccessFlags, AiService, publicModel, publicProvider, registerActiveGeneration } = require("../src/services/ai");
+const { exchangeWechatLoginCode } = require("../src/services/wechat");
+const { AppError } = require("../src/errors");
+const { streamFrame, watchClientDisconnect } = require("../src/routes/ai");
+
+async function withPublicDns(callback) {
+  const originalLookup = dns.lookup;
+  dns.lookup = async () => [{ address: "8.8.8.8", family: 4 }];
+  try {
+    return await callback();
+  } finally {
+    dns.lookup = originalLookup;
+  }
+}
+
+function providerRow(overrides) {
+  return Object.assign({
+    id: "11111111-1111-4111-8111-111111111111",
+    circle_id: "22222222-2222-4222-8222-222222222222",
+    protocol: "openai",
+    preset_key: "openai",
+    name: "OpenAI",
+    base_url: "https://api.openai.com/v1",
+    credential_ciphertext: "encrypted",
+    credential_last_four: "1234",
+    privacy_url: "https://openai.com/policies/privacy-policy/",
+    privacy_version: 1,
+    api_version: "",
+    azure_deployment: "",
+    enabled: true,
+    archived: false,
+    is_custom: false,
+    last_test_status: "success",
+    last_test_error_code: "",
+  }, overrides || {});
+}
+
+test("AI credentials use authenticated encryption and never expose plaintext", () => {
+  const config = { aiCredentialsEncryptionKey: crypto.randomBytes(32).toString("hex") };
+  const secret = "test-credential-value-1234";
+  const first = encryptCredential(config, secret);
+  const second = encryptCredential(config, secret);
+  assert.notEqual(first, second);
+  assert.equal(first.includes(secret), false);
+  assert.equal(decryptCredential(config, first), secret);
+  assert.equal(maskedCredential("1234"), "••••••••1234");
+});
+
+test("tampered AI credential ciphertext is rejected", () => {
+  const config = { aiCredentialsEncryptionKey: crypto.randomBytes(32).toString("base64") };
+  const encrypted = encryptCredential(config, "secret-value");
+  const last = encrypted.slice(-1) === "A" ? "B" : "A";
+  assert.throws(() => decryptCredential(config, `${encrypted.slice(0, -1)}${last}`), /无法解密/);
+});
+
+test("AI encryption key accepts only exactly 32 bytes", () => {
+  assert.equal(validEncryptionKey(crypto.randomBytes(32).toString("hex")), true);
+  assert.equal(validEncryptionKey(crypto.randomBytes(32).toString("base64")), true);
+  assert.equal(validEncryptionKey("short"), false);
+});
+
+test("provider URL validation blocks local and credential-bearing targets", () => {
+  assert.throws(() => parseHttpsUrl("http://api.example.com/v1"), /HTTPS/);
+  assert.throws(() => parseHttpsUrl("https://127.0.0.1/v1"), /本机或内网/);
+  assert.throws(() => parseHttpsUrl("https://169.254.169.254/latest/meta-data"), /本机或内网/);
+  assert.throws(() => parseHttpsUrl("https://[::1]/v1"), /本机或内网/);
+  assert.throws(() => parseHttpsUrl("https://[::ffff:7f00:1]/v1"), /本机或内网/);
+  assert.throws(() => parseHttpsUrl("https://user:pass@example.com/v1"), /账号或密码/);
+  assert.equal(parseHttpsUrl("https://api.example.com/v1").hostname, "api.example.com");
+});
+
+test("private and link-local IP ranges are blocked", () => {
+  ["10.0.0.1", "172.16.0.1", "192.168.1.1", "127.0.0.1", "100.64.0.1", "::1", "::ffff:7f00:1", "fd00::1", "fe80::1", "ff02::1"].forEach(
+    (address) => assert.equal(blockedIp(address), true, address)
+  );
+  assert.equal(blockedIp("8.8.8.8"), false);
+  assert.equal(blockedIp("2606:4700:4700::1111"), false);
+});
+
+test("custom provider preset is visible only to super admins", () => {
+  assert.equal(listProviderPresets(false).some((item) => item.key === "custom"), false);
+  assert.equal(listProviderPresets(true).some((item) => item.key === "custom"), true);
+});
+
+test("AI configuration permission allows circle and platform super admins", () => {
+  const owner = aiAccessFlags(
+    { owner_user_id: "user-owner", membership_id: "member-1", membership_status: "active", membership_role: "圈主" },
+    "user-owner",
+    false
+  );
+  const circleSuperAdmin = aiAccessFlags(
+    { owner_user_id: "user-owner", membership_id: "member-2", membership_status: "active", membership_role: "超管" },
+    "user-circle-super",
+    false
+  );
+  const legacyAdmin = aiAccessFlags(
+    { owner_user_id: "user-owner", membership_id: "member-3", membership_status: "active", membership_role: "管理员" },
+    "user-legacy-admin",
+    false
+  );
+  const member = aiAccessFlags(
+    { owner_user_id: "user-owner", membership_id: "member-4", membership_status: "active", membership_role: "成员" },
+    "user-member",
+    false
+  );
+  const platformSuperAdmin = aiAccessFlags(
+    { owner_user_id: "user-owner", membership_id: null, membership_status: null, membership_role: null },
+    "user-super",
+    true
+  );
+  assert.equal(owner.canManage, true);
+  assert.equal(circleSuperAdmin.isMember, true);
+  assert.equal(circleSuperAdmin.canManage, true);
+  assert.equal(legacyAdmin.canManage, true);
+  assert.equal(member.canManage, false);
+  assert.equal(platformSuperAdmin.canManage, true);
+});
+
+test("circle AI can stay enabled before a provider or default model is configured", async () => {
+  const service = new AiService({ db: {}, config: {} }, {});
+  service.accessContext = async () => ({
+    circleId: "circle-1",
+    circle: { name: "测试圈", status: "active" },
+    auth: { user: { id: "user-1" } },
+    isMember: true,
+    isSuperAdmin: false,
+    canManage: true,
+  });
+  service.readSettings = async () => ({
+    enabled: true,
+    assistant_name: "圈内 AI",
+    quick_prompts: [],
+    member_daily_limit: 20,
+    circle_daily_limit: 200,
+    max_output_tokens: 2048,
+  });
+  service.enabledModels = async () => [];
+  service.usageCounts = async () => ({ circleUsed: 0, memberUsed: 0 });
+  const status = await service.status({ circleId: "circle-1" });
+  assert.equal(status.enabled, true);
+  assert.equal(status.configured, false);
+  assert.equal(status.canChat, false);
+});
+
+test("enabling circle AI does not require a default model", async () => {
+  const queries = [];
+  const db = {
+    async query(text, params) {
+      queries.push({ text, params });
+      return { rows: [] };
+    },
+  };
+  const service = new AiService({ db, config: {} }, {});
+  service.requireManager = async () => ({
+    circleId: "circle-1",
+    auth: { user: { id: "user-1" } },
+  });
+  service.ensureSettings = async () => ({
+    enabled: false,
+    assistant_name: "圈内 AI",
+    system_prompt: "保持准确",
+    quick_prompts: [],
+    member_daily_limit: 20,
+    circle_daily_limit: 200,
+    max_output_tokens: 2048,
+    default_model_id: null,
+  });
+  service.settings = async () => ({ enabled: true, configured: false, canChat: false });
+  service.core.logOperation = async () => {};
+  const result = await service.updateSettings({ circleId: "circle-1", patch: { enabled: true } });
+  assert.equal(result.enabled, true);
+  assert.equal(result.configured, false);
+  assert.equal(queries.length, 1);
+  assert.equal(queries[0].params[1], true);
+  assert.equal(queries[0].params[8], "");
+});
+
+test("built-in AI providers cannot be added twice to the same circle", async () => {
+  await withPublicDns(async () => {
+    const db = {
+      async query(text) {
+        if (String(text).includes("FROM incircle_ai_providers")) {
+          return { rows: [{ id: "11111111-1111-4111-8111-111111111111" }] };
+        }
+        throw new Error("unexpected write");
+      },
+    };
+    const service = new AiService({ db, config: {} }, {});
+    service.requireManager = async () => ({
+      circleId: "22222222-2222-4222-8222-222222222222",
+      isSuperAdmin: false,
+      auth: { user: { id: "33333333-3333-4333-8333-333333333333" } },
+    });
+    await assert.rejects(
+      () => service.saveProvider({ provider: { presetKey: "openai", apiKey: "secret" } }),
+      (error) => error.errCode === "AI_PROVIDER_ALREADY_EXISTS" && !!error.details.providerId
+    );
+  });
+});
+
+test("failed provider validation never persists the draft", async () => {
+  await withPublicDns(async () => {
+    let transactionStarted = false;
+    const db = {
+      async query() { return { rows: [] }; },
+      async withTransaction() { transactionStarted = true; },
+    };
+    const service = new AiService({ db, config: {} }, {});
+    service.requireManager = async () => ({
+      circleId: "22222222-2222-4222-8222-222222222222",
+      isSuperAdmin: false,
+      auth: { user: { id: "33333333-3333-4333-8333-333333333333" } },
+    });
+    service.testProviderConnection = async () => {
+      throw new AppError("密钥无效", { statusCode: 502, errCode: "AI_PROVIDER_AUTH_FAILED" });
+    };
+    await assert.rejects(
+      () => service.saveProvider({
+        validateBeforeSave: true,
+        provider: { presetKey: "openai", apiKey: "bad-secret" },
+      }),
+      (error) => error.errCode === "AI_PROVIDER_AUTH_FAILED"
+    );
+    assert.equal(transactionStarted, false);
+  });
+});
+
+test("validated provider saves discovered models without exposing internal model drafts", async () => {
+  await withPublicDns(async () => {
+    const queries = [];
+    const savedProvider = providerRow();
+    const db = {
+      async query(text, params) {
+        const sql = String(text);
+        queries.push({ sql, params });
+        if (sql.includes("SELECT id FROM incircle_ai_providers")) return { rows: [] };
+        if (sql.includes("INSERT INTO incircle_ai_providers")) return { rows: [savedProvider] };
+        if (sql.includes("last_test_status = 'success'")) return { rows: [savedProvider] };
+        return { rows: [] };
+      },
+      async withTransaction(callback) { return callback(); },
+    };
+    const service = new AiService({
+      db,
+      config: { aiCredentialsEncryptionKey: crypto.randomBytes(32).toString("hex") },
+    }, {});
+    service.requireManager = async () => ({
+      circleId: savedProvider.circle_id,
+      isSuperAdmin: false,
+      auth: { user: { id: "33333333-3333-4333-8333-333333333333" } },
+    });
+    service.testProviderConnection = async () => ({
+      ok: true,
+      modelCount: 1,
+      latencyMs: 12,
+      models: [{
+        modelId: "gpt-test",
+        displayName: "GPT Test",
+        contextWindow: 8192,
+        metadata: { supportedParameters: ["reasoning_effort"] },
+      }],
+    });
+    service.core.logOperation = async () => {};
+    const result = await service.saveProvider({
+      validateBeforeSave: true,
+      provider: { presetKey: "openai", apiKey: "valid-secret" },
+    });
+    const modelInsert = queries.find((entry) => entry.sql.includes("INSERT INTO incircle_ai_models"));
+    assert.equal(!!modelInsert, true);
+    assert.deepEqual(JSON.parse(modelInsert.params[2])[0].metadata, { supportedParameters: ["reasoning_effort"] });
+    assert.equal(result.testResult.modelsSynced, 1);
+    assert.equal(Object.prototype.hasOwnProperty.call(result.testResult, "models"), false);
+    assert.equal(JSON.stringify(result).includes("valid-secret"), false);
+  });
+});
+
+test("provider API responses expose only a credential mask", () => {
+  const result = publicProvider({
+    id: "provider-1",
+    preset_key: "openai",
+    protocol: "openai",
+    name: "OpenAI",
+    base_url: "https://api.openai.com/v1",
+    credential_ciphertext: "encrypted-secret-payload",
+    credential_last_four: "1234",
+    privacy_url: "https://openai.com/privacy",
+    privacy_version: 1,
+    enabled: true,
+    archived: false,
+  });
+  assert.equal(result.credentialMask, "••••••••1234");
+  assert.equal(result.hasCredential, true);
+  assert.equal(JSON.stringify(result).includes("encrypted-secret-payload"), false);
+});
+
+test("model tests call the selected model and persist model-level health", async () => {
+  const config = { aiCredentialsEncryptionKey: crypto.randomBytes(32).toString("hex") };
+  const model = {
+    id: "44444444-4444-4444-8444-444444444444",
+    circle_id: "22222222-2222-4222-8222-222222222222",
+    provider_id: "11111111-1111-4111-8111-111111111111",
+    provider_name: "Custom AI",
+    protocol: "openai",
+    base_url: "https://api.example.com/v1",
+    api_version: "",
+    azure_deployment: "",
+    credential_ciphertext: encryptCredential(config, "model-test-secret"),
+    provider_enabled: true,
+    provider_archived: false,
+    model_id: "selected-model",
+    display_name: "Selected Model",
+    archived: false,
+  };
+  const writes = [];
+  const db = {
+    async query(text, params) {
+      const sql = String(text);
+      if (sql.includes("SELECT model.*") && sql.includes("credential_ciphertext")) return { rows: [model] };
+      if (sql.includes("UPDATE incircle_ai_models") || sql.includes("UPDATE incircle_ai_providers")) {
+        writes.push({ sql, params });
+        return { rows: [] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    },
+    async withTransaction(callback) { return callback(); },
+  };
+  const service = new AiService({ db, config }, {});
+  service.requireManager = async () => ({
+    circleId: model.circle_id,
+    isSuperAdmin: false,
+    auth: { user: { id: "33333333-3333-4333-8333-333333333333" } },
+  });
+  service.runProviderCompletion = async (options) => {
+    assert.equal(options.model.model_id, "selected-model");
+    assert.equal(options.maxTokens, 16);
+    await options.onDelta("OK");
+    return { inputTokens: 4, outputTokens: 1 };
+  };
+  service.core.logOperation = async () => {};
+
+  const result = await service.testModel({ circleId: model.circle_id, modelId: model.id });
+  assert.equal(result.ok, true);
+  assert.equal(result.modelId, model.id);
+  assert.equal(result.reply, "OK");
+  assert.equal(writes.length, 2);
+  assert.equal(writes[0].params[2], "success");
+  assert.equal(writes[1].params[2], "success");
+});
+
+test("failed model tests persist failure without exposing credentials", async () => {
+  const config = { aiCredentialsEncryptionKey: crypto.randomBytes(32).toString("hex") };
+  const model = {
+    id: "44444444-4444-4444-8444-444444444444",
+    circle_id: "22222222-2222-4222-8222-222222222222",
+    provider_id: "11111111-1111-4111-8111-111111111111",
+    provider_name: "Custom AI",
+    protocol: "openai",
+    base_url: "https://api.example.com/v1",
+    credential_ciphertext: encryptCredential(config, "model-test-secret"),
+    provider_enabled: true,
+    provider_archived: false,
+    model_id: "selected-model",
+    display_name: "Selected Model",
+    archived: false,
+  };
+  const statuses = [];
+  const db = {
+    async query(text, params) {
+      const sql = String(text);
+      if (sql.includes("SELECT model.*") && sql.includes("credential_ciphertext")) return { rows: [model] };
+      if (sql.includes("last_test_status")) {
+        statuses.push(params[2]);
+        return { rows: [] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    },
+    async withTransaction(callback) { return callback(); },
+  };
+  const service = new AiService({ db, config }, {});
+  service.requireManager = async () => ({
+    circleId: model.circle_id,
+    auth: { user: { id: "33333333-3333-4333-8333-333333333333" } },
+  });
+  service.runProviderCompletion = async () => {
+    throw new AppError("供应商没有找到这个模型", { statusCode: 502, errCode: "AI_MODEL_NOT_FOUND" });
+  };
+  await assert.rejects(
+    () => service.testModel({ circleId: model.circle_id, modelId: model.id }),
+    (error) => error.errCode === "AI_MODEL_NOT_FOUND"
+  );
+  assert.deepEqual(statuses, ["failed", "failed"]);
+});
+
+test("model API responses expose persisted test status", () => {
+  const model = publicModel({
+    id: "model-1",
+    model_id: "demo",
+    display_name: "Demo",
+    enabled: true,
+    last_test_status: "success",
+    last_test_error_code: "",
+    last_test_latency_ms: 321,
+    last_tested_at: "2026-07-12T00:00:00.000Z",
+  });
+  assert.equal(model.lastTestStatus, "success");
+  assert.equal(model.lastTestLatencyMs, 321);
+  assert.equal(model.lastTestedAt, "2026-07-12T00:00:00.000Z");
+});
+
+test("all four provider protocols build isolated text completion requests", () => {
+  const messages = [{ role: "user", content: "hello" }];
+  const model = { model_id: "demo-model" };
+  const openai = completionRequest(
+    { protocol: "openai", base_url: "https://api.example.com/v1" }, model, "secret", messages, "system", 256
+  );
+  assert.match(openai.url, /chat\/completions$/);
+  assert.equal(openai.headers.accept, "text/event-stream");
+  assert.equal(openai.headers["cache-control"], "no-cache");
+  assert.equal(openai.body.model, "demo-model");
+  assert.equal(openai.body.messages[0].role, "system");
+
+  const anthropic = completionRequest(
+    { protocol: "anthropic", base_url: "https://api.example.com" }, model, "secret", messages, "system", 256
+  );
+  assert.match(anthropic.url, /v1\/messages$/);
+  assert.equal(anthropic.body.system, "system");
+  assert.equal(anthropic.body.messages.length, 1);
+
+  const gemini = completionRequest(
+    { protocol: "gemini", base_url: "https://api.example.com/v1beta" }, model, "secret", messages, "system", 256
+  );
+  assert.match(gemini.url, /demo-model:streamGenerateContent\?alt=sse$/);
+  assert.equal(gemini.body.contents[0].role, "user");
+
+  const azure = completionRequest(
+    {
+      protocol: "azure",
+      base_url: "https://resource.openai.azure.com",
+      azure_deployment: "production-chat",
+      api_version: "2024-10-21",
+    },
+    model,
+    "secret",
+    messages,
+    "system",
+    256
+  );
+  assert.match(azure.url, /deployments\/production-chat\/chat\/completions\?api-version=2024-10-21$/);
+  assert.equal(azure.body.messages[0].content, "system");
+
+  const modernOpenAi = completionRequest(
+    { protocol: "openai", base_url: "https://api.openai.com/v1" },
+    { model_id: "gpt-5.1" },
+    "secret",
+    messages,
+    "system",
+    4096
+  );
+  assert.equal(modernOpenAi.body.max_completion_tokens, 4096);
+  assert.equal(typeof modernOpenAi.body.max_tokens, "undefined");
+  assert.equal(typeof modernOpenAi.body.stream_options, "undefined");
+});
+
+test("AI Mini Program client transport uses standard SSE frames", () => {
+  const frame = streamFrame({ type: "delta", content: "逐段输出" });
+  assert.equal(frame, `data: ${JSON.stringify({ type: "delta", content: "逐段输出" })}\n\n`);
+});
+
+test("reasoning mode changes the actual request body for supported providers", () => {
+  const messages = [{ role: "user", content: "请分析" }];
+  const request = (provider, modelId, mode, maxTokens) => completionRequest(
+    provider,
+    { model_id: modelId },
+    "secret",
+    messages,
+    "system",
+    maxTokens || 4096,
+    { reasoningMode: mode }
+  );
+
+  const glmAuto = request({ protocol: "openai", preset_key: "zhipu", base_url: "https://open.bigmodel.cn/api/paas/v4" }, "glm-4.5", "auto");
+  const glmOn = request({ protocol: "openai", preset_key: "zhipu", base_url: "https://open.bigmodel.cn/api/paas/v4" }, "glm-4.5", "on");
+  const glmOff = request({ protocol: "openai", preset_key: "zhipu", base_url: "https://open.bigmodel.cn/api/paas/v4" }, "glm-4.5", "off");
+  assert.equal(Object.prototype.hasOwnProperty.call(glmAuto.body, "thinking"), false);
+  assert.deepEqual(glmOn.body.thinking, { type: "enabled" });
+  assert.deepEqual(glmOff.body.thinking, { type: "disabled" });
+
+  const doubao = request({ protocol: "openai", preset_key: "doubao", base_url: "https://ark.cn-beijing.volces.com/api/v3" }, "ep-opaque-id", "off");
+  assert.deepEqual(doubao.body.thinking, { type: "disabled" });
+
+  const qwenOn = request({ protocol: "openai", preset_key: "qwen", base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1" }, "qwen3-32b", "on");
+  const qwenOff = request({ protocol: "openai", preset_key: "qwen", base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1" }, "qwen3-32b", "off");
+  assert.equal(qwenOn.body.enable_thinking, true);
+  assert.equal(qwenOff.body.enable_thinking, false);
+
+  const openRouter = request({ protocol: "openai", preset_key: "openrouter", base_url: "https://openrouter.ai/api/v1" }, "vendor/model", "off");
+  assert.deepEqual(openRouter.body.reasoning, { enabled: false });
+
+  const customKimiAuto = request({ protocol: "openai", preset_key: "custom", base_url: "https://api.example.com/v1" }, "kimi-k2.7-code", "auto");
+  const customKimiOn = request({ protocol: "openai", preset_key: "custom", base_url: "https://api.example.com/v1" }, "kimi-k2.7-code", "on");
+  const customKimiOff = request({ protocol: "openai", preset_key: "custom", base_url: "https://api.example.com/v1" }, "kimi-k2.7-code", "off");
+  assert.equal(customKimiOn.reasoningMode.control, "toggle");
+  assert.equal(customKimiOn.reasoningMode.adapter, "openai-effort");
+  assert.equal(Object.prototype.hasOwnProperty.call(customKimiAuto.body, "reasoning_effort"), false);
+  assert.equal(customKimiOn.body.reasoning_effort, "medium");
+  assert.equal(customKimiOff.body.reasoning_effort, "none");
+
+  const claudeOn = request({ protocol: "anthropic", preset_key: "anthropic", base_url: "https://api.anthropic.com" }, "claude-sonnet-4-20250514", "on");
+  const claudeOff = request({ protocol: "anthropic", preset_key: "anthropic", base_url: "https://api.anthropic.com" }, "claude-sonnet-4-20250514", "off");
+  assert.equal(claudeOn.body.thinking.type, "enabled");
+  assert.equal(Object.prototype.hasOwnProperty.call(claudeOff.body, "thinking"), false);
+
+  const geminiOn = request({ protocol: "gemini", preset_key: "gemini", base_url: "https://generativelanguage.googleapis.com/v1beta" }, "gemini-2.5-flash", "on");
+  const geminiOff = request({ protocol: "gemini", preset_key: "gemini", base_url: "https://generativelanguage.googleapis.com/v1beta" }, "gemini-2.5-flash", "off");
+  assert.equal(geminiOn.body.generationConfig.thinkingConfig.includeThoughts, true);
+  assert.equal(geminiOff.body.generationConfig.thinkingConfig.thinkingBudget, 0);
+});
+
+test("custom OpenAI-compatible models use a broad and truthful reasoning capability matrix", () => {
+  const provider = { protocol: "openai", preset_key: "custom", base_url: "https://api.example.com/v1" };
+  const cases = [
+    ["Qwen/Qwen3.5-72B", "toggle", "enable-thinking"],
+    ["Qwen/Qwen3-235B-A22B-Thinking-2507", "always", "fixed"],
+    ["Qwen/Qwen3-30B-A3B-Instruct-2507", "none", "none"],
+    ["zai-org/GLM-4.7", "toggle", "thinking-object"],
+    ["deepseek-ai/DeepSeek-V3.2", "toggle", "thinking-object"],
+    ["moonshotai/Kimi-K2.7-Code", "toggle", "openai-effort"],
+    ["moonshotai/Kimi-K2-Thinking", "always", "fixed"],
+    ["ByteDance-Seed/Doubao-Seed-1.8", "toggle", "thinking-object"],
+    ["openai/gpt-5.2", "toggle", "openai-effort"],
+    ["openai/gpt-5.4-codex", "toggle", "openai-effort"],
+    ["openai/gpt-oss-120b", "always", "fixed"],
+    ["openai/o4-mini", "always", "fixed"],
+    ["anthropic/claude-3-7-sonnet", "toggle", "openai-effort"],
+    ["anthropic/claude-sonnet-4.5", "toggle", "openai-effort"],
+    ["google/gemini-2.5-flash", "toggle", "openai-effort"],
+    ["x-ai/grok-4-fast-non-reasoning", "none", "none"],
+    ["mistralai/magistral-small", "always", "fixed"],
+    ["unknown/plain-chat-model", "prompt", "prompt"],
+  ];
+  for (const [modelId, control, adapter] of cases) {
+    const detected = reasoningCapability(provider, { model_id: modelId });
+    assert.equal(detected.control, control, `${modelId} control`);
+    assert.equal(detected.adapter, adapter, `${modelId} adapter`);
+  }
+});
+
+test("custom model metadata and endpoint domains override ambiguous model IDs safely", () => {
+  const custom = { protocol: "openai", preset_key: "custom", base_url: "https://api.example.com/v1" };
+  assert.deepEqual(
+    reasoningCapability(custom, { model_id: "opaque-a", metadata: { supportedParameters: ["reasoning_effort"] } }),
+    { control: "toggle", adapter: "openai-effort", defaultEnabled: true, toggleable: true }
+  );
+  assert.equal(
+    reasoningCapability(custom, { model_id: "opaque-b", metadata: { supported_parameters: ["enable_thinking"] } }).adapter,
+    "enable-thinking"
+  );
+  assert.equal(
+    reasoningCapability(custom, { model_id: "opaque-c", metadata: { supportedParameters: ["chat_template_kwargs"] } }).adapter,
+    "chat-template-thinking"
+  );
+  assert.equal(
+    reasoningCapability(custom, { model_id: "opaque-d", metadata: { supportsReasoning: false } }).control,
+    "none"
+  );
+  assert.equal(
+    reasoningCapability(
+      { protocol: "openai", preset_key: "custom", base_url: "https://api.moonshot.cn/v1" },
+      { model_id: "kimi-k2.7-code" }
+    ).adapter,
+    "thinking-object"
+  );
+  assert.equal(
+    reasoningCapability(
+      { protocol: "openai", preset_key: "custom", base_url: "https://openrouter.ai/api/v1" },
+      { model_id: "opaque-deployment" }
+    ).adapter,
+    "openrouter-reasoning"
+  );
+
+  const localQwen = completionRequest(
+    custom,
+    { model_id: "opaque-qwen", metadata: { supportedParameters: ["chat_template_kwargs"] } },
+    "secret",
+    [{ role: "user", content: "直接回答" }],
+    "system",
+    256,
+    { reasoningMode: "off" }
+  );
+  assert.deepEqual(localQwen.body.chat_template_kwargs, { enable_thinking: false });
+});
+
+test("provider model capability metadata is normalized before it reaches PostgreSQL", () => {
+  const metadata = providerModelMetadata({
+    supported_parameters: ["reasoning", "include_reasoning", "reasoning"],
+    capabilities: {
+      reasoning: { supported: true, control: "switchable", parameter: "reasoning" },
+      vision: true,
+      legacy: false,
+    },
+  });
+  assert.deepEqual(metadata.supportedParameters, ["reasoning", "include_reasoning"]);
+  assert.deepEqual(metadata.capabilities, ["reasoning", "vision"]);
+  assert.equal(metadata.supportsReasoning, true);
+  assert.equal(metadata.reasoningControl, "toggle");
+  assert.equal(metadata.reasoningAdapter, "openrouter-reasoning");
+  assert.equal(
+    reasoningCapability(
+      { protocol: "openai", preset_key: "custom", base_url: "https://api.example.com/v1" },
+      { model_id: "opaque-from-provider", metadata }
+    ).adapter,
+    "openrouter-reasoning"
+  );
+  const unsupported = providerModelMetadata({ capabilities: { reasoning: false, vision: true } });
+  assert.equal(unsupported.supportsReasoning, false);
+  assert.equal(
+    reasoningCapability(
+      { protocol: "openai", preset_key: "custom", base_url: "https://api.example.com/v1" },
+      { model_id: "kimi-k2.7-code", metadata: unsupported }
+    ).control,
+    "none"
+  );
+});
+
+test("fixed and non-reasoning models reject incompatible explicit modes", () => {
+  const reasoner = { protocol: "openai", preset_key: "deepseek", model_id: "deepseek-reasoner" };
+  const chat = { protocol: "openai", preset_key: "deepseek", model_id: "deepseek-chat" };
+  assert.equal(reasoningCapability(reasoner, reasoner).control, "always");
+  assert.equal(resolveReasoningMode(reasoner, reasoner, "auto").enabled, true);
+  assert.equal(resolveReasoningMode(reasoner, reasoner, "off").supported, false);
+  assert.equal(reasoningCapability(chat, chat).control, "none");
+  assert.equal(resolveReasoningMode(chat, chat, "auto").enabled, false);
+  assert.equal(resolveReasoningMode(chat, chat, "on").supported, false);
+});
+
+test("provider stream payloads separate answer and explicit reasoning deltas", () => {
+  const openAi = jsonDelta("openai", { choices: [{ delta: { content: "A", reasoning_content: "先分析" } }] });
+  assert.equal(openAi.text, "A");
+  assert.equal(openAi.reasoning, "先分析");
+  assert.equal(
+    jsonDelta("openai", { choices: [{ delta: { content: [{ type: "text", text: "A" }, { type: "text", text: "B" }] } }] }).text,
+    "AB"
+  );
+  assert.equal(
+    jsonDelta("openai", { choices: [{ delta: { reasoning_details: [{ type: "reasoning.text", text: "聚合推理" }] } }] }).reasoning,
+    "聚合推理"
+  );
+  assert.equal(
+    jsonDelta("openai", { choices: [{ delta: { reasoning_details: [{ type: "reasoning.encrypted", data: "secret" }] } }] }).reasoning,
+    ""
+  );
+  const multipart = jsonDelta("openai", {
+    choices: [{ delta: { content: [{ type: "reasoning_text", text: "分段推理" }, { type: "output_text", text: "分段正文" }] } }],
+  });
+  assert.equal(multipart.reasoning, "分段推理");
+  assert.equal(multipart.text, "分段正文");
+  const analysisChannel = jsonDelta("openai", { choices: [{ delta: { channel: "analysis", content: "通道推理" } }] });
+  assert.equal(analysisChannel.reasoning, "通道推理");
+  assert.equal(analysisChannel.text, "");
+  assert.equal(jsonDelta("anthropic", { type: "content_block_delta", delta: { text: "B" } }).text, "B");
+  assert.equal(
+    jsonDelta("anthropic", { type: "content_block_delta", delta: { type: "thinking_delta", thinking: "Claude 推理" } }).reasoning,
+    "Claude 推理"
+  );
+  assert.equal(
+    jsonDelta("gemini", { candidates: [{ content: { parts: [{ text: "Gemini 推理", thought: true }, { text: "C" }] } }] }).text,
+    "C"
+  );
+  assert.equal(
+    jsonDelta("gemini", { candidates: [{ content: { parts: [{ text: "Gemini 推理", thought: true }, { text: "C" }] } }] }).reasoning,
+    "Gemini 推理"
+  );
+  assert.equal(jsonDelta("openai", { type: "response.reasoning_summary_text.delta", delta: "摘要推理" }).reasoning, "摘要推理");
+  assert.equal(jsonDelta("openai", { type: "response.output_text.delta", delta: "正文" }).text, "正文");
+});
+
+test("GLM, Doubao and DeepSeek compatible streams preserve reasoning and answer text", () => {
+  const providerSamples = [
+    ["GLM", { choices: [{ delta: { reasoning_content: "GLM 推理", content: "GLM 正文" } }] }, "GLM 推理", "GLM 正文"],
+    ["Doubao", { choices: [{ delta: { reasoning_content: "豆包推理", content: "豆包正文" } }] }, "豆包推理", "豆包正文"],
+    ["DeepSeek", { choices: [{ delta: { reasoning_content: "DeepSeek 推理", content: "DeepSeek 正文" } }] }, "DeepSeek 推理", "DeepSeek 正文"],
+  ];
+  providerSamples.forEach(([name, payload, expectedReasoning, expectedText]) => {
+    const delta = jsonDelta("openai", payload);
+    assert.equal(delta.reasoning, expectedReasoning, `${name} reasoning`);
+    assert.equal(delta.text, expectedText, `${name} answer`);
+  });
+  const presets = listProviderPresets(false);
+  const doubao = presets.find((preset) => preset.key === "doubao");
+  assert.equal(doubao.protocol, "openai");
+  assert.equal(doubao.baseUrl, "https://ark.cn-beijing.volces.com/api/v3");
+});
+
+test("provider finish reasons preserve output-limit diagnostics", () => {
+  assert.equal(providerFinishReason("openai", { choices: [{ finish_reason: "length" }] }), "length");
+  assert.equal(providerFinishReason("anthropic", { delta: { stop_reason: "max_tokens" } }), "max_tokens");
+  assert.equal(providerFinishReason("gemini", { candidates: [{ finishReason: "MAX_TOKENS" }] }), "MAX_TOKENS");
+  assert.equal(
+    providerFinishReason("openai", { type: "response.incomplete", incomplete_details: { reason: "max_output_tokens" } }),
+    "max_output_tokens"
+  );
+});
+
+test("provider stream timeouts stay distinct from user cancellation", () => {
+  const timeout = Object.assign(new Error("供应商响应超时"), { code: "AI_PROVIDER_TIMEOUT" });
+  const mappedTimeout = normalizeProviderStreamError(timeout, new AbortController().signal);
+  assert.equal(mappedTimeout.errCode, "AI_PROVIDER_TIMEOUT");
+
+  const controller = new AbortController();
+  controller.abort();
+  const cancelled = Object.assign(new Error("请求已取消"), { name: "AbortError" });
+  assert.equal(normalizeProviderStreamError(cancelled, controller.signal), cancelled);
+});
+
+test("provider connect timeout stops after TLS even when reasoning delays response headers", async () => {
+  const originalRequest = https.request;
+  const fakeRequest = new EventEmitter();
+  let responseCallback = null;
+  let destroyedError = null;
+  fakeRequest.setTimeout = () => {};
+  fakeRequest.write = () => {};
+  fakeRequest.end = () => {};
+  fakeRequest.destroy = (error) => {
+    destroyedError = error;
+    fakeRequest.emit("error", error);
+  };
+  https.request = (url, options, callback) => {
+    responseCallback = callback;
+    return fakeRequest;
+  };
+  try {
+    const responsePromise = requestOnce(
+      new URL("https://api.example.com/v1/chat/completions"),
+      { method: "POST", body: "{}", timeoutMs: 40 },
+      [{ address: "8.8.8.8", family: 4 }]
+    );
+    const socket = new EventEmitter();
+    socket.connecting = true;
+    fakeRequest.emit("socket", socket);
+    socket.emit("secureConnect");
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    assert.equal(destroyedError, null);
+
+    const incoming = new EventEmitter();
+    incoming.destroyed = false;
+    incoming.setTimeout = () => {};
+    responseCallback(incoming);
+    assert.equal(await responsePromise, incoming);
+    incoming.emit("end");
+  } finally {
+    https.request = originalRequest;
+  }
+});
+
+test("provider event streams preserve UTF-8 text split across network chunks", async () => {
+  const payload = Buffer.from(`data: ${JSON.stringify({ choices: [{ delta: { content: "你好" } }] })}\n\n`, "utf8");
+  const splitAt = payload.indexOf(Buffer.from("你", "utf8")) + 1;
+  const chunks = [payload.subarray(0, splitAt), payload.subarray(splitAt)];
+  const response = {
+    async *[Symbol.asyncIterator]() {
+      for (const chunk of chunks) yield chunk;
+    },
+  };
+  let output = "";
+  await consumeEventStream(response, "openai", async (delta) => {
+    output += delta;
+  });
+  assert.equal(output, "你好");
+});
+
+test("provider event streams accept compatible NDJSON and expose safe diagnostics", async () => {
+  const response = {
+    async *[Symbol.asyncIterator]() {
+      yield Buffer.from(`${JSON.stringify({ choices: [{ delta: { content: "兼容" } }] })}\n`, "utf8");
+      yield Buffer.from(`data: ${JSON.stringify({ choices: [{ delta: { content: "流" } }] })}\n\ndata: [DONE]\n\n`, "utf8");
+    },
+  };
+  const stats = {};
+  let output = "";
+  await consumeEventStream(response, "openai", async (delta) => {
+    output += delta;
+  }, stats);
+  assert.equal(output, "兼容流");
+  assert.equal(stats.events, 2);
+  assert.equal(stats.textDeltas, 2);
+  assert.equal(stats.doneSeen, true);
+  assert.equal(stats.responseBytes > 0, true);
+  assert.equal(stats.parseErrors || 0, 0);
+});
+
+test("provider event streams deliver reasoning before answer text", async () => {
+  const response = {
+    async *[Symbol.asyncIterator]() {
+      yield Buffer.from(`data: ${JSON.stringify({ choices: [{ delta: { reasoning_content: "先想清楚" } }] })}\n\n`, "utf8");
+      yield Buffer.from(`data: ${JSON.stringify({ choices: [{ delta: { content: "再回答" }, finish_reason: "stop" }] })}\n\n`, "utf8");
+    },
+  };
+  const order = [];
+  const stats = {};
+  await consumeEventStream(
+    response,
+    "openai",
+    async (delta) => order.push(`answer:${delta}`),
+    stats,
+    async (delta) => order.push(`reasoning:${delta}`)
+  );
+  assert.deepEqual(order, ["reasoning:先想清楚", "answer:再回答"]);
+  assert.equal(stats.reasoningDeltas, 1);
+  assert.equal(stats.textDeltas, 1);
+});
+
+test("provider parser recovers a pretty-printed JSON response", async () => {
+  const response = {
+    async *[Symbol.asyncIterator]() {
+      yield Buffer.from('{\n  "choices": [\n    { "message": { "content": "完整回答" } }\n  ]\n}', "utf8");
+    },
+  };
+  let output = "";
+  await consumeEventStream(response, "openai", async (delta) => { output += delta; });
+  assert.equal(output, "完整回答");
+});
+
+test("mislabeled text/plain provider responses still stream before socket close", async () => {
+  const originalRequest = https.request;
+  let releaseSecondChunk;
+  const secondChunkGate = new Promise((resolve) => { releaseSecondChunk = resolve; });
+  https.request = (url, options, callback) => {
+    const request = new EventEmitter();
+    request.setTimeout = () => {};
+    request.write = () => {};
+    request.destroy = (error) => request.emit("error", error);
+    request.end = () => {
+      const incoming = Readable.from((async function* stream() {
+        yield Buffer.from(`data: ${JSON.stringify({ choices: [{ delta: { content: "第一段" } }] })}\n\n`, "utf8");
+        await secondChunkGate;
+        yield Buffer.from("data: [DONE]\n\n", "utf8");
+      })());
+      incoming.statusCode = 200;
+      incoming.headers = { "content-type": "text/plain; charset=utf-8" };
+      incoming.setTimeout = () => {};
+      callback(incoming);
+    };
+    return request;
+  };
+  let firstDeltaResolve;
+  const firstDelta = new Promise((resolve) => { firstDeltaResolve = resolve; });
+  let output = "";
+  try {
+    const completion = withPublicDns(() => streamProviderCompletion({
+      provider: { protocol: "openai", base_url: "https://api.example.com/v1" },
+      model: { model_id: "demo" },
+      apiKey: "secret",
+      messages: [{ role: "user", content: "hello" }],
+      systemPrompt: "system",
+      maxTokens: 64,
+      timeoutMs: 300000,
+      onDelta: (delta) => {
+        output += delta;
+        firstDeltaResolve();
+      },
+    }));
+    await Promise.race([
+      firstDelta,
+      new Promise((resolve, reject) => setTimeout(() => reject(new Error("first delta was buffered until close")), 150)),
+    ]);
+    assert.equal(output, "第一段");
+    releaseSecondChunk();
+    await completion;
+  } finally {
+    releaseSecondChunk();
+    https.request = originalRequest;
+  }
+});
+
+function preparedGeneration(config) {
+  return {
+    ctx: {
+      circleId: "11111111-1111-4111-8111-111111111111",
+      auth: { user: { id: "22222222-2222-4222-8222-222222222222", openid: "openid-test" } },
+    },
+    settings: { system_prompt: "system", max_output_tokens: 4096 },
+    model: {
+      id: "33333333-3333-4333-8333-333333333333",
+      provider_id: "44444444-4444-4444-8444-444444444444",
+      protocol: "openai",
+      preset_key: "zhipu",
+      model_id: "reasoning-model",
+      display_name: "Reasoning Model",
+      provider_name: "Mock Provider",
+      credential_ciphertext: encryptCredential(config, "provider-secret"),
+    },
+    requestId: "request-reliability-test",
+    conversation: { id: "55555555-5555-4555-8555-555555555555" },
+    userMessage: { id: "66666666-6666-4666-8666-666666666666" },
+    assistantMessage: { id: "77777777-7777-4777-8777-777777777777" },
+  };
+}
+
+test("idempotent AI retries skip duplicate input moderation and reject changed content", async () => {
+  const service = new AiService({ db: {}, config: {} }, {});
+  const replay = {
+    content: "原来的问题",
+    conversation_id: "55555555-5555-4555-8555-555555555555",
+    assistant_status: "generating",
+  };
+  let moderationChecks = 0;
+  service.requireEnabledAi = async () => ({
+    ctx: { circleId: "11111111-1111-4111-8111-111111111111", auth: { user: { id: "user-1", openid: "openid-1" } } },
+    settings: {},
+  });
+  service.modelForChat = async () => ({ protocol: "openai", model_id: "plain-model" });
+  service.assertConsent = async () => {};
+  service.existingRequest = async () => replay;
+  service.checkContentSecurity = async () => { moderationChecks += 1; };
+
+  const prepared = await service.prepareGeneration({
+    content: "原来的问题",
+    requestId: "request_same_123",
+  });
+  assert.equal(prepared.replay, replay);
+  assert.equal(moderationChecks, 0);
+
+  await assert.rejects(
+    service.prepareGeneration({ content: "被替换的问题", requestId: "request_same_123" }),
+    (error) => error.errCode === "AI_REQUEST_ALREADY_USED"
+  );
+  assert.equal(moderationChecks, 0);
+});
+
+test("chat generation keeps reading provider output while ordered moderation drains", async () => {
+  const config = {
+    aiCredentialsEncryptionKey: Buffer.alloc(32, 9).toString("base64"),
+    aiProviderTimeoutMs: 300000,
+  };
+  let moderationFinished = false;
+  let providerContinuedBeforeModeration = false;
+  let checkpointCount = 0;
+  let saved = null;
+  const service = new AiService(
+    { db: {}, config },
+    {
+      generationHeartbeatMs: 10,
+      checkTextSecurity: async () => {
+        await new Promise((resolve) => setTimeout(resolve, 15));
+        moderationFinished = true;
+      },
+      streamProviderCompletion: async (options) => {
+        const reasoningPromise = options.onReasoning("分析".repeat(72));
+        providerContinuedBeforeModeration = !moderationFinished;
+        await reasoningPromise;
+        await options.onDelta("这是最终回答。");
+        await new Promise((resolve) => setTimeout(resolve, 35));
+        return { inputTokens: 12, outputTokens: 34 };
+      },
+    }
+  );
+  service.prepareGeneration = async () => preparedGeneration(config);
+  service.generationContext = async () => [{ role: "user", content: "问题" }];
+  service.checkpointGeneration = async () => { checkpointCount += 1; };
+  service.saveGenerationResult = async (prepared, options) => { saved = options; };
+  const events = [];
+
+  await service.chatStream({}, async (event) => events.push(event), new AbortController().signal);
+
+  assert.equal(providerContinuedBeforeModeration, true);
+  assert.equal(moderationFinished, true);
+  assert.equal(checkpointCount > 0, true);
+  assert.equal(saved.status, "success");
+  assert.equal(saved.content, "这是最终回答。");
+  assert.equal(saved.reasoningContent, "分析".repeat(72));
+  const reasoningEvents = events.filter((event) => event.type === "reasoning");
+  const firstAnswerEvent = events.find((event) => event.type === "delta");
+  assert.equal(reasoningEvents.length > 1, true);
+  assert.equal(reasoningEvents.at(-1).reasoningDurationMs > reasoningEvents[0].reasoningDurationMs, true);
+  assert.equal(firstAnswerEvent.reasoningDurationMs >= reasoningEvents.at(-1).reasoningDurationMs, true);
+  assert.equal(events.some((event) => event.type === "delta"), true);
+  assert.equal(events.at(-1).type, "done");
+});
+
+test("short reasoning is moderated and emitted before the provider finishes", async () => {
+  const config = {
+    aiCredentialsEncryptionKey: Buffer.alloc(32, 12).toString("base64"),
+    aiProviderTimeoutMs: 300000,
+  };
+  let releaseProvider;
+  let providerFinished = false;
+  const providerGate = new Promise((resolve) => { releaseProvider = resolve; });
+  const service = new AiService(
+    { db: {}, config },
+    {
+      checkTextSecurity: async () => ({ safe: true }),
+      streamProviderCompletion: async (options) => {
+        options.onReasoning("这是一小段实时思考");
+        await providerGate;
+        options.onDelta("这是最终回答");
+        providerFinished = true;
+        return { inputTokens: 8, outputTokens: 16 };
+      },
+    }
+  );
+  service.prepareGeneration = async () => preparedGeneration(config);
+  service.generationContext = async () => [{ role: "user", content: "问题" }];
+  service.checkpointGeneration = async () => {};
+  service.saveGenerationResult = async () => {};
+  let resolveReasoning;
+  const reasoningSeen = new Promise((resolve) => { resolveReasoning = resolve; });
+  const events = [];
+  const completion = service.chatStream({}, async (event) => {
+    events.push(event);
+    if (event.type === "reasoning") resolveReasoning(event);
+  }, new AbortController().signal);
+
+  const firstReasoning = await Promise.race([
+    reasoningSeen,
+    new Promise((resolve, reject) => setTimeout(() => reject(new Error("short reasoning was buffered until completion")), 1000)),
+  ]);
+  assert.equal(firstReasoning.content, "这是一小段实时思考");
+  assert.equal(providerFinished, false);
+  releaseProvider();
+  await completion;
+  assert.equal(events.some((event) => event.type === "delta" && event.content === "这是最终回答"), true);
+  assert.equal(events.at(-1).type, "done");
+});
+
+test("moderated answers preserve provider delta boundaries instead of rebuilding large text blocks", async () => {
+  const config = {
+    aiCredentialsEncryptionKey: Buffer.alloc(32, 17).toString("base64"),
+    aiProviderTimeoutMs: 300000,
+  };
+  const providerFrames = ["这", "是", "逐", "段", "到", "达", "的", "真", "实", "流", "式", "回", "答", "。"];
+  const service = new AiService(
+    { db: {}, config },
+    {
+      checkTextSecurity: async () => ({ safe: true }),
+      streamProviderCompletion: async (options) => {
+        for (const frame of providerFrames) await options.onDelta(frame);
+        return { inputTokens: 4, outputTokens: 14 };
+      },
+    }
+  );
+  service.prepareGeneration = async () => preparedGeneration(config);
+  service.generationContext = async () => [{ role: "user", content: "测试流式" }];
+  service.checkpointGeneration = async () => {};
+  service.saveGenerationResult = async () => {};
+  const events = [];
+
+  await service.chatStream({}, async (event) => events.push(event), new AbortController().signal);
+
+  assert.deepEqual(events.filter((event) => event.type === "delta").map((event) => event.content), providerFrames);
+  assert.equal(events.at(-1).type, "done");
+});
+
+test("guarded output uses fine moderation batches and ten-character display frames", async () => {
+  const config = {
+    aiCredentialsEncryptionKey: Buffer.alloc(32, 19).toString("base64"),
+    aiProviderTimeoutMs: 300000,
+  };
+  const answer = "甲".repeat(1500);
+  const moderatedLengths = [];
+  const service = new AiService(
+    { db: {}, config },
+    {
+      checkTextSecurity: async (_config, options) => {
+        moderatedLengths.push(String(options.content || "").length);
+        return { safe: true };
+      },
+      streamProviderCompletion: async (options) => {
+        await options.onDelta(answer);
+        return { inputTokens: 4, outputTokens: 375 };
+      },
+    }
+  );
+  service.prepareGeneration = async () => preparedGeneration(config);
+  service.generationContext = async () => [{ role: "user", content: "测试细粒度审核" }];
+  service.checkpointGeneration = async () => {};
+  service.saveGenerationResult = async () => {};
+  const events = [];
+
+  await service.chatStream({}, async (event) => events.push(event), new AbortController().signal);
+
+  const deltas = events.filter((event) => event.type === "delta");
+  assert.deepEqual(moderatedLengths.slice(0, 5), [16, 80, 144, 208, 224]);
+  assert.equal(moderatedLengths.includes(288), true, "later checks must contain 160 context + 128 new characters");
+  assert.equal(deltas.every((event) => event.content.length <= 10), true);
+  assert.equal(deltas.map((event) => event.content).join(""), answer);
+  assert.equal(events.at(-1).type, "done");
+});
+
+test("guarded answer deltas reach the client before the provider stream finishes", async () => {
+  const config = {
+    aiCredentialsEncryptionKey: Buffer.alloc(32, 18).toString("base64"),
+    aiProviderTimeoutMs: 300000,
+  };
+  let releaseProvider;
+  let providerFinished = false;
+  const providerGate = new Promise((resolve) => { releaseProvider = resolve; });
+  const service = new AiService(
+    { db: {}, config },
+    {
+      checkTextSecurity: async () => ({ safe: true }),
+      streamProviderCompletion: async (options) => {
+        for (const frame of "这是一段会在供应商连接结束以前就抵达客户端的真实流式回答。") {
+          await options.onDelta(frame);
+        }
+        await providerGate;
+        providerFinished = true;
+        return { inputTokens: 4, outputTokens: 28 };
+      },
+    }
+  );
+  service.prepareGeneration = async () => preparedGeneration(config);
+  service.generationContext = async () => [{ role: "user", content: "测试实时到达" }];
+  service.checkpointGeneration = async () => {};
+  service.saveGenerationResult = async () => {};
+  let resolveFirstDelta;
+  const firstDelta = new Promise((resolve) => { resolveFirstDelta = resolve; });
+  const completion = service.chatStream({}, async (event) => {
+    if (event.type === "delta") resolveFirstDelta(event);
+  }, new AbortController().signal);
+
+  const event = await Promise.race([
+    firstDelta,
+    new Promise((resolve, reject) => setTimeout(() => reject(new Error("answer delta was buffered until provider close")), 1000)),
+  ]);
+  assert.equal(event.content.length > 0, true);
+  assert.equal(providerFinished, false);
+  releaseProvider();
+  await completion;
+  assert.equal(providerFinished, true);
+});
+
+test("disabled reasoning requests direct answers and never emits or stores reasoning content", async () => {
+  const config = {
+    aiCredentialsEncryptionKey: Buffer.alloc(32, 6).toString("base64"),
+    aiProviderTimeoutMs: 300000,
+  };
+  const answer = "流式正文".repeat(180);
+  let systemPrompt = "";
+  let providerReasoningMode = "";
+  let saved = null;
+  const service = new AiService(
+    { db: {}, config },
+    {
+      checkTextSecurity: async () => {},
+      streamProviderCompletion: async (options) => {
+        systemPrompt = options.systemPrompt;
+        providerReasoningMode = options.reasoningMode;
+        options.onReasoning("不会展示的思考".repeat(80));
+        options.onDelta(answer);
+        return { inputTokens: 10, outputTokens: 30 };
+      },
+    }
+  );
+  service.prepareGeneration = async () => preparedGeneration(config);
+  service.generationContext = async () => [{ role: "user", content: "直接回答" }];
+  service.checkpointGeneration = async () => {};
+  service.saveGenerationResult = async (prepared, options) => { saved = options; };
+  const events = [];
+
+  await service.chatStream({ reasoningMode: "off" }, async (event) => events.push(event), new AbortController().signal);
+
+  const answerEvents = events.filter((event) => event.type === "delta");
+  assert.equal(events.some((event) => event.type === "reasoning"), false);
+  assert.equal(answerEvents.map((event) => event.content).join(""), answer);
+  assert.equal(answerEvents.length > 2, true);
+  assert.equal(answerEvents.every((event) => event.content.length <= 10), true);
+  assert.match(systemPrompt, /直接给出最终答案/);
+  assert.equal(providerReasoningMode, "off");
+  assert.equal(saved.reasoningContent, "");
+  assert.equal(saved.content, answer);
+});
+
+test("auto reasoning ignores whitespace-only reasoning events", async () => {
+  const config = {
+    aiCredentialsEncryptionKey: Buffer.alloc(32, 5).toString("base64"),
+    aiProviderTimeoutMs: 300000,
+  };
+  let saved = null;
+  const service = new AiService(
+    { db: {}, config },
+    {
+      checkTextSecurity: async () => {},
+      streamProviderCompletion: async (options) => {
+        options.onReasoning(" \n\t\u200b\ufeff ");
+        options.onDelta("直接返回正文");
+        return { inputTokens: 6, outputTokens: 8 };
+      },
+    }
+  );
+  service.prepareGeneration = async () => preparedGeneration(config);
+  service.generationContext = async () => [{ role: "user", content: "直接回答" }];
+  service.checkpointGeneration = async () => {};
+  service.saveGenerationResult = async (prepared, options) => { saved = options; };
+  const events = [];
+
+  await service.chatStream({ reasoningMode: "auto" }, async (event) => events.push(event), new AbortController().signal);
+
+  assert.equal(events.some((event) => event.type === "reasoning"), false);
+  assert.equal(events.filter((event) => event.type === "delta").map((event) => event.content).join(""), "直接返回正文");
+  assert.equal(saved.reasoningContent, "");
+  assert.equal(saved.content, "直接返回正文");
+});
+
+test("temporary content-security outages are retried without bypassing moderation", async () => {
+  let attempts = 0;
+  const service = new AiService(
+    { db: {}, config: {} },
+    {
+      contentSecurityRetryDelays: [0, 0],
+      checkTextSecurity: async () => {
+        attempts += 1;
+        if (attempts < 3) {
+          throw new AppError("内容安全服务暂时不可用", {
+            statusCode: 503,
+            errCode: "CONTENT_SECURITY_UNAVAILABLE",
+          });
+        }
+        return { safe: true };
+      },
+    }
+  );
+
+  const result = await service.checkContentSecurity({ content: "测试内容", openid: "openid-test" });
+  assert.equal(result.safe, true);
+  assert.equal(attempts, 3);
+});
+
+test("blocked content is never retried as a transient moderation failure", async () => {
+  let attempts = 0;
+  const service = new AiService(
+    { db: {}, config: {} },
+    {
+      contentSecurityRetryDelays: [0, 0],
+      checkTextSecurity: async () => {
+        attempts += 1;
+        throw new AppError("内容未通过安全检查", {
+          statusCode: 400,
+          errCode: "CONTENT_SECURITY_BLOCKED",
+        });
+      },
+    }
+  );
+
+  await assert.rejects(
+    () => service.checkContentSecurity({ content: "测试内容", openid: "openid-test" }),
+    (error) => error.errCode === "CONTENT_SECURITY_BLOCKED"
+  );
+  assert.equal(attempts, 1);
+});
+
+test("reasoning-only completion retries once for a direct final answer", async () => {
+  const config = {
+    aiCredentialsEncryptionKey: Buffer.alloc(32, 4).toString("base64"),
+    aiProviderTimeoutMs: 300000,
+  };
+  const attempts = [];
+  let saved = null;
+  const service = new AiService(
+    { db: {}, config },
+    {
+      checkTextSecurity: async () => {},
+      streamProviderCompletion: async (options) => {
+        attempts.push({ reasoningMode: options.reasoningMode, systemPrompt: options.systemPrompt, maxTokens: options.maxTokens });
+        if (attempts.length === 1) {
+          options.stats.finishReason = "length";
+          options.onReasoning("先完成一段较长思考");
+          return { inputTokens: 6, outputTokens: 4096 };
+        }
+        options.stats.finishReason = "stop";
+        options.onDelta("这是自动补全后的最终回答。");
+        return { inputTokens: 6, outputTokens: 18 };
+      },
+    }
+  );
+  service.prepareGeneration = async () => preparedGeneration(config);
+  service.generationContext = async () => [{ role: "user", content: "复杂问题" }];
+  service.checkpointGeneration = async () => {};
+  service.saveGenerationResult = async (prepared, options) => { saved = options; };
+  const events = [];
+
+  await service.chatStream({ reasoningMode: "auto" }, async (event) => events.push(event), new AbortController().signal);
+
+  assert.equal(attempts.length, 2);
+  assert.equal(attempts[1].reasoningMode, "off");
+  assert.match(attempts[1].systemPrompt, /直接给出完整/);
+  assert.equal(saved.status, "success");
+  assert.equal(saved.reasoningContent, "先完成一段较长思考");
+  assert.equal(saved.content, "这是自动补全后的最终回答。");
+  assert.equal(saved.inputTokens, 12);
+  assert.equal(saved.outputTokens, 4114);
+  assert.equal(saved.reasoningDurationMs >= 1, true);
+  assert.equal(events.some((event) => event.type === "reasoning"), true);
+  assert.equal(events.filter((event) => event.type === "delta").map((event) => event.content).join(""), saved.content);
+  assert.equal(events.at(-1).reasoningDurationMs, saved.reasoningDurationMs);
+});
+
+test("reasoning without a final answer still fails clearly after one direct retry", async () => {
+  const config = {
+    aiCredentialsEncryptionKey: Buffer.alloc(32, 8).toString("base64"),
+    aiProviderTimeoutMs: 300000,
+  };
+  let saved = null;
+  let attempts = 0;
+  const service = new AiService(
+    { db: {}, config },
+    {
+      checkTextSecurity: async () => {},
+      streamProviderCompletion: async (options) => {
+        attempts += 1;
+        options.onReasoning("只有思考过程");
+        return { inputTokens: 3, outputTokens: 5 };
+      },
+    }
+  );
+  service.prepareGeneration = async () => preparedGeneration(config);
+  service.generationContext = async () => [{ role: "user", content: "问题" }];
+  service.checkpointGeneration = async () => {};
+  service.saveGenerationResult = async (prepared, options) => { saved = options; };
+
+  await assert.rejects(
+    () => service.chatStream({}, async () => {}, new AbortController().signal),
+    (error) => error.errCode === "AI_REASONING_WITHOUT_ANSWER"
+  );
+  assert.equal(saved.status, "failed");
+  assert.equal(saved.errorCode, "AI_REASONING_WITHOUT_ANSWER");
+  assert.equal(saved.reasoningContent, "只有思考过程");
+  assert.equal(attempts, 2);
+});
+
+test("reasoning that consumes the provider output limit reports the actual cause", async () => {
+  const config = {
+    aiCredentialsEncryptionKey: Buffer.alloc(32, 7).toString("base64"),
+    aiProviderTimeoutMs: 300000,
+  };
+  let saved = null;
+  const service = new AiService(
+    { db: {}, config },
+    {
+      checkTextSecurity: async () => {},
+      streamProviderCompletion: async (options) => {
+        options.stats.finishReason = "length";
+        options.onReasoning("输出额度内只有思考过程");
+        return { inputTokens: 3, outputTokens: 4096 };
+      },
+    }
+  );
+  service.prepareGeneration = async () => preparedGeneration(config);
+  service.generationContext = async () => [{ role: "user", content: "复杂问题" }];
+  service.checkpointGeneration = async () => {};
+  service.saveGenerationResult = async (prepared, options) => { saved = options; };
+
+  await assert.rejects(
+    () => service.chatStream({}, async () => {}, new AbortController().signal),
+    (error) => error.errCode === "AI_OUTPUT_LIMIT_REACHED"
+  );
+  assert.equal(saved.status, "failed");
+  assert.equal(saved.errorCode, "AI_OUTPUT_LIMIT_REACHED");
+});
+
+test("message history keeps a same-transaction user prompt before its assistant reply", async () => {
+  const conversationId = "55555555-5555-4555-8555-555555555555";
+  const userMessageId = "66666666-6666-4666-8666-666666666666";
+  const assistantMessageId = "77777777-7777-4777-8777-777777777777";
+  const createdAt = "2026-07-12T12:00:00.000Z";
+  const db = {
+    async query(text, params) {
+      const sql = String(text);
+      if (sql.includes("FROM incircle_ai_conversations")) {
+        return { rows: [{ id: conversationId, title: "顺序测试", created_at: createdAt, updated_at: createdAt }] };
+      }
+      if (sql.includes("FROM incircle_ai_messages")) {
+        assert.match(sql, /CASE WHEN role = 'assistant' THEN 1 ELSE 0 END DESC/);
+        assert.equal(params[5], -1);
+        return {
+          rows: [
+            { id: assistantMessageId, conversation_id: conversationId, role: "assistant", content: "回答", reasoning_content: " \n\u200b\ufeff ", reasoning_duration_ms: 80200, status: "complete", reply_to_message_id: userMessageId, created_at: createdAt, updated_at: createdAt },
+            { id: userMessageId, conversation_id: conversationId, role: "user", content: "提问", status: "complete", created_at: createdAt, updated_at: createdAt },
+            { id: "44444444-4444-4444-8444-444444444444", conversation_id: conversationId, role: "assistant", content: "更早", status: "complete", created_at: "2026-07-11T12:00:00.000Z", updated_at: "2026-07-11T12:00:00.000Z" },
+          ],
+        };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    },
+  };
+  const service = new AiService({ db, config: {} }, {});
+  service.requireEnabledAi = async () => ({
+    ctx: { circleId: "11111111-1111-4111-8111-111111111111", auth: { user: { id: "22222222-2222-4222-8222-222222222222" } } },
+  });
+  service.failStaleGenerations = async () => {};
+
+  const result = await service.listMessages({ conversationId, pageSize: 2 });
+  assert.deepEqual(result.messages.map((message) => message.role), ["user", "assistant"]);
+  assert.deepEqual(result.messages.map((message) => message.content), ["提问", "回答"]);
+  assert.equal(result.messages[1].reasoningContent, "");
+  assert.equal(result.messages[1].reasoningDurationMs, 80200);
+  assert.equal(result.nextCursor.endsWith(`|0|${userMessageId}`), true);
+});
+
+test("reasoning metrics migration raises the default budget and persists per-message duration", () => {
+  const root = path.resolve(__dirname, "../..");
+  const schema = fs.readFileSync(path.join(root, "server/db/schema.sql"), "utf8");
+  const migration = fs.readFileSync(
+    path.join(root, "server/db/migrations/0012_ai_reasoning_metrics.sql"),
+    "utf8"
+  );
+  assert.match(schema, /max_output_tokens integer NOT NULL DEFAULT 8192/);
+  assert.match(schema, /reasoning_duration_ms integer NOT NULL DEFAULT 0/);
+  assert.match(migration, /ADD COLUMN IF NOT EXISTS reasoning_duration_ms/);
+  assert.match(migration, /SET max_output_tokens = 8192/);
+});
+
+test("conversation context excludes prompts whose assistant reply failed", async () => {
+  let query = "";
+  let params = null;
+  const service = new AiService({
+    db: {
+      query: async (sql, values) => {
+        query = sql;
+        params = values;
+        return { rows: [] };
+      },
+    },
+    config: {},
+  }, {});
+  const currentUserMessageId = "88888888-8888-4888-8888-888888888888";
+  await service.generationContext(
+    "55555555-5555-4555-8555-555555555555",
+    { circleId: "11111111-1111-4111-8111-111111111111", auth: { user: { id: "22222222-2222-4222-8222-222222222222" } } },
+    currentUserMessageId
+  );
+  assert.match(query, /reply\.status = 'complete'/);
+  assert.match(query, /message\.id = \$4/);
+  assert.equal(params[3], currentUserMessageId);
+  await service.failStaleGenerations(
+    { circleId: "11111111-1111-4111-8111-111111111111" },
+    "55555555-5555-4555-8555-555555555555"
+  );
+  assert.match(query, /SET status = 'failed'/);
+  assert.match(query, /interval '10 minutes'/);
+});
+
+test("provider stream finishes at DONE without waiting for the upstream socket to close", async () => {
+  let iteratorClosed = false;
+  const response = {
+    async *[Symbol.asyncIterator]() {
+      try {
+        yield Buffer.from(`data: ${JSON.stringify({ choices: [{ delta: { content: "完成" } }] })}\n\ndata: [DONE]\n\n`, "utf8");
+        await new Promise(() => {});
+      } finally {
+        iteratorClosed = true;
+      }
+    },
+  };
+  let output = "";
+  await Promise.race([
+    consumeEventStream(response, "openai", async (delta) => {
+      output += delta;
+    }),
+    new Promise((resolve, reject) => setTimeout(() => reject(new Error("stream did not finish at DONE")), 100)),
+  ]);
+  assert.equal(output, "完成");
+  assert.equal(iteratorClosed, true);
+});
+
+test("provider stream also finishes at OpenAI finish_reason", async () => {
+  const response = {
+    async *[Symbol.asyncIterator]() {
+      yield Buffer.from(`data: ${JSON.stringify({ choices: [{ delta: { content: "结束" }, finish_reason: "stop" }] })}\n\n`, "utf8");
+      await new Promise(() => {});
+    },
+  };
+  let output = "";
+  await Promise.race([
+    consumeEventStream(response, "openai", async (delta) => {
+      output += delta;
+    }),
+    new Promise((resolve, reject) => setTimeout(() => reject(new Error("stream did not finish at finish_reason")), 100)),
+  ]);
+  assert.equal(output, "结束");
+});
+
+test("reconnected AI streams tail an in-progress answer instead of waiting for one full replay", async () => {
+  const service = new AiService({ db: {}, config: {} }, {});
+  service.prepareGeneration = async () => ({
+    ctx: { circleId: "circle-1", auth: { user: { id: "user-1" } } },
+    requestId: "request-123",
+    replay: {
+      conversation_id: "conversation-1",
+      assistant_id: "assistant-1",
+      assistant_status: "generating",
+      assistant_content: "恢复",
+      assistant_reasoning_content: "恢复后的",
+    },
+  });
+  service.existingRequest = async () => ({
+    conversation_id: "conversation-1",
+    assistant_id: "assistant-1",
+    assistant_status: "complete",
+    assistant_content: "恢复后的回答",
+    assistant_reasoning_content: "恢复后的思考",
+  });
+  const events = [];
+  await service.chatStream({}, async (event) => events.push(event), new AbortController().signal);
+  assert.deepEqual(events.map((event) => event.type), ["ping", "start", "reasoning", "delta", "reasoning", "delta", "done"]);
+  assert.equal(events[2].content, "恢复后的");
+  assert.equal(events[3].content, "恢复");
+  assert.equal(events[4].content, "思考");
+  assert.equal(events[5].content, "后的回答");
+  assert.equal(events[6].replay, true);
+});
+
+test("normal AI response close does not cancel generation", () => {
+  const request = { raw: new EventEmitter() };
+  const reply = { raw: new EventEmitter() };
+  reply.raw.destroyed = false;
+  let disconnected = false;
+  const unwatch = watchClientDisconnect(request, reply, () => false, () => { disconnected = true; });
+
+  reply.raw.emit("close");
+
+  assert.equal(disconnected, false);
+  unwatch();
+});
+
+test("aborted AI transport is tracked without cancelling generation", () => {
+  const request = { raw: new EventEmitter() };
+  const reply = { raw: new EventEmitter() };
+  reply.raw.destroyed = false;
+  const controller = new AbortController();
+  let disconnected = false;
+  const unwatch = watchClientDisconnect(request, reply, () => false, () => { disconnected = true; });
+
+  request.raw.emit("aborted");
+
+  assert.equal(disconnected, true);
+  assert.equal(controller.signal.aborted, false);
+  unwatch();
+});
+
+test("only the authenticated member cancel action aborts an active generation", async () => {
+  const messageId = "11111111-1111-4111-8111-111111111111";
+  const controller = new AbortController();
+  const unregister = registerActiveGeneration(messageId, controller);
+  const db = {
+    query: async (sql) => {
+      assert.match(sql, /incircle_ai_messages/);
+      return { rows: [{ id: messageId, status: "generating" }] };
+    },
+  };
+  const service = new AiService({ db, config: {} }, {});
+  service.requireMember = async () => ({
+    circleId: "22222222-2222-4222-8222-222222222222",
+    auth: { user: { id: "33333333-3333-4333-8333-333333333333" } },
+  });
+  try {
+    const result = await service.cancelGeneration({ messageId });
+    assert.equal(result.cancelled, true);
+    assert.equal(controller.signal.aborted, true);
+    assert.equal(controller.signal.reason.code, "AI_USER_CANCELLED");
+  } finally {
+    unregister();
+  }
+});
+
+test("failed AI request replays expose the generation error instead of a duplicate-request message", async () => {
+  const service = new AiService({ db: {}, config: {} }, {});
+  service.prepareGeneration = async () => ({
+    ctx: { circleId: "circle-1", auth: { user: { id: "user-1" } } },
+    requestId: "request-456",
+    replay: {
+      conversation_id: "conversation-1",
+      assistant_id: "assistant-1",
+      assistant_status: "failed",
+      assistant_content: "",
+      assistant_error_code: "AI_PROVIDER_UNAVAILABLE",
+    },
+  });
+  await assert.rejects(
+    () => service.chatStream({}, async () => {}, new AbortController().signal),
+    (error) => error.errCode === "AI_PROVIDER_UNAVAILABLE" && !String(error.message).includes("已经处理过")
+  );
+});
+
+test("WeChat transport failures do not expose AppSecret in application errors", async () => {
+  const originalFetch = global.fetch;
+  const secret = "sensitive-app-secret";
+  global.fetch = async () => {
+    throw new Error(`request failed with ${secret}`);
+  };
+  try {
+    await assert.rejects(
+      () => exchangeWechatLoginCode({ wechatAppId: "app-id", wechatAppSecret: secret }, "login-code"),
+      (error) => error.errCode === "WECHAT_LOGIN_UNAVAILABLE" && !String(error.message).includes(secret)
+    );
+  } finally {
+    global.fetch = originalFetch;
+  }
+});

@@ -1,0 +1,57 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: incircle
+      POSTGRES_USER: incircle
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-this-password}
+      TZ: Asia/Shanghai
+    volumes:
+      - incircle-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U incircle -d incircle"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build: .
+    restart: unless-stopped
+    environment:
+      NODE_ENV: ${NODE_ENV:-production}
+      HOST: ${HOST:-0.0.0.0}
+      PORT: ${PORT:-3000}
+      DATABASE_URL: ${DATABASE_URL:-postgres://incircle:change-this-password@postgres:5432/incircle}
+      CORS_ORIGINS: "${CORS_ORIGINS:-}"
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
+      UPLOAD_DIR: ${UPLOAD_DIR:-/app/uploads}
+      WECHAT_APP_ID: ${WECHAT_APP_ID:-}
+      WECHAT_APP_SECRET: ${WECHAT_APP_SECRET:-}
+      INCIRCLE_SUPER_ADMIN_OPENIDS: ${INCIRCLE_SUPER_ADMIN_OPENIDS:-}
+      JWT_SECRET: ${JWT_SECRET:-replace-with-a-long-random-secret}
+      JWT_TTL_SECONDS: ${JWT_TTL_SECONDS:-86400}
+      AI_CREDENTIALS_ENCRYPTION_KEY: ${AI_CREDENTIALS_ENCRYPTION_KEY:-}
+      AI_PROVIDER_TIMEOUT_MS: ${AI_PROVIDER_TIMEOUT_MS:-300000}
+      AI_CONTENT_SECURITY_ENABLED: ${AI_CONTENT_SECURITY_ENABLED:-true}
+      TZ: Asia/Shanghai
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./uploads:/app/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/health >/dev/null || exit 1"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  incircle-postgres-data:

@@ -1,0 +1,519 @@
+<page-meta page-style="{{themeStyle}} {{incircleKeyboardPageStyle}}"></page-meta>
+
+<view class="page tools-page {{themeClass}}" style="{{tabBarInsetStyle}}" wx:if="{{!loading}}">
+  <view class="tool-hero motion-hero">
+    <view>
+      <view class="eyebrow">小圈工具箱</view>
+      <view class="page-title">账单、投票、打卡一处处理</view>
+      <view class="hero-desc">把临时决策、结算提醒和每日记录收在一起。</view>
+    </view>
+    <view class="hero-count motion-theme-mark">
+      <image class="hero-icon" src="/images/ui-icons/tools.png"></image>
+    </view>
+  </view>
+
+  <view class="segmented">
+    <view
+      class="segment motion-state {{tab.activeClass}}"
+      wx:for="{{toolTabs}}"
+      wx:key="key"
+      wx:for-item="tab"
+      data-key="{{tab.key}}"
+      bindtap="switchTool"
+    >
+      <image class="segment-icon" src="{{tab.icon}}"></image>
+      <text>{{tab.label}}</text>
+    </view>
+  </view>
+
+  <view class="motion-content-swap" wx:if="{{showAA}}">
+    <view class="section-head">
+      <view class="section-title with-icon">
+        <image class="section-icon" src="/images/ui-icons/bill.png"></image>
+        <text>AA 待结清</text>
+      </view>
+      <view class="section-action" bindtap="createCurrentTool">创建账单</view>
+    </view>
+    <view class="bill-card tool-card card {{billIndex < 6 ? 'motion-list-item' : ''}}" wx:for="{{bills}}" wx:key="id" wx:for-item="bill" wx:for-index="billIndex" data-id="{{bill.id}}" bindtap="openBill" style="animation-delay: {{billIndex * 35}}ms;">
+      <view class="tool-card-head">
+        <view class="tool-icon-wrap">
+          <image class="tool-card-icon" src="/images/ui-icons/bill.png"></image>
+        </view>
+        <view class="tool-card-main">
+          <view class="tool-kicker">AA 分账</view>
+          <view class="card-title">{{bill.title}}</view>
+          <view class="tool-subtitle">{{bill.splitMode}} · {{bill.participants.length}} 人参与</view>
+        </view>
+        <view class="bill-amount">¥{{bill.amount}}</view>
+      </view>
+      <view class="tool-stat-grid">
+        <view class="tool-stat-item">
+          <view class="tool-stat-label">垫付人</view>
+          <view class="tool-stat-value">{{bill.payerName}}</view>
+        </view>
+        <view class="tool-stat-item">
+          <view class="tool-stat-label">人均</view>
+          <view class="tool-stat-value">¥{{bill.perPerson}}</view>
+        </view>
+        <view class="tool-stat-item">
+          <view class="tool-stat-label">状态</view>
+          <view class="tool-stat-value">{{bill.status}}</view>
+        </view>
+      </view>
+      <view class="punchline">{{bill.punchline}}</view>
+      <view class="debtor-row" wx:if="{{bill.debtors.length}}">
+        <view class="mini-tag" wx:for="{{bill.debtors}}" wx:key="*this">{{item}} 未结清</view>
+      </view>
+      <view class="transfer-list" wx:if="{{bill.transfers.length}}">
+        <view class="transfer-item" wx:for="{{bill.transfers}}" wx:key="from">
+          <text>{{item.from}} → {{item.to}}</text>
+          <text>¥{{item.amount}}</text>
+        </view>
+      </view>
+      <view class="action-row {{bill.canEdit && bill.canDelete ? 'four-actions' : bill.canEdit || bill.canDelete ? 'three-actions' : ''}}">
+        <view
+          wx:if="{{bill.canEdit}}"
+          class="ghost-btn small"
+          data-id="{{bill.id}}"
+          catchtap="editBill"
+        >编辑</view>
+        <view
+          wx:if="{{bill.canDelete}}"
+          class="danger-btn small {{actionLoadingType === 'deleteBill' && actionLoadingId === bill.id ? 'disabled' : ''}}"
+          data-id="{{bill.id}}"
+          catchtap="deleteBill"
+        >{{actionLoadingType === 'deleteBill' && actionLoadingId === bill.id ? '删除中...' : '删除'}}</view>
+        <view
+          class="ghost-btn small {{actionLoadingType === 'remindBill' && actionLoadingId === bill.id ? 'disabled' : ''}}"
+          data-id="{{bill.id}}"
+          catchtap="remindBill"
+        >{{actionLoadingType === 'remindBill' && actionLoadingId === bill.id ? '提醒中...' : '提醒未结清'}}</view>
+        <view
+          class="primary-btn small {{actionLoadingType === 'settleBill' && actionLoadingId === bill.id ? 'disabled' : ''}}"
+          data-id="{{bill.id}}"
+          catchtap="markSettled"
+        >{{actionLoadingType === 'settleBill' && actionLoadingId === bill.id ? '标记中...' : '标记结清'}}</view>
+      </view>
+    </view>
+    <empty-state
+      wx:if="{{!bills.length}}"
+      kind="bill"
+      icon="/images/ui-icons/bill.png"
+      eyebrow="钱款清清楚楚"
+      title="还没有待结清账单"
+      description="聚餐、采购或出游产生费用后，在这里生成分账和转账建议。"
+      action-text="创建第一笔 AA"
+      spacious="{{true}}"
+      bindaction="createCurrentTool"
+    />
+  </view>
+
+  <view class="motion-content-swap" wx:elif="{{showVote}}">
+    <view class="section-head">
+      <view class="section-title with-icon">
+        <image class="section-icon" src="/images/ui-icons/vote.png"></image>
+        <text>投票 / 决策器</text>
+      </view>
+      <view class="section-action" bindtap="createCurrentTool">新建投票</view>
+    </view>
+    <view class="vote-card tool-card card {{voteIndex < 6 ? 'motion-list-item' : ''}}" wx:for="{{votes}}" wx:key="id" wx:for-item="vote" wx:for-index="voteIndex" data-id="{{vote.id}}" bindtap="openVote" style="animation-delay: {{voteIndex * 35}}ms;">
+      <view class="tool-card-head">
+        <view class="tool-icon-wrap">
+          <image class="tool-card-icon" src="/images/ui-icons/vote.png"></image>
+        </view>
+        <view class="tool-card-main">
+          <view class="tool-kicker">{{vote.type}}</view>
+          <view class="card-title">{{vote.title}}</view>
+          <view class="tool-subtitle">{{vote.deadlineText || vote.deadline}}</view>
+        </view>
+        <view class="pill {{vote.statusClass}}">{{vote.statusText}}</view>
+      </view>
+      <view class="tool-chip-row">
+        <view class="tool-info-chip" wx:for="{{vote.ruleChips}}" wx:key="*this">{{item}}</view>
+      </view>
+      <view
+        class="option-item option-card motion-state {{option.selectedClass}} {{!vote.canVote || actionLoadingType === 'voteOption' && actionLoadingId === vote.id ? 'disabled' : ''}}"
+        wx:for="{{vote.options}}"
+        wx:key="name"
+        wx:for-item="option"
+        data-id="{{vote.id}}"
+        data-name="{{option.name}}"
+        catchtap="voteOption"
+      >
+        <view class="option-head">
+          <text class="option-name">{{option.name}}</text>
+          <text class="option-count" wx:if="{{actionLoadingType === 'voteOption' && actionLoadingId === vote.id && actionLoadingName === option.name}}">投票中...</text>
+          <text class="option-count" wx:elif="{{!vote.canVote}}">已截止</text>
+          <text wx:elif="{{option.selected}}" class="option-count option-selected-text">{{option.selectedText}}</text>
+          <text class="option-count" wx:else>{{option.count}} 票</text>
+        </view>
+        <view class="progress-track">
+          <view class="progress-fill blue motion-progress" style="width: {{option.percent}}%;"></view>
+        </view>
+        <view class="voter-strip compact" wx:if="{{vote.showVoterAvatars && option.hasVoters}}">
+          <image
+            class="voter-avatar"
+            wx:for="{{option.voters}}"
+            wx:key="memberId"
+            wx:for-item="voter"
+            src="{{voter.avatar}}"
+            mode="aspectFill"
+          ></image>
+        </view>
+      </view>
+      <view class="silent-line">沉默名单：{{vote.silentText}}</view>
+      <view class="vote-summary-preview" wx:if="{{vote.hasResultSummary}}">{{vote.resultSummary}}</view>
+      <view class="action-row {{vote.canEdit && vote.canDelete ? '' : 'single-action'}}" wx:if="{{vote.canEdit || vote.canDelete}}">
+        <view
+          wx:if="{{vote.canEdit}}"
+          class="ghost-btn small"
+          data-id="{{vote.id}}"
+          catchtap="editVote"
+        >编辑投票</view>
+        <view
+          wx:if="{{vote.canDelete}}"
+          class="danger-btn small {{actionLoadingType === 'deleteVote' && actionLoadingId === vote.id ? 'disabled' : ''}}"
+          data-id="{{vote.id}}"
+          catchtap="deleteVote"
+        >{{actionLoadingType === 'deleteVote' && actionLoadingId === vote.id ? '删除中...' : '删除投票'}}</view>
+      </view>
+    </view>
+    <empty-state
+      wx:if="{{!votes.length}}"
+      kind="vote"
+      icon="/images/ui-icons/vote.png"
+      eyebrow="把纠结交给大家"
+      title="还没有投票"
+      description="地点、时间、吃什么或选方案，都可以发起一次清楚的圈内表决。"
+      action-text="新建投票"
+      compact="{{true}}"
+      bindaction="createCurrentTool"
+    />
+
+    <view class="section-head">
+      <view class="section-title with-icon">
+        <image class="section-icon" src="/images/ui-icons/dice.svg"></image>
+        <text>随机抽签 / 命运转盘</text>
+      </view>
+      <view class="section-action">娱乐模式</view>
+    </view>
+    <view class="decision-card card {{makerIndex < 6 ? 'motion-list-item' : ''}}" wx:for="{{decisionMakers}}" wx:key="id" wx:for-item="maker" wx:for-index="makerIndex" style="animation-delay: {{makerIndex * 35}}ms;">
+      <view class="card-head">
+        <view>
+          <view class="tool-label label-blue">
+            <image class="label-icon" src="/images/ui-icons/dice.svg"></image>
+            <text>{{maker.type}}</text>
+          </view>
+          <view class="card-title">{{maker.title}}</view>
+          <view class="muted">选项：{{maker.options.length}} 个 · 可一键回群公布</view>
+        </view>
+        <view class="wheel-mark">{{maker.result}}</view>
+      </view>
+      <view class="decision-row">
+        <view class="decision-chip" wx:for="{{maker.options}}" wx:key="*this">{{item}}</view>
+      </view>
+      <view class="decision-result motion-state done" wx:if="{{maker.hasResult}}">{{maker.shareText}}</view>
+      <view class="action-row">
+        <view
+          class="ghost-btn small {{actionLoadingType === 'runDecision' && actionLoadingId === maker.id ? 'disabled' : ''}}"
+          data-id="{{maker.id}}"
+          catchtap="runDecision"
+        >{{actionLoadingType === 'runDecision' && actionLoadingId === maker.id ? '生成中...' : '转一下'}}</view>
+        <button
+          wx:if="{{maker.hasResult}}"
+          class="primary-btn small share-btn"
+          open-type="share"
+          data-share-type="decision"
+          data-id="{{maker.id}}"
+          bindtap="prepareDecisionShare"
+        >结果回群</button>
+        <view wx:else class="primary-btn small disabled">先生成结果</view>
+      </view>
+    </view>
+    <empty-state
+      wx:if="{{!decisionMakers.length}}"
+      kind="decision"
+      icon="/images/ui-icons/dice.svg"
+      title="还没有可用的抽签器"
+      description="创建投票处理正式决定；需要轻松一点时，再来转转运气。"
+      compact="{{true}}"
+    />
+  </view>
+
+  <view class="motion-content-swap" wx:elif="{{showCheckin}}">
+    <view class="section-head">
+      <view class="section-title with-icon">
+        <image class="section-icon" src="/images/ui-icons/checkin.png"></image>
+        <text>打卡挑战</text>
+      </view>
+      <view class="section-action" bindtap="createCurrentTool">创建挑战</view>
+    </view>
+    <view class="checkin-card tool-card card {{checkinIndex < 6 ? 'motion-list-item' : ''}}" wx:for="{{checkins}}" wx:key="id" wx:for-item="checkin" wx:for-index="checkinIndex" data-id="{{checkin.id}}" bindtap="openCheckin" style="animation-delay: {{checkinIndex * 35}}ms;">
+      <view class="tool-card-head">
+        <view class="tool-icon-wrap">
+          <image class="tool-card-icon" src="/images/ui-icons/checkin.png"></image>
+        </view>
+        <view class="tool-card-main">
+          <view class="tool-kicker">{{checkin.type}}</view>
+          <view class="card-title">{{checkin.title}}</view>
+          <view class="tool-subtitle">{{checkin.reward}}</view>
+        </view>
+        <view class="checkin-state {{checkin.statusClass}}">
+          <view class="checkin-state-dot"></view>
+          <text>{{checkin.statusText}}</text>
+        </view>
+      </view>
+      <view class="checkin-progress-head">
+        <view>当日进度</view>
+        <view>已打卡 {{checkin.done}} / {{checkin.total}} 人</view>
+      </view>
+      <view class="progress-track">
+        <view class="progress-fill motion-progress" style="width: {{checkin.percent}}%;"></view>
+      </view>
+      <view class="checkin-bottom">
+        <view class="checkin-support">
+          <view class="decision-chip">请假卡</view>
+          <view class="decision-chip">补签卡</view>
+          <view class="decision-chip">每周总结</view>
+        </view>
+        <view
+          class="primary-btn small {{checkin.buttonClass}} {{actionLoadingType === 'checkIn' && actionLoadingId === checkin.id ? 'disabled' : ''}}"
+          data-id="{{checkin.id}}"
+          catchtap="checkIn"
+        >{{actionLoadingType === 'checkIn' && actionLoadingId === checkin.id ? '提交中...' : checkin.buttonText}}</view>
+      </view>
+      <view class="action-row {{checkin.canEdit && checkin.canDelete ? '' : 'single-action'}}" wx:if="{{checkin.canEdit || checkin.canDelete}}">
+        <view
+          wx:if="{{checkin.canEdit}}"
+          class="ghost-btn small"
+          data-id="{{checkin.id}}"
+          catchtap="editCheckin"
+        >编辑挑战</view>
+        <view
+          wx:if="{{checkin.canDelete}}"
+          class="danger-btn small {{actionLoadingType === 'deleteCheckin' && actionLoadingId === checkin.id ? 'disabled' : ''}}"
+          data-id="{{checkin.id}}"
+          catchtap="deleteCheckin"
+        >{{actionLoadingType === 'deleteCheckin' && actionLoadingId === checkin.id ? '删除中...' : '删除挑战'}}</view>
+      </view>
+    </view>
+    <empty-state
+      wx:if="{{!checkins.length}}"
+      kind="checkin"
+      icon="/images/ui-icons/checkin.png"
+      eyebrow="一起坚持更容易"
+      title="还没有打卡挑战"
+      description="学习、健身、早睡或项目进度，都可以建立一条连续记录。"
+      action-text="创建第一个挑战"
+      spacious="{{true}}"
+      bindaction="createCurrentTool"
+    />
+  </view>
+
+  <view class="sheet-mask" wx:if="{{showCreateSheet}}" bindtap="closeCreateSheet" catchtouchmove="noop">
+    <view class="create-sheet" catchtap="noop">
+      <view class="sheet-head">
+        <view>
+          <view class="sheet-kicker">{{formKicker}}</view>
+          <view class="sheet-title">{{createTitle}}</view>
+        </view>
+        <view class="sheet-close" bindtap="closeCreateSheet">×</view>
+      </view>
+
+      <view wx:if="{{showCreateAA}}">
+        <view class="field">
+          <view class="field-label">账单标题</view>
+          <input class="field-input" adjust-position="{{true}}" cursor-spacing="96" placeholder="例如：周末露营采购" value="{{billDraft.title}}" data-field="title" bindinput="onBillInput" />
+        </view>
+        <view class="field-row">
+          <view class="field">
+            <view class="field-label">总金额</view>
+            <input class="field-input" type="digit" adjust-position="{{true}}" cursor-spacing="96" placeholder="可留空，自动汇总明细" value="{{billDraft.amount}}" data-field="amount" bindinput="onBillInput" />
+          </view>
+          <view class="field">
+            <view class="field-label">垫付人</view>
+            <picker range="{{memberNames}}" bindchange="onPayerChange">
+              <view class="field-picker">{{billDraft.payerName}}</view>
+            </picker>
+          </view>
+        </view>
+        <view class="field">
+          <view class="field-label">分账方式</view>
+          <picker range="{{splitModes}}" bindchange="onSplitModeChange">
+            <view class="field-picker">{{billDraft.splitMode}}</view>
+          </picker>
+        </view>
+        <view class="field">
+          <view class="field-label">参与人</view>
+          <view class="member-picker">
+            <view
+              class="member-chip {{member.activeClass}}"
+              wx:for="{{billDraft.memberOptions}}"
+              wx:key="name"
+              wx:for-item="member"
+              data-name="{{member.name}}"
+              bindtap="toggleParticipant"
+            >{{member.name}}</view>
+          </view>
+          <view class="field-help">没选中的成员不会参与分账，适合“某人不参与”的场景。</view>
+        </view>
+        <view class="field">
+          <view class="field-label">多笔消费明细</view>
+          <textarea class="field-textarea" fixed="{{true}}" show-confirm-bar="{{false}}" adjust-position="{{true}}" adjust-keyboard-to="bottom" cursor-spacing="96" value="{{billDraft.expenseText}}" data-field="expenseText" bindinput="onBillInput" placeholder="每行一笔，例如：主餐 428"></textarea>
+        </view>
+        <view class="field" wx:if="{{billDraft.showCustomAmounts}}">
+          <view class="field-label">自定义金额明细</view>
+          <textarea class="field-textarea" fixed="{{true}}" show-confirm-bar="{{false}}" adjust-position="{{true}}" adjust-keyboard-to="bottom" cursor-spacing="96" value="{{billDraft.customAmountText}}" data-field="customAmountText" bindinput="onBillInput" placeholder="每行一人，例如：成员昵称 88"></textarea>
+          <view class="field-help">只统计已选参与人且不是垫付人的成员，系统会按这里的金额生成转账建议。</view>
+        </view>
+        <view class="sheet-tip">
+          {{editingBusinessId ? 'AA 已结清后会锁定；修改账目会重新计算未结清名单和转账建议。' : '可留空总金额，系统会汇总消费明细，并自动计算人均、未结清名单和转账建议。'}}
+        </view>
+      </view>
+
+      <view wx:elif="{{showCreateVote}}">
+        <view class="field">
+          <view class="field-label">投票标题</view>
+          <input class="field-input" adjust-position="{{true}}" cursor-spacing="96" placeholder="例如：下次玩什么" value="{{voteDraft.title}}" data-field="title" bindinput="onVoteInput" />
+        </view>
+        <view class="field-row">
+          <view class="field">
+            <view class="field-label">投票类型</view>
+            <picker range="{{voteTypes}}" value="{{voteDraft.typeIndex}}" bindchange="onVoteTypeChange">
+              <view class="field-picker">{{voteDraft.type}}</view>
+            </picker>
+          </view>
+          <view class="field">
+            <view class="field-label">截止时间</view>
+            <input class="field-input" adjust-position="{{true}}" cursor-spacing="96" placeholder="2026-07-11 22:00:00" value="{{voteDraft.deadline}}" data-field="deadline" bindinput="onVoteInput" />
+          </view>
+        </view>
+        <view class="field-row">
+          <view class="field">
+            <view class="field-label">实名/匿名</view>
+            <picker range="{{voteVisibilities}}" bindchange="onVoteVisibilityChange">
+              <view class="field-picker">{{voteDraft.visibility}}</view>
+            </picker>
+          </view>
+          <view class="field">
+            <view class="field-label">单选/多选</view>
+            <picker range="{{voteChoiceModes}}" bindchange="onVoteChoiceModeChange">
+              <view class="field-picker">{{voteDraft.choiceMode}}</view>
+            </picker>
+          </view>
+        </view>
+        <view class="field">
+          <view class="field-label">高级规则</view>
+          <view class="rule-toggle-row">
+            <view class="rule-toggle {{voteDraft.allowVetoClass}}" data-field="allowVeto" bindtap="toggleVoteRule">一票否决</view>
+            <view class="rule-toggle {{voteDraft.organizerWeightedClass}}" data-field="organizerWeighted" bindtap="toggleVoteRule">组织者权重票</view>
+          </view>
+          <view class="field-help">适合时间冲突、忌口、组织者需要拍板的熟人圈决策。</view>
+        </view>
+        <view class="field">
+          <view class="field-label">选项</view>
+          <textarea class="field-textarea" fixed="{{true}}" show-confirm-bar="{{false}}" adjust-position="{{true}}" adjust-keyboard-to="bottom" cursor-spacing="96" value="{{voteDraft.optionsText}}" data-field="optionsText" bindinput="onVoteInput" placeholder="{{voteDraft.optionPlaceholder}}"></textarea>
+        </view>
+        <view class="field vote-location-field" wx:if="{{voteDraft.showLocationField}}">
+          <view class="field-label">投票关联地点</view>
+          <view class="location-card">
+            <view class="location-card-head">
+              <view>
+                <view class="location-card-title">地点说明</view>
+                <view class="location-card-copy">手动输入仍可用，地图选点会补充导航信息。</view>
+              </view>
+              <view class="location-status {{voteDraft.hasMapLocation ? 'active' : ''}}">
+                {{voteDraft.hasMapLocation ? "已选点" : "可选"}}
+              </view>
+            </view>
+            <input class="field-input location-input" adjust-position="{{true}}" cursor-spacing="96" placeholder="例如：万象城 4F / 家里 / 球馆附近" value="{{voteDraft.locationText}}" data-field="locationText" bindinput="onVoteInput" />
+            <view class="location-picker" bindtap="chooseVoteLocation">
+              <view class="location-picker-main">
+                <view class="location-picker-title">{{voteDraft.mapLocationLabel}}</view>
+                <view class="location-picker-copy">
+                  {{voteDraft.locationAddress || "可附微信地图位置，结果页能直接打开导航。"}}
+                </view>
+              </view>
+              <view class="location-picker-action">{{voteDraft.locationActionText}}</view>
+            </view>
+          </view>
+        </view>
+        <view class="sheet-tip">
+          {{editingBusinessId ? '投票开始有人参与后会锁定规则和选项，避免修改已经产生的结果。' : '创建后会自动生成沉默名单，截止或提前截止后会生成摘要分析，可分享给群里看详情。'}}
+        </view>
+      </view>
+
+      <view wx:elif="{{showCreateCheckin}}">
+        <view class="field">
+          <view class="field-label">挑战标题</view>
+          <input class="field-input" adjust-position="{{true}}" cursor-spacing="96" placeholder="例如：7 天早睡挑战" value="{{checkinDraft.title}}" data-field="title" bindinput="onCheckinInput" />
+        </view>
+        <view class="field-row">
+          <view class="field">
+            <view class="field-label">打卡类型</view>
+            <picker range="{{checkinTypes}}" bindchange="onCheckinTypeChange">
+              <view class="field-picker">{{checkinDraft.type}}</view>
+            </picker>
+          </view>
+          <view class="field">
+            <view class="field-label">目标人数</view>
+            <input class="field-input" type="number" adjust-position="{{true}}" cursor-spacing="96" placeholder="10" value="{{checkinDraft.total}}" data-field="total" bindinput="onCheckinInput" />
+          </view>
+        </view>
+        <view class="field">
+          <view class="field-label">奖励/规则</view>
+          <input class="field-input" adjust-position="{{true}}" cursor-spacing="96" placeholder="例如：连续 7 天解锁徽章" value="{{checkinDraft.reward}}" data-field="reward" bindinput="onCheckinInput" />
+        </view>
+        <view class="sheet-tip">
+          {{editingBusinessId ? '产生打卡记录或使用请假卡、补签卡后，挑战规则将不能再修改。' : '适合学习、运动、自律和项目进度群，详情页可提交文字、图片和数字记录。'}}
+        </view>
+      </view>
+
+      <view class="form-submit-row" wx:if="{{showCreateAA}}">
+        <view class="ghost-btn sheet-submit {{actionLoadingType === 'saveTool' ? 'disabled' : ''}}" bindtap="submitBill">
+          {{actionLoadingType === 'saveTool' ? '保存中...' : '保存'}}
+        </view>
+        <view
+          class="primary-btn sheet-submit {{actionLoadingType === 'saveTool' ? 'disabled' : ''}}"
+          data-share-after="{{true}}"
+          bindtap="submitBill"
+        >{{actionLoadingType === 'saveTool' ? '保存中...' : '保存并分享'}}</view>
+      </view>
+      <view
+        wx:else
+        class="primary-btn sheet-submit {{actionLoadingType === 'saveTool' ? 'disabled' : ''}}"
+        bindtap="submitCreateTool"
+      >{{actionLoadingType === 'saveTool' ? '保存中...' : editingBusinessId ? '保存修改' : '保存'}}</view>
+    </view>
+  </view>
+
+  <view class="sheet-mask" wx:if="{{showShareSheet}}" bindtap="closeShareSheet" catchtouchmove="noop">
+    <view class="share-ready-sheet" catchtap="noop">
+      <view class="share-ready-mark">✓</view>
+      <view class="share-ready-title">AA 已保存</view>
+      <view class="share-ready-copy">账单已落库，现在可以通过微信原生分享发送结算详情。</view>
+      <button
+        class="primary-btn share-ready-primary"
+        open-type="share"
+        data-share-type="bill"
+        data-id="{{shareTargetBill.id}}"
+      >分享给微信好友或群</button>
+      <view class="ghost-btn share-ready-secondary" bindtap="closeShareSheet">暂不分享</view>
+    </view>
+  </view>
+</view>
+
+<view class="page tools-page loading-page {{themeClass}}" style="{{tabBarInsetStyle}}" wx:else>
+  <view class="loading-panel">
+    <view class="loading-illustration">
+      <view class="loading-card-line first"></view>
+      <view class="loading-card-line second"></view>
+      <view class="loading-card-line third"></view>
+      <view class="loading-card-mark"></view>
+    </view>
+    <view class="loading-text">正在打开工具箱...</view>
+    <view class="loading-dots"><view></view><view></view><view></view></view>
+  </view>
+</view>
+<ai-fab />
+<theme-dialog id="incircle-theme-dialog" />

@@ -1,0 +1,18 @@
+.circle-member-page { padding-top: 24rpx; padding-bottom: calc(36rpx + env(safe-area-inset-bottom)); }
+.member-identity { display: flex; align-items: center; gap: 18rpx; padding: 26rpx; border: 1rpx solid var(--theme-card-border,rgba(47,125,80,.1)); border-radius: 16rpx; background: linear-gradient(145deg,var(--theme-soft,#eef7f1),#fff); }
+.member-avatar { width: 96rpx; height: 96rpx; flex-shrink: 0; border: 3rpx solid #fff; border-radius: 50%; box-shadow: 0 8rpx 20rpx rgba(28,48,39,.12); }
+.identity-copy { min-width: 0; flex: 1; }
+.identity-name { overflow: hidden; color: #1d2824; font-size: 34rpx; line-height: 1.25; font-weight: 800; text-overflow: ellipsis; white-space: nowrap; }
+.identity-title { margin-top: 7rpx; color: #74807b; font-size: 23rpx; }
+.info-section { margin-top: 30rpx; }
+.section-title { margin-bottom: 13rpx; color: #26312d; font-size: 28rpx; font-weight: 800; }
+.info-rows,.profile-note { border: 1rpx solid var(--theme-card-border,rgba(47,125,80,.1)); border-radius: 14rpx; background: #fff; }
+.info-row { display: flex; align-items: center; justify-content: space-between; gap: 24rpx; min-height: 76rpx; padding: 0 22rpx; color: #737d79; font-size: 23rpx; }
+.info-row + .info-row { border-top: 1rpx solid #edf1ee; }
+.info-row text:last-child { min-width: 0; color: #27322e; font-weight: 700; text-align: right; }
+.profile-note { padding: 22rpx; color: #4f5b56; font-size: 24rpx; line-height: 1.65; }
+.tag-wrap { display: flex; flex-wrap: wrap; gap: 12rpx; }
+.profile-tag { max-width: 100%; padding: 10rpx 16rpx; overflow: hidden; border-radius: 10rpx; background: var(--theme-soft,#eaf5ed); color: var(--theme-primary-dark,#1c5638); font-size: 22rpx; text-overflow: ellipsis; white-space: nowrap; box-sizing: border-box; }
+.privacy-note { margin-top: 30rpx; color: #8a9490; font-size: 21rpx; line-height: 1.5; text-align: center; }
+.remove-member-button { display: flex; align-items: center; justify-content: center; height: 76rpx; margin-top: 22rpx; border: 1rpx solid rgba(179,74,52,.18); border-radius: 12rpx; background: #fff4f0; color: #b34a34; font-size: 25rpx; font-weight: 800; }
+.disabled { opacity: .55; pointer-events: none; }

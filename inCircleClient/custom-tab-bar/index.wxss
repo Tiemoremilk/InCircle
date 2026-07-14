@@ -1,0 +1,192 @@
+.custom-tabbar {
+  position: fixed;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 999;
+  box-sizing: border-box;
+  background: rgba(252, 254, 253, 0.94);
+  border-top: 1rpx solid rgba(47, 130, 89, 0.1);
+  box-shadow: 0 -10rpx 30rpx rgba(47, 130, 89, 0.08);
+  backdrop-filter: blur(18rpx);
+}
+
+.custom-tabbar-inner {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  height: 92rpx;
+  box-sizing: border-box;
+  padding: 4rpx 12rpx 6rpx;
+}
+
+.tabbar-item {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  height: 82rpx;
+  box-sizing: border-box;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 2rpx;
+  color: #79827f;
+  font-size: 20rpx;
+  font-weight: 700;
+  line-height: 1;
+  text-align: center;
+  opacity: 1;
+  transition: color 160ms ease, opacity 120ms ease;
+}
+
+.tabbar-item:active {
+  opacity: 0.82;
+}
+
+.tabbar-item.active {
+  color: #2f8259;
+}
+
+.tabbar-icon {
+  display: block;
+  width: 48rpx;
+  height: 48rpx;
+  flex-shrink: 0;
+  filter: brightness(0) saturate(100%) invert(50%) sepia(7%) saturate(426%) hue-rotate(111deg) brightness(94%) contrast(88%);
+  transform: scale(1);
+  transition: transform 200ms cubic-bezier(0.22, 1, 0.36, 1), opacity 140ms ease;
+}
+
+.tabbar-label {
+  display: block;
+  width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tabbar-item.active .tabbar-icon {
+  filter: brightness(0) saturate(100%) invert(45%) sepia(18%) saturate(1138%) hue-rotate(96deg) brightness(90%) contrast(86%);
+  transform: scale(1.06);
+}
+
+.custom-tabbar.theme-forest {
+  --tabbar-bg: rgba(252, 254, 253, 0.94);
+  --tabbar-border: rgba(47, 130, 89, 0.12);
+  --tabbar-shadow: rgba(47, 130, 89, 0.08);
+  --tabbar-active: #2f8259;
+  --tabbar-active-filter: brightness(0) saturate(100%) invert(45%) sepia(18%) saturate(1138%) hue-rotate(96deg) brightness(90%) contrast(86%);
+}
+
+.custom-tabbar.theme-ocean {
+  --tabbar-bg: rgba(252, 253, 255, 0.94);
+  --tabbar-border: rgba(52, 114, 168, 0.12);
+  --tabbar-shadow: rgba(52, 114, 168, 0.08);
+  --tabbar-active: #3472a8;
+  --tabbar-active-filter: brightness(0) saturate(100%) invert(42%) sepia(21%) saturate(1474%) hue-rotate(169deg) brightness(91%) contrast(89%);
+}
+
+.custom-tabbar.theme-berry {
+  --tabbar-bg: rgba(255, 253, 253, 0.94);
+  --tabbar-border: rgba(182, 87, 122, 0.12);
+  --tabbar-shadow: rgba(182, 87, 122, 0.08);
+  --tabbar-active: #b6577a;
+  --tabbar-active-filter: brightness(0) saturate(100%) invert(45%) sepia(15%) saturate(1644%) hue-rotate(289deg) brightness(91%) contrast(87%);
+}
+
+.custom-tabbar.theme-graphite {
+  --tabbar-bg: rgba(253, 254, 254, 0.94);
+  --tabbar-border: rgba(94, 108, 120, 0.12);
+  --tabbar-shadow: rgba(65, 77, 87, 0.08);
+  --tabbar-active: #5e6c78;
+  --tabbar-active-filter: brightness(0) saturate(100%) invert(41%) sepia(11%) saturate(673%) hue-rotate(165deg) brightness(95%) contrast(87%);
+}
+
+.custom-tabbar.theme-coral {
+  --tabbar-bg: rgba(255, 253, 252, 0.94);
+  --tabbar-border: rgba(188, 87, 69, 0.12);
+  --tabbar-shadow: rgba(188, 87, 69, 0.08);
+  --tabbar-active: #bc5745;
+  --tabbar-active-filter: brightness(0) saturate(100%) invert(42%) sepia(39%) saturate(1000%) hue-rotate(325deg) brightness(93%) contrast(89%);
+}
+
+.custom-tabbar.theme-peacock {
+  --tabbar-bg: rgba(252, 255, 254, 0.94);
+  --tabbar-border: rgba(36, 127, 122, 0.12);
+  --tabbar-shadow: rgba(36, 127, 122, 0.08);
+  --tabbar-active: #247f7a;
+  --tabbar-active-filter: brightness(0) saturate(100%) invert(43%) sepia(25%) saturate(1029%) hue-rotate(128deg) brightness(91%) contrast(85%);
+}
+
+.custom-tabbar.theme-iris {
+  --tabbar-bg: rgba(254, 254, 255, 0.94);
+  --tabbar-border: rgba(113, 100, 170, 0.12);
+  --tabbar-shadow: rgba(113, 100, 170, 0.08);
+  --tabbar-active: #7164aa;
+  --tabbar-active-filter: brightness(0) saturate(100%) invert(42%) sepia(18%) saturate(1298%) hue-rotate(210deg) brightness(91%) contrast(87%);
+}
+
+.custom-tabbar.theme-cyan {
+  --tabbar-bg: rgba(255, 254, 249, 0.94);
+  --tabbar-border: rgba(131, 112, 31, 0.12);
+  --tabbar-shadow: rgba(131, 112, 31, 0.08);
+  --tabbar-active: #83701f;
+  --tabbar-active-filter: brightness(0) saturate(100%) invert(44%) sepia(41%) saturate(817%) hue-rotate(12deg) brightness(93%) contrast(88%);
+}
+
+.custom-tabbar.theme-mint {
+  --tabbar-bg: rgba(254, 254, 251, 0.94);
+  --tabbar-border: rgba(104, 120, 61, 0.12);
+  --tabbar-shadow: rgba(104, 120, 61, 0.08);
+  --tabbar-active: #68783d;
+  --tabbar-active-filter: brightness(0) saturate(100%) invert(48%) sepia(18%) saturate(945%) hue-rotate(34deg) brightness(88%) contrast(87%);
+}
+
+.custom-tabbar.theme-sky {
+  --tabbar-bg: rgba(253, 254, 254, 0.94);
+  --tabbar-border: rgba(82, 117, 165, 0.12);
+  --tabbar-shadow: rgba(82, 117, 165, 0.08);
+  --tabbar-active: #5275a5;
+  --tabbar-active-filter: brightness(0) saturate(100%) invert(47%) sepia(15%) saturate(1308%) hue-rotate(173deg) brightness(91%) contrast(86%);
+}
+
+.custom-tabbar.theme-apricot {
+  --tabbar-bg: rgba(255, 254, 250, 0.94);
+  --tabbar-border: rgba(168, 103, 50, 0.12);
+  --tabbar-shadow: rgba(168, 103, 50, 0.08);
+  --tabbar-active: #a86732;
+  --tabbar-active-filter: brightness(0) saturate(100%) invert(45%) sepia(26%) saturate(1270%) hue-rotate(344deg) brightness(90%) contrast(88%);
+}
+
+.custom-tabbar.theme-lilac {
+  --tabbar-bg: rgba(255, 254, 254, 0.94);
+  --tabbar-border: rgba(139, 105, 156, 0.12);
+  --tabbar-shadow: rgba(139, 105, 156, 0.08);
+  --tabbar-active: #8b699c;
+  --tabbar-active-filter: brightness(0) saturate(100%) invert(48%) sepia(13%) saturate(1051%) hue-rotate(232deg) brightness(89%) contrast(86%);
+}
+
+.custom-tabbar {
+  background: var(--tabbar-bg, rgba(252, 254, 253, 0.94));
+  border-top-color: var(--tabbar-border, rgba(47, 130, 89, 0.12));
+  box-shadow: 0 -10rpx 30rpx var(--tabbar-shadow, rgba(47, 130, 89, 0.08));
+}
+
+.custom-tabbar .tabbar-item.active {
+  color: var(--tabbar-active, #2f8259);
+}
+
+.custom-tabbar .tabbar-item.active .tabbar-icon {
+  filter: var(--tabbar-active-filter, brightness(0) saturate(100%) invert(45%) sepia(18%) saturate(1138%) hue-rotate(96deg) brightness(90%) contrast(86%));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tabbar-item,
+  .tabbar-icon {
+    transition: none !important;
+  }
+
+  .tabbar-item.active .tabbar-icon {
+    transform: none;
+  }
+}

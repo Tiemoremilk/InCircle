@@ -1,0 +1,191 @@
+<page-meta page-style="{{themeStyle}} {{incircleKeyboardPageStyle}}"></page-meta>
+<view class="page checkin-detail-page {{themeClass}}" wx:if="{{ready}}">
+  <view class="checkin-hero motion-hero">
+    <view class="hero-row">
+      <view class="pill pill-green">{{checkin.type}}</view>
+      <view class="hero-inline-actions">
+        <view class="checkin-hero-state {{checkin.statusClass}}">
+          <view class="checkin-hero-state-dot"></view>
+          <text>{{checkin.statusText}}</text>
+        </view>
+        <view wx:if="{{checkin.canEdit}}" class="detail-edit-action" bindtap="editCheckin">编辑</view>
+      </view>
+    </view>
+    <view class="checkin-title">{{checkin.title}}</view>
+    <view class="checkin-copy">{{checkin.reward}}</view>
+    <view class="progress-track">
+      <view class="progress-fill motion-progress" style="width: {{checkin.percent}}%;"></view>
+    </view>
+    <view class="progress-copy">已打卡 {{checkin.done}} / {{checkin.total}} 人</view>
+  </view>
+
+  <view class="action-grid">
+    <view class="action-card card motion-state {{checkin.checked ? 'done' : ''}} {{checkin.checked || actionLoadingType === 'checkIn' ? 'disabled' : ''}}" bindtap="checkIn">
+      <view class="action-title">{{actionLoadingType === 'checkIn' ? '提交中...' : checkin.buttonText}}</view>
+      <view class="action-copy">文字、图片、数字记录都会沉淀到记录流。</view>
+    </view>
+    <view class="action-card card {{actionLoadingType === 'leaveCard' ? 'disabled' : ''}}" bindtap="useLeaveCard">
+      <view class="action-title">{{actionLoadingType === 'leaveCard' ? '处理中...' : '请假卡'}}</view>
+      <view class="action-copy">已用 {{checkin.leaveCardsUsed}} 次，不计断签。</view>
+    </view>
+    <view class="action-card card {{actionLoadingType === 'makeupCard' ? 'disabled' : ''}}" bindtap="useMakeupCard">
+      <view class="action-title">{{actionLoadingType === 'makeupCard' ? '处理中...' : '补签卡'}}</view>
+      <view class="action-copy">已用 {{checkin.makeupCardsUsed}} 次，恢复连续记录。</view>
+    </view>
+  </view>
+  <view class="manage-strip card" wx:if="{{checkin.canDelete}}">
+    <view>
+      <view class="manage-title">挑战管理</view>
+      <view class="manage-copy">发起人、圈主或超管可以删除这个打卡挑战。</view>
+    </view>
+    <view class="danger-btn {{actionLoadingType === 'deleteCheckin' ? 'disabled' : ''}}" bindtap="deleteCheckin">
+      {{actionLoadingType === 'deleteCheckin' ? '删除中...' : '删除'}}
+    </view>
+  </view>
+
+  <view class="section">
+    <view class="section-head">
+      <view class="section-title">打卡记录</view>
+      <view class="section-action">文字 / 图片 / 数字</view>
+    </view>
+    <view class="record-form card">
+      <view class="field-row">
+        <view class="field">
+          <view class="field-label">记录类型</view>
+          <picker range="{{recordTypes}}" bindchange="onRecordTypeChange">
+            <view class="field-picker">{{recordDraft.type}}</view>
+          </picker>
+        </view>
+        <view class="field">
+          <view class="field-label">记录内容</view>
+          <input class="field-input" adjust-position="{{true}}" cursor-spacing="24" placeholder="例如：80 个 / 睡前照片 / 复盘 30 分钟" value="{{recordDraft.value}}" data-field="value" bindinput="onRecordInput" />
+        </view>
+      </view>
+      <view class="field">
+        <view class="field-label">补充说明</view>
+        <input class="field-input" adjust-position="{{true}}" cursor-spacing="24" placeholder="可写一句打卡状态" value="{{recordDraft.note}}" data-field="note" bindinput="onRecordInput" />
+      </view>
+      <view class="image-picker" wx:if="{{recordDraft.isImage}}" bindtap="chooseRecordImage">
+        <image wx:if="{{recordDraft.hasImage}}" class="image-picker-preview" src="{{recordDraft.src}}" mode="aspectFill"></image>
+        <view class="image-picker-copy">
+          <view class="image-picker-title">{{recordDraft.imageLabel}}</view>
+          <view class="image-picker-note">适合早睡截图、运动照片、阅读打卡等记录。</view>
+        </view>
+      </view>
+      <view class="primary-btn record-submit {{checkin.checked || actionLoadingType === 'checkIn' ? 'disabled' : ''}}" bindtap="checkIn">
+        {{checkin.checked ? '已打卡' : actionLoadingType === 'checkIn' ? '提交中...' : '提交打卡记录'}}
+      </view>
+    </view>
+  </view>
+
+  <view class="section">
+    <view class="section-head">
+      <view class="section-title">记录流</view>
+      <view class="section-action">{{checkin.records.length}} 条</view>
+    </view>
+    <view class="record-list card" wx:if="{{checkin.hasRecords}}">
+      <view class="record-item {{recordIndex < 6 ? 'motion-list-item' : ''}}" wx:for="{{checkin.records}}" wx:key="id" wx:for-index="recordIndex" style="animation-delay: {{recordIndex * 35}}ms;">
+        <view class="record-top">
+          <view class="record-member">{{item.memberName}}</view>
+          <view class="record-type">{{item.type}}</view>
+        </view>
+        <view class="record-value">{{item.value}}</view>
+        <image
+          wx:if="{{item.hasImage}}"
+          class="record-image"
+          src="{{item.src}}"
+          mode="aspectFill"
+          data-src="{{item.src}}"
+          bindtap="previewRecordImage"
+        ></image>
+        <view
+          wx:elif="{{item.isImage}}"
+          class="record-image-missing {{item.canRepairImage ? 'repairable' : ''}} {{repairLoadingId === item.id ? 'loading' : ''}}"
+          data-id="{{item.id}}"
+          bindtap="repairRecordImage"
+        >
+          <view class="record-image-missing-icon"><view></view></view>
+          <view>
+            <view class="record-image-missing-title">
+              {{repairLoadingId === item.id ? "正在补充图片..." : item.canRepairImage ? "图片未关联，点击重新补充" : "这张历史图片未能显示"}}
+            </view>
+            <view class="record-image-missing-copy" wx:if="{{item.canRepairImage}}">重新选择后会补回这条记录，不会重复打卡。</view>
+          </view>
+        </view>
+        <view class="record-note">{{item.noteLine}}</view>
+      </view>
+    </view>
+    <empty-state
+      wx:else
+      kind="checkin"
+      icon="/images/ui-icons/checkin.png"
+      title="还没有打卡记录"
+      description="完成一次文字、图片或数字打卡，第一条记录就会出现在这里。"
+      compact="{{true}}"
+    />
+  </view>
+
+  <view class="section">
+    <view class="section-head">
+      <view class="section-title">本周总结</view>
+      <view class="section-action" bindtap="copySummary">复制回群</view>
+    </view>
+    <view class="summary-card card">{{checkin.weeklySummary}}</view>
+  </view>
+
+  <view class="section">
+    <view class="section-head">
+      <view class="section-title">趣味榜单</view>
+      <view class="section-action" bindtap="runPunishment">{{actionLoadingType === 'punishment' ? '抽取中...' : '抽惩罚'}}</view>
+    </view>
+    <view class="rank-section card {{rankSectionIndex < 6 ? 'motion-list-item' : ''}}" wx:for="{{checkin.rankSections}}" wx:key="title" wx:for-item="rankSection" wx:for-index="rankSectionIndex" style="animation-delay: {{rankSectionIndex * 35}}ms;">
+      <view class="rank-section-head">
+        <view>
+          <view class="rank-section-title">{{rankSection.title}}</view>
+          <view class="rank-section-action">{{rankSection.action}}</view>
+        </view>
+      </view>
+      <block wx:if="{{rankSection.hasItems}}">
+        <view class="rank-row" wx:for="{{rankSection.items}}" wx:key="name" wx:for-item="rankItem">
+          <view>
+            <view class="rank-name">{{rankItem.name}}</view>
+            <view class="rank-label">{{rankItem.label}}</view>
+          </view>
+          <view class="rank-value">{{rankItem.value}}</view>
+        </view>
+      </block>
+      <empty-state
+        wx:else
+        kind="honor"
+        icon="/images/ui-icons/trophy.png"
+        title="还没有可比较数据"
+        description="产生有效打卡差异后再生成榜单。"
+        embedded="{{true}}"
+        mini="{{true}}"
+      />
+    </view>
+    <empty-state
+      wx:if="{{!checkin.rankSections.length}}"
+      kind="honor"
+      icon="/images/ui-icons/trophy.png"
+      title="榜单还没有形成"
+      description="产生足够的有效打卡后，再展示值得比较的结果。"
+      compact="{{true}}"
+    />
+    <view class="summary-card card">{{checkin.punishmentText}}</view>
+  </view>
+</view>
+
+<view class="page loading-page {{themeClass}}" wx:else>
+  <view class="loading-panel">
+    <view class="loading-illustration">
+      <view class="loading-card-line first"></view>
+      <view class="loading-card-line second"></view>
+      <view class="loading-card-line third"></view>
+      <view class="loading-card-mark"></view>
+    </view>
+    <view class="loading-text">正在打开打卡挑战...</view>
+    <view class="loading-dots"><view></view><view></view><view></view></view>
+  </view>
+</view>
+<theme-dialog id="incircle-theme-dialog" />

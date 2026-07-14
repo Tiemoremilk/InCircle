@@ -1,0 +1,91 @@
+<page-meta page-style="{{themeStyle}} {{incircleKeyboardPageStyle}}"></page-meta>
+<view class="page admin-log-page {{themeClass}}" wx:if="{{!loading}}">
+  <view class="admin-log-header card motion-hero">
+    <view class="header-top">
+      <view>
+        <view class="eyebrow">超管日志</view>
+        <view class="page-title">全局操作流水</view>
+      </view>
+      <view class="header-actions">
+        <view class="count-pill">{{total}} 条</view>
+        <view class="clear-logs-btn {{clearingLogs || deletingLogId ? 'disabled' : ''}}" wx:if="{{total}}" bindtap="clearCurrentLogs">
+          {{clearingLogs ? "清理中" : "清理"}}
+        </view>
+      </view>
+    </view>
+    <view class="search-card">
+      <input
+        class="search-input"
+        adjust-position="{{true}}"
+        cursor-spacing="24"
+        placeholder="搜索动作、圈子、对象或说明"
+        value="{{searchText}}"
+        bindinput="onSearchInput"
+        bindconfirm="submitSearch"
+        confirm-type="search"
+      />
+      <view class="search-action" bindtap="submitSearch">搜索</view>
+      <view class="clear-action" wx:if="{{searchText || keyword}}" bindtap="clearSearch">清空</view>
+    </view>
+  </view>
+
+  <scroll-view class="filter-strip" scroll-x enhanced show-scrollbar="{{false}}">
+    <view class="filter-content">
+      <view
+        class="filter-chip motion-state {{item.activeClass}}"
+        wx:for="{{filterOptions}}"
+        wx:key="id"
+        data-id="{{item.id}}"
+        bindtap="selectActor"
+      >{{item.name}}</view>
+    </view>
+  </scroll-view>
+
+  <view class="log-list" wx:if="{{logs.length}}">
+    <view class="admin-flow-card card {{logIndex < 6 ? 'motion-list-item' : ''}}" wx:for="{{logs}}" wx:key="id" wx:for-index="logIndex" style="animation-delay: {{logIndex * 35}}ms;">
+      <view class="log-main">
+        <view class="log-title">{{item.actionText}}</view>
+        <view class="log-target">{{item.targetText}}</view>
+        <view class="log-detail">{{item.detailText}}</view>
+      </view>
+      <view class="log-side">
+        <view class="log-actor">{{item.actorName}}</view>
+        <view class="log-time">{{item.createdAtText}}</view>
+        <view
+          class="delete-log-btn {{clearingLogs || deletingLogId ? 'disabled' : ''}}"
+          data-id="{{item.id}}"
+          bindtap="deleteLog"
+        >
+          {{deletingLogId === item.id ? "删除中" : "删除"}}
+        </view>
+      </view>
+    </view>
+  </view>
+
+  <empty-state
+    wx:else
+    kind="search"
+    icon="/images/ui-icons/search.svg"
+    title="没有匹配的操作日志"
+    description="换个操作者或关键字再查，清空筛选可以查看全部流水。"
+    compact="{{true}}"
+  />
+
+  <view class="load-more {{loadingMore ? 'disabled' : ''}}" wx:if="{{hasMore}}" bindtap="loadMore">
+    {{loadingMore ? "加载中..." : "加载更多"}}
+  </view>
+</view>
+
+<view class="page loading-page {{themeClass}}" wx:else>
+  <view class="loading-panel">
+    <view class="loading-illustration">
+      <view class="loading-card-line first"></view>
+      <view class="loading-card-line second"></view>
+      <view class="loading-card-line third"></view>
+      <view class="loading-card-mark"></view>
+    </view>
+    <view class="loading-text">正在读取操作日志...</view>
+    <view class="loading-dots"><view></view><view></view><view></view></view>
+  </view>
+</view>
+<theme-dialog id="incircle-theme-dialog" />

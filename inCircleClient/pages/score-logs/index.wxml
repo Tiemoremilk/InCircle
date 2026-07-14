@@ -1,0 +1,87 @@
+<page-meta page-style="{{themeStyle}} {{incircleKeyboardPageStyle}}"></page-meta>
+<view class="page log-page {{themeClass}}" wx:if="{{!loading}}">
+  <view class="log-header card motion-hero">
+    <view class="header-top">
+      <view>
+        <view class="eyebrow">积分动态</view>
+        <view class="page-title">{{pageTitle}}</view>
+      </view>
+      <view class="count-pill">{{total}} 条</view>
+    </view>
+    <view class="search-card">
+      <input
+        class="search-input"
+        adjust-position="{{true}}"
+        cursor-spacing="24"
+        placeholder="{{searchPlaceholder}}"
+        value="{{searchText}}"
+        bindinput="onSearchInput"
+        bindconfirm="submitSearch"
+        confirm-type="search"
+      />
+      <view class="search-action" bindtap="submitSearch">搜索</view>
+      <view class="clear-action" wx:if="{{searchText || keyword}}" bindtap="clearSearch">清空</view>
+    </view>
+  </view>
+
+  <view class="scope-tabs" wx:if="{{showScopeTabs && !lockMember}}">
+    <view
+      class="scope-tab motion-state {{item.activeClass}}"
+      wx:for="{{scopeTabs}}"
+      wx:key="key"
+      data-member-id="{{item.memberId}}"
+      bindtap="selectScope"
+    >{{item.label}}</view>
+  </view>
+
+  <scroll-view class="filter-strip" wx:if="{{!lockMember}}" scroll-x enhanced show-scrollbar="{{false}}">
+    <view class="filter-content">
+      <view
+        class="filter-chip motion-state {{item.activeClass}}"
+        wx:for="{{filterOptions}}"
+        wx:key="id"
+        data-member-id="{{item.id}}"
+        bindtap="selectMember"
+      >{{item.name}}</view>
+    </view>
+  </scroll-view>
+
+  <view class="log-list" wx:if="{{logs.length}}">
+    <view class="flow-card card {{logIndex < 6 ? 'motion-list-item' : ''}}" wx:for="{{logs}}" wx:key="id" wx:for-index="logIndex" data-id="{{item.memberId}}" bindtap="openMember" style="animation-delay: {{logIndex * 35}}ms;">
+      <image class="flow-avatar" src="{{item.avatar || '/images/avatar.png'}}" data-index="{{index}}" binderror="onAvatarError"></image>
+      <view class="flow-main">
+        <view class="flow-title">{{item.memberName}} · {{item.typeText}}</view>
+        <view class="flow-reason">{{item.reasonText}}</view>
+        <view class="flow-time">{{item.createdAtText}}</view>
+      </view>
+      <view class="flow-delta {{item.deltaClass}}">{{item.deltaText}}</view>
+    </view>
+  </view>
+
+  <empty-state
+    wx:else
+    kind="search"
+    icon="/images/ui-icons/search.svg"
+    title="没有匹配的积分动态"
+    description="{{emptyCopy}}"
+    compact="{{true}}"
+  />
+
+  <view class="load-more {{loadingMore ? 'disabled' : ''}}" wx:if="{{hasMore}}" bindtap="loadMore">
+    {{loadingMore ? "加载中..." : "加载更多"}}
+  </view>
+</view>
+
+<view class="page loading-page {{themeClass}}" wx:else>
+  <view class="loading-panel">
+    <view class="loading-illustration">
+      <view class="loading-card-line first"></view>
+      <view class="loading-card-line second"></view>
+      <view class="loading-card-line third"></view>
+      <view class="loading-card-mark"></view>
+    </view>
+    <view class="loading-text">正在整理积分流水...</view>
+    <view class="loading-dots"><view></view><view></view><view></view></view>
+  </view>
+</view>
+<theme-dialog id="incircle-theme-dialog" />

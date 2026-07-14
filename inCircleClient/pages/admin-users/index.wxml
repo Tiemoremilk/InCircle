@@ -1,0 +1,17 @@
+<page-meta page-style="{{themeStyle}} {{incircleKeyboardPageStyle}}"></page-meta>
+<view class="page admin-users-page {{themeClass}}" wx:if="{{!loading}}">
+  <view class="search-shell"><image src="/images/ui-icons/search.svg"></image><input adjust-position="{{true}}" cursor-spacing="24" value="{{searchText}}" placeholder="搜索昵称、账号或手机号" bindinput="onSearchInput" confirm-type="search" /><view wx:if="{{searchText}}" bindtap="clearSearch">清空</view></view>
+  <scroll-view class="filter-strip" scroll-x show-scrollbar="{{false}}"><view class="filter-content"><view class="filter-chip motion-state {{item.activeClass}}" wx:for="{{filters}}" wx:key="key" data-key="{{item.key}}" bindtap="selectStatus">{{item.label}}</view></view></scroll-view>
+  <view class="result-count">{{total}} 个用户</view>
+  <view wx:if="{{users.length}}">
+    <view class="user-row {{userIndex < 6 ? 'motion-list-item' : ''}}" wx:for="{{users}}" wx:key="id" wx:for-index="userIndex" data-id="{{item.id}}" bindtap="openUser" style="animation-delay: {{userIndex * 35}}ms;">
+      <image class="user-avatar" src="{{item.avatar}}" mode="aspectFill"></image>
+      <view class="user-copy"><view class="user-name-line"><text class="user-name">{{item.nickName}}</text><text class="protected-badge" wx:if="{{item.protected}}">超管</text></view><view class="user-account">{{item.accountMasked}} · {{item.circleCount}} 个圈子</view><view class="user-bind">{{item.wechatBound ? '微信已绑定' : '微信未绑定'}}</view></view>
+      <view class="user-side"><view class="user-status status-{{item.status}}">{{item.statusText}}</view><view class="row-arrow">›</view></view>
+    </view>
+  </view>
+  <empty-state wx:else kind="search" icon="/images/ui-icons/search.svg" title="没有匹配的用户" description="调整搜索词或状态筛选后再查看。" compact="{{true}}" />
+  <view class="loading-more" wx:if="{{loadingMore}}">正在加载...</view>
+</view>
+<view class="page loading-page {{themeClass}}" wx:else><view class="loading-panel"><view class="loading-illustration"><view class="loading-card-line first"></view><view class="loading-card-line second"></view><view class="loading-card-line third"></view><view class="loading-card-mark"></view></view><view class="loading-text">正在读取用户列表...</view><view class="loading-dots"><view></view><view></view><view></view></view></view></view>
+<theme-dialog id="incircle-theme-dialog" />

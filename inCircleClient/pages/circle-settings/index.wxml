@@ -1,0 +1,210 @@
+<page-meta page-style="{{themeStyle}} {{incircleKeyboardPageStyle}}"></page-meta>
+<view class="page settings-page {{themeClass}}" wx:if="{{!loading}}">
+  <view class="settings-hero card motion-hero">
+    <view class="hero-row">
+      <view>
+        <view class="eyebrow">圈子设置</view>
+        <view class="hero-title">{{circle.name}}</view>
+      </view>
+      <view class="pill {{circle.roleClass}}">{{circle.role}}</view>
+    </view>
+    <view class="hero-copy">{{circle.slogan}}</view>
+    <view class="stats">
+      <view class="stat">
+        <view class="stat-value">{{circle.memberCount}}</view>
+        <view class="stat-label">成员</view>
+      </view>
+      <view class="stat">
+        <view class="stat-value">{{inviteCode}}</view>
+        <view class="stat-label">邀请码</view>
+      </view>
+      <view class="stat">
+        <view class="stat-value">{{circle.statusText}}</view>
+        <view class="stat-label">状态</view>
+      </view>
+    </view>
+  </view>
+
+  <view class="section">
+    <view class="settings-card card">
+      <view class="section-head">
+        <view class="section-title with-icon">
+          <image class="section-icon" src="/images/ui-icons/settings.png"></image>
+          <text>圈子资料</text>
+        </view>
+        <view class="section-action {{saveBusy || destructiveBusy ? 'disabled' : ''}}" bindtap="saveCircle" wx:if="{{canManage}}">
+          {{saveBusy ? "保存中..." : "保存"}}
+        </view>
+      </view>
+      <view class="field">
+        <view class="field-label">圈子名称</view>
+        <input class="field-input" adjust-position="{{true}}" cursor-spacing="24" value="{{draft.name}}" disabled="{{!canManage}}" data-field="name" bindinput="onInput" />
+      </view>
+      <view class="field">
+        <view class="field-label">圈内公告</view>
+        <input class="field-input" adjust-position="{{true}}" cursor-spacing="24" value="{{draft.notice}}" disabled="{{!canManage}}" data-field="notice" bindinput="onInput" />
+      </view>
+      <view class="field">
+        <view class="field-label">圈子标语</view>
+        <textarea class="field-textarea" show-confirm-bar="{{false}}" adjust-position="{{true}}" cursor-spacing="24" value="{{draft.slogan}}" disabled="{{!canManage}}" data-field="slogan" bindinput="onInput"></textarea>
+      </view>
+      <view class="invite-panel">
+        <view class="invite-panel-head">
+          <view class="invite-heading">
+            <view class="invite-heading-icon">
+              <image src="/images/ui-icons/share.svg" mode="aspectFit"></image>
+            </view>
+            <view class="invite-heading-copy">
+              <view class="invite-title">邀请圈友</view>
+              <view class="invite-subtitle">把入口发给认识的人</view>
+            </view>
+          </view>
+        </view>
+
+        <view class="invite-code-row" bindtap="copyInviteCode">
+          <view class="invite-code-main">
+            <view class="invite-code-label">邀请码</view>
+            <view class="invite-code">{{inviteCode}}</view>
+          </view>
+          <view class="invite-copy-action">
+            <image src="/images/ui-icons/copy.svg" mode="aspectFit"></image>
+            <text>复制</text>
+          </view>
+        </view>
+
+        <view class="invite-actions">
+          <button class="invite-action invite-action-primary share-button" open-type="share" hover-class="none">
+            <image class="invite-action-icon" src="/images/ui-icons/share.svg" mode="aspectFit"></image>
+            <text class="invite-action-label">分享卡片</text>
+          </button>
+          <view class="invite-action invite-action-secondary {{inviteQrLoading ? 'disabled' : ''}}" bindtap="handleInviteQrAction">
+            <image class="invite-action-icon" src="/images/ui-icons/qr-code.svg" mode="aspectFit"></image>
+            <text class="invite-action-label">{{inviteQrButtonText}}</text>
+          </view>
+        </view>
+      </view>
+      <view class="qr-panel motion-section" wx:if="{{inviteQrImageUrl}}">
+        <view class="qr-visual" bindtap="previewInviteQrCode">
+          <image class="qr-image" src="{{inviteQrImageUrl}}" mode="aspectFit"></image>
+        </view>
+        <view class="qr-main">
+          <view class="qr-title">扫码加入 {{circle.name}}</view>
+          <view class="qr-code-line">邀请码 {{inviteCode}}</view>
+          <view class="qr-description">保存后发到群里，微信扫码可直接打开加入页。</view>
+          <view class="qr-actions">
+            <view class="ghost-btn compact" bindtap="previewInviteQrCode">预览</view>
+            <view class="primary-btn compact {{inviteQrSaving ? 'disabled' : ''}}" bindtap="saveInviteQrCode">
+              {{inviteQrSaving ? "保存中..." : "保存到相册"}}
+            </view>
+          </view>
+        </view>
+      </view>
+    </view>
+  </view>
+
+  <view class="section" wx:if="{{aiStatus && aiStatus.canManage}}">
+    <view class="settings-card card ai-settings-card motion-section">
+      <view class="section-head ai-section-head">
+        <view class="ai-card-heading">
+          <view class="ai-section-icon">AI</view>
+          <view>
+            <view class="ai-card-title">圈内 AI 助手</view>
+            <view class="ai-section-sub">{{aiStatus.enabled ? (aiStatus.configured ? "已开启 · 成员可独立对话" : "已开启 · 等待接入模型") : "当前已关闭"}}</view>
+          </view>
+        </view>
+        <switch
+          checked="{{aiStatus.enabled}}"
+          disabled="{{aiBusy}}"
+          color="{{themePrimary}}"
+          bindchange="toggleAi"
+        />
+      </view>
+      <view class="ai-setting-rows" bindtap="openAiManage">
+        <view class="ai-setting-row">
+          <text class="ai-setting-label">默认模型</text>
+          <text class="ai-setting-value">{{aiStatus.defaultModel ? aiStatus.defaultModel.displayName : "尚未配置"}}</text>
+        </view>
+        <view class="ai-setting-row">
+          <text class="ai-setting-label">可用模型</text>
+          <text class="ai-setting-value">{{aiStatus.modelCount}} 个</text>
+        </view>
+        <view class="ai-setting-row">
+          <text class="ai-setting-label">本圈今日用量</text>
+          <text class="ai-setting-value">{{aiStatus.usage.circleUsed}} / {{aiStatus.circleDailyLimit}}</text>
+        </view>
+      </view>
+      <view class="ai-manage-link" bindtap="openAiManage">
+        <text>{{aiStatus.configured ? "管理供应商、模型与额度" : aiStatus.enabled ? "功能已开启，继续接入模型" : "配置 AI 模型"}}</text>
+        <view class="ai-manage-arrow"></view>
+      </view>
+    </view>
+  </view>
+
+  <view class="section">
+    <view class="settings-card card">
+      <view class="member-section-head">
+        <view class="member-heading">
+          <view class="member-heading-icon">
+            <image src="/images/ui-icons/members.svg" mode="aspectFit"></image>
+          </view>
+          <text class="member-heading-title">成员与权限</text>
+        </view>
+        <text class="member-count">{{members.length}} 人</text>
+      </view>
+      <view class="member-list" wx:if="{{members.length}}">
+        <view class="member-row {{memberIndex < 6 ? 'motion-list-item' : ''}}" wx:for="{{members}}" wx:key="id" wx:for-index="memberIndex" data-id="{{item.id}}" bindtap="openCircleMember" style="animation-delay: {{memberIndex * 35}}ms;">
+          <image class="avatar" src="{{item.avatar}}"></image>
+          <view class="member-main">
+            <view class="member-name">{{item.name}}</view>
+            <view class="member-subtitle">{{item.title || item.memberId || "圈内成员"}}</view>
+            <view class="member-joined">{{item.joinedAtText}}</view>
+          </view>
+          <view class="member-side">
+            <view class="pill {{item.roleClass}}">{{item.role}}</view>
+            <view class="member-chevron">›</view>
+          </view>
+        </view>
+      </view>
+      <empty-state
+        wx:if="{{!members.length}}"
+        kind="members"
+        icon="/images/ui-icons/members.svg"
+        title="这里还没有有效成员"
+        description="分享邀请码后，新成员会出现在这里。"
+        embedded="{{true}}"
+        compact="{{true}}"
+      />
+    </view>
+  </view>
+
+  <view class="section" wx:if="{{canExit || canDissolve}}">
+    <view class="danger-card card">
+      <view class="section-title with-icon">
+        <image class="section-icon" src="/images/ui-icons/admin.svg"></image>
+        <text>{{canDissolve ? "解散圈子" : "退出圈子"}}</text>
+      </view>
+      <view class="hint" wx:if="{{canDissolve}}">你是圈主，不能直接退出。解散后所有成员会退出该圈子，历史记录仅保留必要引用。</view>
+      <view class="hint" wx:else>退出后保留历史活动记录，但不再看到新活动和账单。重新加入需要邀请码。</view>
+      <view class="danger-btn {{destructiveBusy ? 'disabled' : ''}}" bindtap="dissolveCircle" wx:if="{{canDissolve}}">
+        {{destructiveBusy === "dissolve" ? "解散中..." : "解散当前圈子"}}
+      </view>
+      <view class="danger-btn {{destructiveBusy ? 'disabled' : ''}}" bindtap="exitCircle" wx:else>
+        {{destructiveBusy === "exit" ? "退出中..." : "退出当前圈子"}}
+      </view>
+    </view>
+  </view>
+</view>
+
+<view class="page loading-page {{themeClass}}" wx:else>
+  <view class="loading-panel">
+    <view class="loading-illustration">
+      <view class="loading-card-line first"></view>
+      <view class="loading-card-line second"></view>
+      <view class="loading-card-line third"></view>
+      <view class="loading-card-mark"></view>
+    </view>
+    <view class="loading-text">正在读取圈子设置...</view>
+    <view class="loading-dots"><view></view><view></view><view></view></view>
+  </view>
+</view>
+<theme-dialog id="incircle-theme-dialog" />

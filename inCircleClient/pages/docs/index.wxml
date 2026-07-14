@@ -1,0 +1,187 @@
+<page-meta page-style="{{themeStyle}} {{incircleKeyboardPageStyle}}"></page-meta>
+
+<view class="page docs-page {{themeClass}}" style="{{tabBarInsetStyle}}" wx:if="{{!loading}}">
+  <view class="docs-hero motion-hero">
+    <view class="docs-hero-art">
+      <view class="docs-hero-spark first"></view>
+      <view class="docs-hero-spark second"></view>
+      <view class="docs-hero-card back"></view>
+      <view class="docs-hero-card front">
+        <image class="docs-hero-icon" src="/images/ui-icons/docs.png" mode="aspectFit"></image>
+        <view class="docs-hero-line long"></view>
+        <view class="docs-hero-line short"></view>
+      </view>
+    </view>
+    <view class="eyebrow">圈内资料库</view>
+    <view class="page-title">重要信息不再被聊天刷走</view>
+    <view class="page-desc">公告、规则、清单、黑话词典和常用链接，都沉淀成可复用资料。</view>
+    <view class="hero-action" bindtap="createDoc">新增资料</view>
+  </view>
+
+  <scroll-view scroll-x class="category-scroll" enable-flex>
+    <view class="category-row">
+      <view
+        class="category-chip motion-state {{category.activeClass}}"
+        wx:for="{{categories}}"
+        wx:key="name"
+        wx:for-item="category"
+        data-category="{{category.name}}"
+        bindtap="switchCategory"
+      >{{category.name}}</view>
+    </view>
+  </scroll-view>
+
+  <view class="doc-list motion-content-swap">
+    <view class="doc-card card {{docIndex < 6 ? 'motion-list-item' : ''}}" wx:for="{{filteredDocs}}" wx:key="id" wx:for-item="doc" wx:for-index="docIndex" data-id="{{doc.id}}" bindtap="openDoc" style="animation-delay: {{docIndex * 35}}ms;">
+      <view class="doc-top">
+        <view class="pill {{doc.pillClass}}">{{doc.pillText}}</view>
+        <view class="muted">{{doc.updatedAtText}}</view>
+      </view>
+      <view class="doc-title">{{doc.title}}</view>
+      <view class="doc-summary">{{doc.summary}}</view>
+      <view class="doc-footer">
+        <view>{{doc.category}}</view>
+        <view class="doc-footer-actions">
+          <view
+            wx:if="{{doc.canEdit}}"
+            class="doc-edit"
+            data-id="{{doc.id}}"
+            catchtap="editDoc"
+          >编辑</view>
+          <view
+            wx:if="{{doc.canDelete}}"
+            class="doc-delete {{actionLoadingType === 'deleteDoc' && actionLoadingId === doc.id ? 'disabled' : ''}}"
+            data-id="{{doc.id}}"
+            catchtap="deleteDoc"
+          >{{actionLoadingType === 'deleteDoc' && actionLoadingId === doc.id ? '删除中...' : '删除'}}</view>
+          <view class="doc-link">查看详情</view>
+        </view>
+      </view>
+    </view>
+    <empty-state
+      wx:if="{{!filteredDocs.length}}"
+      kind="docs"
+      icon="/images/ui-icons/docs.png"
+      eyebrow="让重要信息留得住"
+      title="这个分类还没有资料"
+      description="把群规、清单、攻略或复盘整理成一条，下次不用再翻聊天记录。"
+      action-text="新增资料"
+      compact="{{true}}"
+      bindaction="createDoc"
+    />
+  </view>
+
+  <view class="idea-card card">
+    <view class="idea-head">
+      <view class="idea-icon-wrap">
+        <image class="section-icon" src="/images/ui-icons/lightbulb.svg"></image>
+      </view>
+      <view>
+        <view class="idea-title">资料灵感池</view>
+        <view class="idea-subtitle">把群里反复问、反复找的内容整理成一条资料。</view>
+      </view>
+    </view>
+    <view class="idea-list">
+      <view class="idea-item">
+        <view class="idea-mark">01</view>
+        <view>
+          <view class="idea-name">圈内规则模板</view>
+          <view class="idea-copy">报名口径、费用说明、圈内分工、常用注意事项。</view>
+        </view>
+      </view>
+      <view class="idea-item">
+        <view class="idea-mark">02</view>
+        <view>
+          <view class="idea-name">活动复盘清单</view>
+          <view class="idea-copy">照片链接、结算口径、下次优化点、适合复用的安排。</view>
+        </view>
+      </view>
+      <view class="idea-item">
+        <view class="idea-mark">03</view>
+        <view>
+          <view class="idea-name">圈内资产索引</view>
+          <view class="idea-copy">共享物品、常用地点、群内暗号、长期计划入口。</view>
+        </view>
+      </view>
+      <view class="idea-item">
+        <view class="idea-mark">04</view>
+        <view>
+          <view class="idea-name">成员偏好备忘</view>
+          <view class="idea-copy">口味边界、可约时段、装备需求，用更体面的方式照顾彼此。</view>
+        </view>
+      </view>
+    </view>
+  </view>
+
+  <view class="sheet-mask" wx:if="{{showCreateSheet}}" bindtap="closeCreateSheet" catchtouchmove="noop">
+    <view class="create-sheet" catchtap="noop">
+      <view class="sheet-head">
+        <view>
+          <view class="sheet-kicker">{{docFormKicker}}</view>
+          <view class="sheet-title">{{docFormTitle}}</view>
+        </view>
+        <view class="sheet-close" bindtap="closeCreateSheet">×</view>
+      </view>
+
+      <view class="field">
+        <view class="field-label">标题</view>
+        <input class="field-input" adjust-position="{{true}}" cursor-spacing="96" placeholder="例如：露营采购清单" value="{{docDraft.title}}" data-field="title" bindinput="onDocInput" />
+      </view>
+
+      <view class="field-row">
+        <view class="field">
+          <view class="field-label">分类</view>
+          <picker range="{{categoryOptions}}" bindchange="onCategoryChange">
+            <view class="field-picker">{{docDraft.category}}</view>
+          </picker>
+        </view>
+        <view class="field">
+          <view class="field-label">维护人</view>
+          <view class="field-static">当前账号</view>
+        </view>
+      </view>
+
+      <view class="field">
+        <view class="field-label">摘要</view>
+        <input class="field-input" adjust-position="{{true}}" cursor-spacing="96" placeholder="一句话说明这条资料解决什么问题" value="{{docDraft.summary}}" data-field="summary" bindinput="onDocInput" />
+      </view>
+
+      <view class="field">
+        <view class="field-label">正文</view>
+        <textarea class="field-textarea" fixed="{{true}}" show-confirm-bar="{{false}}" adjust-position="{{true}}" adjust-keyboard-to="bottom" cursor-spacing="96" placeholder="可分多段填写，每行一段" value="{{docDraft.bodyText}}" data-field="bodyText" bindinput="onDocInput"></textarea>
+      </view>
+
+      <view class="field">
+        <view class="field-label">使用清单</view>
+        <textarea class="field-textarea small-textarea" fixed="{{true}}" show-confirm-bar="{{false}}" adjust-position="{{true}}" adjust-keyboard-to="bottom" cursor-spacing="96" placeholder="每行一条，例如：确认人数 / 标记预算 / 适合回群分享" value="{{docDraft.checklistText}}" data-field="checklistText" bindinput="onDocInput"></textarea>
+      </view>
+
+      <view class="field">
+        <view class="field-label">相关资料</view>
+        <input class="field-input" adjust-position="{{true}}" cursor-spacing="96" placeholder="例如：新人指南、成员图鉴" value="{{docDraft.relatedText}}" data-field="relatedText" bindinput="onDocInput" />
+      </view>
+
+      <view class="sheet-tip">
+        {{editingDocId ? '系统内置资料不可修改；普通资料保存后会立即更新详情。' : '资料会进入圈内资料库，也能在详情页分享给群友。'}}
+      </view>
+      <view class="primary-btn sheet-submit {{actionLoadingType === 'saveDoc' ? 'disabled' : ''}}" bindtap="submitDoc">
+        {{actionLoadingType === 'saveDoc' ? '保存中...' : editingDocId ? '保存修改' : '保存资料'}}
+      </view>
+    </view>
+  </view>
+</view>
+
+<view class="page docs-page loading-page {{themeClass}}" style="{{tabBarInsetStyle}}" wx:else>
+  <view class="loading-panel">
+    <view class="loading-illustration">
+      <view class="loading-card-line first"></view>
+      <view class="loading-card-line second"></view>
+      <view class="loading-card-line third"></view>
+      <view class="loading-card-mark"></view>
+    </view>
+    <view class="loading-text">正在翻资料库...</view>
+    <view class="loading-dots"><view></view><view></view><view></view></view>
+  </view>
+</view>
+<ai-fab />
+<theme-dialog id="incircle-theme-dialog" />

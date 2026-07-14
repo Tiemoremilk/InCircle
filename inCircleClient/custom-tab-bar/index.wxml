@@ -1,0 +1,15 @@
+<view class="custom-tabbar {{themeClass}}" style="{{tabBarStyle}}">
+  <view class="custom-tabbar-inner">
+    <block wx:for="{{list}}" wx:key="pagePath">
+      <view
+        class="tabbar-item {{index === selectedIndex ? 'active' : ''}}"
+        data-path="{{item.pagePath}}"
+        data-index="{{index}}"
+        bindtap="switchTab"
+      >
+        <image class="tabbar-icon" src="{{item.iconPath}}" mode="aspectFit"></image>
+        <text class="tabbar-label">{{item.text}}</text>
+      </view>
+    </block>
+  </view>
+</view>

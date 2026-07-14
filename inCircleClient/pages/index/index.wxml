@@ -1,0 +1,338 @@
+<page-meta page-style="{{themeStyle}} {{incircleKeyboardPageStyle}}"></page-meta>
+<view class="page home-page {{themeClass}}" style="{{tabBarInsetStyle}}" wx:if="{{home}}">
+  <view class="hero card motion-hero">
+    <view class="hero-top">
+      <view>
+        <view class="eyebrow">熟人圈主页</view>
+        <view class="hero-title">{{home.circle.name}}</view>
+      </view>
+      <view class="circle-mark motion-theme-mark">局</view>
+    </view>
+    <view class="hero-subtitle">{{home.circle.slogan}}</view>
+    <view class="stats">
+      <view class="stat" wx:for="{{home.circle.stats}}" wx:key="label">
+        <view class="stat-value">{{item.value}}</view>
+        <view class="stat-label">{{item.label}}</view>
+      </view>
+    </view>
+    <view class="notice">{{home.circle.notice}}</view>
+    <view class="hero-actions">
+      <view class="hero-action" bindtap="openCircleSwitch">
+        <view class="hero-action-icon">
+          <image class="hero-action-img" src="/images/ui-icons/switch.png"></image>
+        </view>
+        <text>切换圈子</text>
+      </view>
+      <view class="hero-action" bindtap="openCircleSettings">
+        <view class="hero-action-icon">
+          <image class="hero-action-img" src="/images/ui-icons/settings.png"></image>
+        </view>
+        <text>圈子设置</text>
+      </view>
+      <view class="hero-action admin" bindtap="openAdmin" wx:if="{{isSuperAdmin}}">
+        <view class="hero-action-icon">
+          <image class="hero-action-img" src="/images/ui-icons/admin.svg"></image>
+        </view>
+        <text>超管后台</text>
+      </view>
+    </view>
+  </view>
+
+  <view class="quick-grid">
+    <view class="quick-card card" data-tab="activities" bindtap="switchTab">
+      <view class="quick-icon icon-tile green">
+        <image class="icon-img" src="/images/ui-icons/activity.png"></image>
+      </view>
+      <view class="quick-title">发起约局</view>
+      <view class="quick-desc">饭局、球局、桌游局</view>
+    </view>
+    <view class="quick-card card" data-tab="tools" data-tool="aa" bindtap="switchTab">
+      <view class="quick-icon icon-tile amber">
+        <image class="icon-img" src="/images/ui-icons/bill.png"></image>
+      </view>
+      <view class="quick-title">AA 结算</view>
+      <view class="quick-desc">谁垫付谁还钱</view>
+    </view>
+    <view class="quick-card card" data-tab="tools" data-tool="vote" bindtap="switchTab">
+      <view class="quick-icon icon-tile blue">
+        <image class="icon-img" src="/images/ui-icons/vote.png"></image>
+      </view>
+      <view class="quick-title">投票决策</view>
+      <view class="quick-desc">去哪几点吃什么</view>
+    </view>
+    <view class="quick-card card" data-tab="docs" bindtap="switchTab">
+      <view class="quick-icon icon-tile red">
+        <image class="icon-img" src="/images/ui-icons/docs.png"></image>
+      </view>
+      <view class="quick-title">圈内资料</view>
+      <view class="quick-desc">别再翻聊天记录</view>
+    </view>
+  </view>
+
+  <view class="section">
+    <view class="section-head">
+      <view class="section-title with-icon">
+        <image class="section-icon" src="/images/ui-icons/activity.png"></image>
+        <text>最近活动</text>
+      </view>
+      <view class="section-action" data-tab="activities" bindtap="switchTab">全部约局</view>
+    </view>
+    <view class="activity-card card" wx:if="{{home.hasRecentActivity}}" bindtap="openRecentActivity">
+      <view class="row between">
+        <view>
+          <view class="activity-title">{{home.recentActivity.title}}</view>
+          <view class="activity-meta">{{home.recentActivity.time}} · {{home.recentActivity.location}}</view>
+        </view>
+        <view class="pill pill-green">{{home.recentActivity.status}}</view>
+      </view>
+      <view class="activity-progress">
+        <view class="progress-track">
+          <view class="progress-fill motion-progress"></view>
+        </view>
+        <view class="progress-text">已来 {{home.recentActivity.attendees.length}} / {{home.recentActivity.capacity}}</view>
+      </view>
+      <view class="tag-row">
+        <view class="mini-tag" wx:for="{{home.recentActivity.tags}}" wx:key="*this">{{item}}</view>
+      </view>
+      <view class="member-line">
+        <text class="muted">已报名：</text>
+        <text wx:for="{{home.recentActivity.attendees}}" wx:key="*this">{{item}} </text>
+      </view>
+    </view>
+    <view class="empty-state-card card" wx:else data-tab="activities" bindtap="switchTab">
+      <view class="empty-visual activity">
+        <view class="empty-line wide"></view>
+        <view class="empty-line"></view>
+        <view class="empty-dot"></view>
+      </view>
+      <view class="empty-body">
+        <view class="empty-title">还没有约局</view>
+        <view class="empty-copy">发起一个周末计划，圈友表态后这里会自动出现最近活动。</view>
+      </view>
+      <view class="empty-action">去发起</view>
+    </view>
+  </view>
+
+  <view class="section insight-grid motion-section">
+    <view class="insight-card vote-card card" wx:if="{{home.hasPendingVote}}" bindtap="openPendingVote">
+      <view class="insight-head">
+        <view class="insight-kicker">待投票</view>
+        <view class="insight-status">{{home.pendingVote.status}}</view>
+      </view>
+      <view class="insight-title">{{home.pendingVote.title}}</view>
+      <view class="insight-copy">{{home.pendingVote.deadlineText || home.pendingVote.deadline}}</view>
+      <view class="insight-footer">
+        <view class="insight-chip" wx:for="{{home.pendingVote.options}}" wx:key="name">
+          <text class="insight-chip-name">{{item.name}}</text>
+          <text class="insight-chip-count">{{item.count}}</text>
+        </view>
+      </view>
+    </view>
+    <view class="insight-card card empty" wx:else data-tab="tools" data-tool="vote" bindtap="switchTab">
+      <view class="insight-head">
+        <view class="insight-kicker">待投票</view>
+        <view class="insight-status quiet">空</view>
+      </view>
+      <view class="insight-title">暂无待处理投票</view>
+      <view class="insight-copy">需要决定地点、时间或方案时，从工具箱发起。</view>
+      <view class="insight-cta">创建投票</view>
+    </view>
+    <view class="insight-card card" wx:if="{{home.hasPendingBill}}" bindtap="openPendingBill">
+      <view class="insight-head">
+        <view class="insight-kicker">AA 待结清</view>
+        <view class="insight-status warning">{{home.pendingBill.unsettledCount}} 人</view>
+      </view>
+      <view class="insight-title">{{home.pendingBill.title}}</view>
+      <view class="insight-copy">{{home.pendingBill.payerName}} 垫付 {{home.pendingBill.amount}} 元</view>
+      <view class="insight-cta warning">查看账单</view>
+    </view>
+    <view class="insight-card card empty" wx:else data-tab="tools" data-tool="aa" bindtap="switchTab">
+      <view class="insight-head">
+        <view class="insight-kicker">AA 待结清</view>
+        <view class="insight-status quiet">清爽</view>
+      </view>
+      <view class="insight-title">没有待结清账单</view>
+      <view class="insight-copy">产生消费后再一键分账，首页会提醒未结清状态。</view>
+      <view class="insight-cta">创建账单</view>
+    </view>
+  </view>
+
+  <view class="section">
+    <view class="section-head">
+      <view class="section-title with-icon">
+        <image class="section-icon" src="/images/ui-icons/checkin.png"></image>
+        <text>打卡挑战</text>
+      </view>
+      <view class="section-action" data-tab="tools" data-tool="checkin" bindtap="switchTab">去打卡</view>
+    </view>
+    <view class="check-card card" wx:if="{{home.hasCheckin}}" bindtap="openTodayCheckin">
+      <view class="check-head">
+        <view class="check-icon-wrap">
+          <image class="check-icon" src="/images/ui-icons/checkin.png"></image>
+        </view>
+        <view class="check-main">
+          <view class="info-title">{{home.todayCheckin.title}}</view>
+          <view class="check-subtitle">已打卡 {{home.todayCheckin.done}} / {{home.todayCheckin.total}} 人</view>
+        </view>
+        <view class="check-meter">
+          <view class="check-meter-value">{{home.todayCheckin.done}}/{{home.todayCheckin.total}}</view>
+          <view class="check-meter-label">当前进度</view>
+        </view>
+      </view>
+      <view class="check-progress">
+        <view class="check-progress-fill motion-progress" style="width: {{home.todayCheckin.progressPercent}}%;"></view>
+      </view>
+      <view class="check-foot">
+        <view class="check-status {{home.todayCheckin.statusClass}}">
+          <view class="check-status-dot"></view>
+          <text>{{home.todayCheckin.statusText}}</text>
+        </view>
+        <view class="check-action {{home.todayCheckin.statusClass}}">{{home.todayCheckin.checked ? '已打卡' : '去打卡'}}</view>
+      </view>
+    </view>
+    <view class="empty-state-card card" wx:else data-tab="tools" data-tool="checkin" bindtap="switchTab">
+      <view class="empty-visual checkin">
+        <view class="empty-check"></view>
+        <view class="empty-line wide"></view>
+        <view class="empty-line short"></view>
+      </view>
+      <view class="empty-body">
+        <view class="empty-title">还没有打卡挑战</view>
+        <view class="empty-copy">学习、健身、早睡或项目进度，都可以开一个轻量挑战。</view>
+      </view>
+      <view class="empty-action">去创建</view>
+    </view>
+  </view>
+
+  <view class="section">
+    <view class="section-head">
+      <view class="section-title with-icon">
+        <image class="section-icon" src="/images/ui-icons/notice.png"></image>
+        <text>圈内公告/资料</text>
+      </view>
+      <view class="section-action" data-tab="docs" bindtap="switchTab">资料库</view>
+    </view>
+    <view class="doc-card card" wx:if="{{home.hasPinnedDoc}}" bindtap="openPinnedDoc">
+      <view class="doc-icon-wrap">
+        <image class="doc-icon" src="/images/ui-icons/docs.png"></image>
+      </view>
+      <view class="doc-main">
+        <view class="doc-meta">{{home.pinnedDoc.category}}</view>
+        <view class="doc-title">{{home.pinnedDoc.title}}</view>
+        <view class="doc-summary">{{home.pinnedDoc.summary}}</view>
+      </view>
+      <view class="doc-arrow">›</view>
+    </view>
+    <view class="empty-state-card card" wx:else data-tab="docs" bindtap="switchTab">
+      <view class="empty-visual docs">
+        <view class="empty-paper"></view>
+        <view class="empty-line wide"></view>
+        <view class="empty-line"></view>
+      </view>
+      <view class="empty-body">
+        <view class="empty-title">公告和资料还空着</view>
+        <view class="empty-copy">把群规、地址、攻略或复盘放进资料库，之后不用翻聊天记录。</view>
+      </view>
+      <view class="empty-action">去添加</view>
+    </view>
+  </view>
+
+  <view class="section">
+    <view class="section-head">
+      <view class="section-title with-icon">
+        <image class="section-icon" src="/images/ui-icons/trophy.png"></image>
+        <text>本月荣誉</text>
+      </view>
+      <view class="section-action" data-tab="members" bindtap="switchTab">去看看</view>
+    </view>
+    <view class="honor-grid" wx:if="{{home.monthlyHonors.length}}">
+      <view class="honor-card card {{honorIndex < 6 ? 'motion-list-item' : ''}}" wx:for="{{home.monthlyHonors}}" wx:key="label" wx:for-index="honorIndex" style="animation-delay: {{honorIndex * 35}}ms;">
+        <view class="honor-label">{{item.label}}</view>
+        <view class="honor-name">{{item.name}}</view>
+      </view>
+    </view>
+    <empty-state
+      wx:else
+      kind="honor"
+      icon="/images/ui-icons/trophy.png"
+      title="本月荣誉还在酝酿"
+      description="有真实活动、打卡或积分差异后，再生成值得比较的荣誉。"
+      compact="{{true}}"
+    />
+  </view>
+
+  <view class="section">
+    <view class="section-head">
+      <view class="section-title with-icon">
+        <image class="section-icon" src="/images/ui-icons/members.png"></image>
+        <text>成员榜单</text>
+      </view>
+      <view class="section-action" data-tab="members" bindtap="switchTab">成员图鉴</view>
+    </view>
+    <view class="leader-card card" wx:if="{{home.leaderboard.length}}">
+      <view class="leader-item {{leaderIndex < 6 ? 'motion-list-item' : ''}}" wx:for="{{home.leaderboard}}" wx:key="id" wx:for-index="leaderIndex" data-id="{{item.id}}" bindtap="openMember" style="animation-delay: {{leaderIndex * 35}}ms;">
+        <view class="leader-rank">{{item.rank}}</view>
+        <image class="avatar" src="{{item.avatar}}"></image>
+        <view class="leader-body">
+          <view class="leader-name">{{item.name}}</view>
+          <view class="muted">{{item.title}}</view>
+        </view>
+        <view class="score-badge">{{item.score}}</view>
+      </view>
+    </view>
+    <empty-state
+      wx:else
+      kind="members"
+      icon="/images/ui-icons/members.png"
+      title="暂时没有可比较的榜单"
+      description="成员产生真实参与数据后，这里才会展示排名，不做随机排序。"
+      compact="{{true}}"
+    />
+  </view>
+
+  <view class="section">
+    <view class="section-head">
+      <view class="section-title with-icon">
+        <image class="section-icon" src="/images/ui-icons/profile.svg"></image>
+        <text>我的身份卡</text>
+      </view>
+      <view class="section-action" data-tab="members" bindtap="switchTab">编辑</view>
+    </view>
+    <view class="profile-card card" bindtap="openMyCard">
+      <view class="profile-head">
+        <image class="profile-avatar" src="{{home.myCard.avatar}}"></image>
+        <view class="profile-body">
+          <view class="profile-title">{{home.myCard.name}} · {{home.myCard.title}}</view>
+          <view class="profile-note">{{home.myCard.note}}</view>
+        </view>
+      </view>
+      <view class="profile-badge-grid" wx:if="{{home.myCard.badges.length}}">
+        <view class="profile-badge" wx:for="{{home.myCard.badges}}" wx:key="*this">{{item}}</view>
+      </view>
+      <empty-state
+        wx:else
+        kind="honor"
+        icon="/images/ui-icons/medal.svg"
+        title="第一枚勋章正在路上"
+        description="完善身份卡或参与圈内活动后会自动点亮。"
+        embedded="{{true}}"
+        mini="{{true}}"
+      />
+    </view>
+  </view>
+</view>
+
+<view class="page home-page loading-page {{themeClass}}" style="{{tabBarInsetStyle}}" wx:else>
+  <view class="loading-panel">
+    <view class="loading-illustration">
+      <view class="loading-card-line first"></view>
+      <view class="loading-card-line second"></view>
+      <view class="loading-card-line third"></view>
+      <view class="loading-card-mark"></view>
+    </view>
+    <view class="loading-text">正在整理圈子...</view>
+    <view class="loading-dots"><view></view><view></view><view></view></view>
+  </view>
+</view>
+<ai-fab />
+<theme-dialog id="incircle-theme-dialog" />

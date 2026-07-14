@@ -1,0 +1,29 @@
+<page-meta page-style="{{themeStyle}} {{incircleKeyboardPageStyle}}"></page-meta>
+<view class="page circle-member-page {{themeClass}}" wx:if="{{!loading && member}}">
+  <view class="member-identity motion-hero">
+    <image class="member-avatar" src="{{member.avatar}}" mode="aspectFill"></image>
+    <view class="identity-copy"><view class="identity-name">{{member.name}}</view><view class="identity-title">{{member.title || '还没有圈内称号'}}</view></view>
+    <view class="pill {{member.roleClass}}">{{member.role}}</view>
+  </view>
+
+  <view class="info-section">
+    <view class="section-title">本圈基本信息</view>
+    <view class="info-rows">
+      <view class="info-row"><text>所属圈子</text><text>{{member.circle.name}}</text></view>
+      <view class="info-row"><text>圈内编号</text><text>{{member.memberId || '未设置'}}</text></view>
+      <view class="info-row"><text>加入时间</text><text>{{member.joinedAtText}}</text></view>
+    </view>
+  </view>
+
+  <view class="info-section" wx:if="{{member.profileNote}}"><view class="section-title">圈内介绍</view><view class="profile-note">{{member.profileNote}}</view></view>
+  <view class="info-section" wx:if="{{member.hasTags || member.hasSkills || member.hasInterests}}">
+    <view class="section-title">公开标签</view>
+    <view class="tag-wrap"><view class="profile-tag" wx:for="{{member.tags}}" wx:key="*this">{{item}}</view><view class="profile-tag" wx:for="{{member.skills}}" wx:key="*this">{{item}}</view><view class="profile-tag" wx:for="{{member.interests}}" wx:key="*this">{{item}}</view></view>
+  </view>
+
+  <view class="privacy-note">这里只展示该成员在当前圈子的公开资料。</view>
+  <view class="remove-member-button {{removing ? 'disabled' : ''}}" wx:if="{{member.canRemove}}" bindtap="removeMember">{{removing ? '移除中...' : '移出当前圈子'}}</view>
+</view>
+
+<view class="page loading-page {{themeClass}}" wx:else><view class="loading-panel"><view class="loading-illustration"><view class="loading-card-line first"></view><view class="loading-card-line second"></view><view class="loading-card-line third"></view><view class="loading-card-mark"></view></view><view class="loading-text">正在读取成员信息...</view><view class="loading-dots"><view></view><view></view><view></view></view></view></view>
+<theme-dialog id="incircle-theme-dialog" />

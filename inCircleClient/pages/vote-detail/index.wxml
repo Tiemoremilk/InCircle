@@ -1,0 +1,149 @@
+<page-meta page-style="{{themeStyle}} {{incircleKeyboardPageStyle}}"></page-meta>
+<view class="page vote-detail-page {{themeClass}}" wx:if="{{ready}}">
+  <view class="vote-hero motion-hero">
+    <view class="hero-row">
+      <view class="pill {{vote.statusClass}}">{{vote.statusText}}</view>
+      <view class="hero-inline-actions">
+        <view class="vote-type">{{vote.type}}</view>
+        <view wx:if="{{vote.canEdit}}" class="detail-edit-action" bindtap="editVote">编辑</view>
+      </view>
+    </view>
+    <view class="vote-title">{{vote.title}}</view>
+    <view class="vote-meta">{{vote.deadlineText || vote.deadline}} · {{vote.rule}}</view>
+    <view class="vote-rule-row">
+      <view class="vote-rule-chip" wx:for="{{vote.ruleChips}}" wx:key="*this">{{item}}</view>
+    </view>
+    <view class="result-box">
+      <view class="result-title">{{vote.resultTitle}}</view>
+      <view class="result-copy">{{vote.hasResultSummary ? vote.resultSummary : vote.resultText}}</view>
+    </view>
+    <view class="location-box" wx:if="{{vote.hasLocation}}" bindtap="openVoteLocation">
+      <view>
+        <view class="location-title">{{vote.locationTitle}}</view>
+        <view class="location-copy">{{vote.locationCopy}}</view>
+      </view>
+      <view class="location-action">{{vote.locationActionText}}</view>
+    </view>
+  </view>
+
+  <view class="section">
+    <view class="section-head">
+      <view class="section-title">选项进度</view>
+      <view class="section-action">{{vote.canVote ? "点选项投票" : "已截止"}}</view>
+    </view>
+    <view class="option-card card">
+      <block wx:if="{{vote.options.length}}">
+      <view
+        class="option-row motion-state {{optionIndex < 6 ? 'motion-list-item' : ''}} {{option.vetoClass}} {{option.selectedClass}} {{!vote.canVote || actionLoadingType === 'voteOption' || actionLoadingType === 'vetoOption' ? 'disabled' : ''}}"
+        wx:for="{{vote.options}}"
+        wx:key="name"
+        wx:for-item="option"
+        wx:for-index="optionIndex"
+        style="animation-delay: {{optionIndex * 35}}ms;"
+        data-name="{{option.name}}"
+        bindtap="voteOption"
+      >
+        <view class="option-head">
+          <view>
+            <view class="option-title">#{{option.rank}} {{option.name}}<text wx:if="{{option.selected}}" class="option-selected-badge">{{option.selectedText}}</text></view>
+            <view class="muted">{{option.count}} 票</view>
+          </view>
+          <view class="option-percent">{{option.percent}}%</view>
+        </view>
+        <view class="progress-track">
+          <view class="progress-fill motion-progress {{option.barClass}}" style="width: {{option.percent}}%;"></view>
+        </view>
+        <view class="voter-strip" wx:if="{{vote.showVoterAvatars}}">
+          <view class="voter-pill" wx:for="{{option.voters}}" wx:key="memberId" wx:for-item="voter">
+            <image class="voter-avatar" src="{{voter.avatar}}" mode="aspectFill"></image>
+            <text>{{voter.memberName}}</text>
+          </view>
+          <empty-state
+            wx:if="{{!option.hasVoters}}"
+            kind="vote"
+            icon="/images/ui-icons/vote.png"
+            title="等待第一票"
+            description="还没有实名成员选择这一项。"
+            embedded="{{true}}"
+            mini="{{true}}"
+          />
+        </view>
+        <view class="option-actions" wx:if="{{vote.hasVetoRule && vote.canVote}}">
+          <view class="veto-btn {{actionLoadingType === 'vetoOption' && actionLoadingName === option.name ? 'disabled' : ''}}" data-name="{{option.name}}" catchtap="vetoOption">
+            {{actionLoadingType === 'vetoOption' && actionLoadingName === option.name ? '否决中...' : option.vetoText}}
+          </view>
+        </view>
+      </view>
+      </block>
+      <empty-state
+        wx:else
+        kind="vote"
+        icon="/images/ui-icons/vote.png"
+        title="这个投票还没有选项"
+        description="请联系发起人补充候选项后再参与。"
+        embedded="{{true}}"
+        compact="{{true}}"
+      />
+    </view>
+  </view>
+
+  <view class="section">
+    <view class="section-head">
+      <view class="section-title">投票规则</view>
+      <view class="section-action">影响结果</view>
+    </view>
+    <view class="rule-card card">
+      <view class="rule-line">
+        <view class="rule-title">{{vote.voterModeText}}</view>
+        <view class="rule-copy">投票记录会按当前模式处理，单选会替换旧选择，多选可切换多个选项。</view>
+      </view>
+      <view class="rule-line">
+        <view class="rule-title">{{vote.weightText}}</view>
+        <view class="rule-copy">{{vote.vetoText}}</view>
+      </view>
+    </view>
+  </view>
+
+  <view class="section">
+    <view class="section-head">
+      <view class="section-title">沉默名单</view>
+      <view class="section-action">微信群老问题</view>
+    </view>
+    <view class="silent-card card">
+      <view class="silent-title">{{vote.silentText}}</view>
+      <view class="silent-copy">未投票的人会留在这里，方便发起人回群温柔催一下。</view>
+    </view>
+  </view>
+
+  <view class="feature-grid">
+    <view class="feature-card card {{featureIndex < 6 ? 'motion-list-item' : ''}}" wx:for="{{vote.features}}" wx:key="title" wx:for-item="feature" wx:for-index="featureIndex" style="animation-delay: {{featureIndex * 35}}ms;">
+      <view class="feature-title">{{feature.title}}</view>
+      <view class="feature-copy">{{feature.copy}}</view>
+    </view>
+  </view>
+
+  <view class="sticky-actions {{vote.canDelete ? 'has-delete' : ''}}">
+    <view wx:if="{{vote.canDelete}}" class="danger-btn {{actionLoadingType === 'deleteVote' ? 'disabled' : ''}}" bindtap="deleteVote">
+      {{actionLoadingType === 'deleteVote' ? '删除中...' : '删除投票'}}
+    </view>
+    <view class="ghost-btn {{actionLoadingType === 'finishVote' ? 'disabled' : ''}}" bindtap="finishVote">
+      {{vote.isClosed ? "已截止" : actionLoadingType === 'finishVote' ? '生成中...' : '提前截止'}}
+    </view>
+    <button wx:if="{{vote.isClosed}}" class="primary-btn share-btn" open-type="share" data-share-type="vote-result" bindtap="prepareVoteShare">分享摘要</button>
+    <view wx:else class="primary-btn share-btn disabled">先生成摘要</view>
+  </view>
+</view>
+
+<view class="page loading-page {{themeClass}}" wx:else>
+  <view class="loading-panel">
+    <view class="loading-illustration">
+      <view class="loading-card-line first"></view>
+      <view class="loading-card-line second"></view>
+      <view class="loading-card-line third"></view>
+      <view class="loading-card-mark"></view>
+    </view>
+    <view class="loading-text">正在统计投票...</view>
+    <view class="loading-dots"><view></view><view></view><view></view></view>
+  </view>
+</view>
+<theme-dialog id="incircle-theme-dialog" />

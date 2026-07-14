@@ -1,0 +1,155 @@
+<page-meta page-style="{{themeStyle}} {{incircleKeyboardPageStyle}}"></page-meta>
+<view class="page detail-page {{themeClass}}" wx:if="{{ready}}">
+  <view class="detail-hero motion-hero">
+    <view class="hero-topline">
+      <view class="activity-type">{{activity.type}}</view>
+      <view class="hero-inline-actions">
+        <view class="pill {{activity.statusClass}}">{{activity.status}}</view>
+        <view wx:if="{{activity.canEdit}}" class="detail-edit-action" bindtap="editActivity">编辑</view>
+      </view>
+    </view>
+    <view class="detail-title">{{activity.title}}</view>
+    <view class="detail-meta">{{activity.time}} · {{activity.location}}</view>
+    <view class="location-box" wx:if="{{activity.hasLocation}}" bindtap="openActivityLocation">
+      <view>
+        <view class="location-title">{{activity.locationTitle}}</view>
+        <view class="location-copy">{{activity.locationCopy}}</view>
+      </view>
+      <view class="location-action">{{activity.locationActionText}}</view>
+    </view>
+    <view class="hero-note">{{activity.highlight}}</view>
+  </view>
+
+  <view class="quick-actions motion-section {{activity.canDelete ? 'has-delete' : ''}}">
+    <view class="quick-action" bindtap="shareToGroup">微信群分享</view>
+    <view class="quick-action {{actionLoadingType === 'finish' ? 'disabled' : ''}}" bindtap="finishActivity">
+      {{actionLoadingType === 'finish' ? '生成中...' : '生成复盘'}}
+    </view>
+    <view class="quick-action {{actionLoadingType === 'bill' ? 'disabled' : ''}}" bindtap="createBill">
+      {{actionLoadingType === 'bill' ? '生成中...' : activity.postBillText}}
+    </view>
+    <view wx:if="{{activity.canDelete}}" class="quick-action danger {{actionLoadingType === 'delete' ? 'disabled' : ''}}" bindtap="deleteActivity">
+      {{actionLoadingType === 'delete' ? '删除中...' : '删除活动'}}
+    </view>
+  </view>
+
+  <view class="section">
+    <view class="section-head">
+      <view class="section-title">报名状态</view>
+      <view class="section-action">缺 {{activity.needCount}} 人</view>
+    </view>
+    <view class="card state-card">
+      <view class="progress-track">
+        <view class="progress-fill motion-progress" style="width: {{activity.percent}}%;"></view>
+      </view>
+      <view class="progress-copy">已来 {{activity.coming}} / {{activity.capacity}} · 沉默名单：{{activity.silentText}}</view>
+      <view class="status-row">
+        <view
+          class="status-btn motion-state {{option.activeClass}} {{actionLoadingType === 'status' ? 'disabled' : ''}}"
+          wx:for="{{activity.statusOptions}}"
+          wx:key="value"
+          wx:for-item="option"
+          data-status="{{option.value}}"
+          bindtap="chooseStatus"
+        >
+          <block wx:if="{{actionLoadingType === 'status' && actionLoadingName === option.value}}">提交中...</block>
+          <block wx:else>{{option.value}}</block>
+        </view>
+      </view>
+    </view>
+  </view>
+
+  <view class="section">
+    <view class="section-head">
+      <view class="section-title">成员名单</view>
+      <view class="section-action">{{activity.hostName}} 发起</view>
+    </view>
+    <view class="group-grid">
+      <view class="group-card card {{groupIndex < 6 ? 'motion-list-item' : ''}}" wx:for="{{activity.groups}}" wx:key="label" wx:for-item="group" wx:for-index="groupIndex" style="animation-delay: {{groupIndex * 35}}ms;">
+        <view class="group-label">{{group.label}}</view>
+        <view class="group-members">
+          <view class="mini-tag" wx:for="{{group.members}}" wx:key="*this" wx:for-item="memberName">{{memberName}}</view>
+          <empty-state
+            wx:if="{{group.empty}}"
+            kind="members"
+            icon="/images/ui-icons/members.png"
+            title="等待成员表态"
+            description="还没有人进入这一组。"
+            embedded="{{true}}"
+            mini="{{true}}"
+          />
+        </view>
+      </view>
+    </view>
+  </view>
+
+  <view class="section">
+    <view class="section-head">
+      <view class="section-title">活动照片</view>
+      <view class="section-action" bindtap="addPhoto">{{actionLoadingType === 'photo' ? '上传中...' : '上传照片'}}</view>
+    </view>
+    <view class="photo-grid" wx:if="{{activity.hasPhotos}}">
+      <view
+        class="photo-card {{item.className}} {{photoIndex < 6 ? 'motion-list-item' : ''}}"
+        wx:for="{{activity.photos}}"
+        wx:key="id"
+        wx:for-index="photoIndex"
+        style="animation-delay: {{photoIndex * 35}}ms;"
+        data-src="{{item.src}}"
+        bindtap="previewPhoto"
+      >
+        <image wx:if="{{item.src}}" class="photo-image" src="{{item.src}}" mode="aspectFill"></image>
+        <view class="photo-shade"></view>
+        <view class="photo-title">{{item.title}}</view>
+      </view>
+    </view>
+    <empty-state
+      wx:else
+      kind="activity"
+      icon="/images/ui-icons/photo.svg"
+      title="活动照片还空着"
+      description="把合照、现场或成果放在这里，之后比翻聊天记录更容易。"
+      action-text="{{actionLoadingType === 'photo' ? '上传中...' : '上传第一张'}}"
+      compact="{{true}}"
+      bindaction="addPhoto"
+    />
+  </view>
+
+  <view class="section">
+    <view class="section-head">
+      <view class="section-title">趣味复盘</view>
+      <view class="section-action" bindtap="finishActivity">{{actionLoadingType === 'finish' ? '刷新中...' : '刷新复盘'}}</view>
+    </view>
+    <view class="recap-card card" wx:if="{{activity.recapRows.length}}">
+      <view class="recap-row {{recapIndex < 6 ? 'motion-list-item' : ''}}" wx:for="{{activity.recapRows}}" wx:key="label" wx:for-index="recapIndex" style="animation-delay: {{recapIndex * 35}}ms;">
+        <text>{{item.label}}</text>
+        <text>{{item.value}}</text>
+      </view>
+      <view class="recap-note">{{activity.recap.vibe}}</view>
+    </view>
+    <empty-state
+      wx:else
+      kind="activity"
+      icon="/images/ui-icons/recap.svg"
+      title="还没有生成复盘"
+      description="活动结束后生成一次，亮点和成员表现会整理在这里。"
+      action-text="生成复盘"
+      compact="{{true}}"
+      bindaction="finishActivity"
+    />
+  </view>
+</view>
+
+<view class="page loading-page {{themeClass}}" wx:else>
+  <view class="loading-panel">
+    <view class="loading-illustration">
+      <view class="loading-card-line first"></view>
+      <view class="loading-card-line second"></view>
+      <view class="loading-card-line third"></view>
+      <view class="loading-card-mark"></view>
+    </view>
+    <view class="loading-text">正在打开活动...</view>
+    <view class="loading-dots"><view></view><view></view><view></view></view>
+  </view>
+</view>
+<theme-dialog id="incircle-theme-dialog" />

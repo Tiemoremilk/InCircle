@@ -1,0 +1,65 @@
+<view
+  wx:if="{{visible}}"
+  class="theme-dialog-layer {{closing ? 'is-closing' : ''}} {{reduceMotion ? 'reduce-motion' : ''}}"
+  style="{{themeStyle}}"
+  catchtouchmove="stopEvent"
+>
+  <view class="theme-dialog-mask" bindtap="onMaskTap"></view>
+  <view
+    class="theme-dialog-panel tone-{{tone}}"
+    catchtap="stopEvent"
+    aria-role="dialog"
+    aria-label="{{title}}"
+  >
+    <view class="theme-dialog-accent"></view>
+    <view class="theme-dialog-head">
+      <view class="theme-dialog-symbol">
+        <view wx:if="{{tone === 'danger' || tone === 'warning'}}" class="symbol-alert">
+          <view class="symbol-alert-line"></view>
+          <view class="symbol-alert-dot"></view>
+        </view>
+        <view wx:elif="{{tone === 'info'}}" class="symbol-info">
+          <view class="symbol-info-dot"></view>
+          <view class="symbol-info-line"></view>
+        </view>
+        <view wx:else class="symbol-check"></view>
+      </view>
+      <text class="theme-dialog-title">{{title}}</text>
+    </view>
+
+    <scroll-view wx:if="{{content && contentScrollable}}" class="theme-dialog-content-scroll" scroll-y="true" enhanced="true" show-scrollbar="false">
+      <text class="theme-dialog-content">{{content}}</text>
+    </scroll-view>
+    <view wx:elif="{{content}}" class="theme-dialog-content-wrap">
+      <text class="theme-dialog-content">{{content}}</text>
+    </view>
+
+    <view class="theme-dialog-verification" wx:if="{{verificationText}}">
+      <text class="verification-label">{{verificationLabel}}</text>
+      <input
+        class="verification-input"
+        value="{{verificationValue}}"
+        placeholder="{{verificationPlaceholder}}"
+        adjust-position="{{true}}"
+        cursor-spacing="24"
+        bindinput="onVerificationInput"
+      />
+    </view>
+
+    <view class="theme-dialog-actions {{showCancel ? '' : 'single-action'}} {{stackActions ? 'stacked-actions' : ''}}">
+      <button
+        wx:if="{{showCancel}}"
+        class="theme-dialog-button cancel-button"
+        hover-class="button-pressed"
+        bindtap="onCancel"
+      >{{cancelText}}</button>
+      <view wx:if="{{showCancel}}" class="theme-dialog-action-spacer" aria-hidden="true"></view>
+      <button
+        class="theme-dialog-button confirm-button"
+        disabled="{{confirmDisabled}}"
+        hover-class="button-pressed"
+        bindtap="onConfirm"
+      >{{confirmText}}</button>
+    </view>
+  </view>
+</view>

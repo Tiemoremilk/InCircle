@@ -1,0 +1,160 @@
+<page-meta page-style="{{themeStyle}} {{incircleKeyboardPageStyle}}"></page-meta>
+<view class="page ai-ui-page models-page {{themeClass}}" wx:if="{{!loading && !loadError}}">
+  <view class="ai-ui-section no-provider-section" wx:if="{{!providers.length}}">
+    <view class="ai-ui-section-head">
+      <view class="ai-ui-section-main">
+        <view class="ai-ui-title">模型来源</view>
+        <view class="ai-ui-caption">当前圈子还没有接入模型供应商</view>
+      </view>
+    </view>
+    <view class="ai-ui-surface no-provider-empty motion-hero">
+      <view class="ai-ui-empty">
+        <view class="ai-ui-empty-mark">AI</view>
+        <view class="ai-ui-empty-main">
+          <view class="ai-ui-empty-title">先添加模型供应商</view>
+          <view class="ai-ui-empty-copy">保存 API 连接后，再选择具体模型进行连通测试。</view>
+        </view>
+      </view>
+      <view class="primary-btn no-provider-action" bindtap="addProvider">添加供应商</view>
+    </view>
+  </view>
+
+  <block wx:else>
+    <view class="ai-ui-section provider-section">
+      <view class="ai-ui-section-head source-section-head">
+        <view class="ai-ui-section-main">
+          <view class="ai-ui-title">模型来源</view>
+          <view class="ai-ui-caption">先选择供应商，再管理其下的模型</view>
+        </view>
+        <view class="ai-ui-head-action" bindtap="editProvider">编辑连接</view>
+      </view>
+
+      <view class="ai-ui-surface provider-toolbar motion-hero">
+        <view class="provider-picker-label">当前供应商</view>
+        <picker mode="selector" range="{{providerNames}}" value="{{providerIndex}}" disabled="{{testingModelId || modelBusyId}}" bindchange="onProviderChange">
+          <view class="provider-select-control">
+            <view class="provider-select-mark">{{selectedProvider.shortName}}</view>
+            <view class="provider-picker-main">
+              <view class="provider-picker-name">{{selectedProvider.name}}</view>
+              <view class="provider-picker-meta">{{selectedProvider.domain || "服务地址已配置"}} · {{visibleModels.length}} 个模型</view>
+            </view>
+            <view class="provider-switch-hint"><text>切换</text><view class="ai-ui-chevron"></view></view>
+          </view>
+        </picker>
+
+        <view class="provider-capability">
+          <view class="capability-mark {{selectedProvider.enabled ? 'ready' : ''}}"></view>
+          <text>{{selectedProvider.enabled ? (selectedProvider.supportsModelSync ? "连接已启用，支持同步或手动添加模型" : "连接已启用，需要手动填写模型或部署名称") : "连接已停用，请先编辑并重新启用"}}</text>
+        </view>
+
+        <view class="provider-action-row">
+          <view class="source-action secondary {{syncBusy || testingModelId || modelBusyId || !selectedProvider.enabled || !selectedProvider.supportsModelSync ? 'disabled' : ''}}" bindtap="syncModels">
+            <view class="sync-action-icon"><view></view></view>
+            <text>{{syncBusy ? "同步中..." : selectedProvider.supportsModelSync ? "同步模型" : "不支持同步"}}</text>
+          </view>
+          <view class="source-action primary {{testingModelId || modelBusyId || !selectedProvider.enabled ? 'disabled' : ''}}" bindtap="toggleAdd">
+            <view class="add-action-icon"></view>
+            <text>{{addOpen ? "收起表单" : "手动添加"}}</text>
+          </view>
+        </view>
+
+        <view class="ai-ui-inline-status {{selectedDefaultModel ? 'success' : ''}}" wx:if="{{setupMessage}}">
+          <view class="ai-ui-status-mark"><view class="status-mark-dot"></view></view>
+          <text>{{setupMessage}}</text>
+        </view>
+      </view>
+
+      <view class="ai-ui-surface ai-ui-form manual-form motion-content-swap" wx:if="{{addOpen}}">
+        <view class="manual-head">
+          <view>
+            <view class="manual-title">手动添加模型</view>
+            <view class="manual-copy">模型 ID 必须与供应商文档保持一致</view>
+          </view>
+          <view class="manual-provider">{{selectedProvider.name}}</view>
+        </view>
+        <view class="ai-ui-field">
+          <view class="ai-ui-label-row"><view class="ai-ui-label">模型 ID<text class="ai-ui-required">*</text></view></view>
+          <input class="ai-ui-control" adjust-position="{{true}}" cursor-spacing="24" value="{{draft.modelId}}" data-field="modelId" bindinput="onDraftInput" placeholder="例如 deepseek-chat" />
+          <view class="ai-ui-help">请填写准确模型 ID；Azure 请填写部署名称。</view>
+        </view>
+        <view class="ai-ui-field">
+          <view class="ai-ui-label-row"><view class="ai-ui-label">显示名称</view><view class="ai-ui-field-meta">选填</view></view>
+          <input class="ai-ui-control" adjust-position="{{true}}" cursor-spacing="24" value="{{draft.displayName}}" data-field="displayName" bindinput="onDraftInput" placeholder="留空则使用模型 ID" />
+        </view>
+        <view class="primary-btn add-model {{addBusy || testingModelId || modelBusyId ? 'disabled' : ''}}" bindtap="addModel">{{addBusy ? "添加中..." : "添加模型"}}</view>
+      </view>
+    </view>
+
+    <view class="ai-ui-section model-list-section">
+      <view class="ai-ui-section-head model-section-head">
+        <view class="ai-ui-section-main">
+          <view class="ai-ui-title">可用模型</view>
+          <view class="ai-ui-caption">选择具体模型测试，通过后再设为默认</view>
+        </view>
+        <view class="model-count">{{visibleModels.length}} 个</view>
+      </view>
+
+      <view class="ai-ui-surface ai-ui-empty" wx:if="{{!visibleModels.length}}">
+        <view class="ai-ui-empty-mark">M</view>
+        <view class="ai-ui-empty-main">
+          <view class="ai-ui-empty-title">还没有模型</view>
+          <view class="ai-ui-empty-copy">{{selectedProvider.enabled ? "同步供应商模型，或手动填写模型 ID。" : "启用供应商后再添加模型。"}}</view>
+        </view>
+      </view>
+
+      <view class="ai-ui-surface model-card motion-state {{modelIndex < 6 ? 'motion-list-item' : ''}} {{item.isDefault ? 'is-default' : ''}}" wx:for="{{visibleModels}}" wx:key="id" wx:for-index="modelIndex" style="animation-delay: {{modelIndex * 35}}ms;">
+        <view class="model-card-head">
+          <view class="model-symbol"><view></view><view></view><view></view><view></view></view>
+          <view class="model-main">
+            <view class="model-name-line">
+              <text class="model-name">{{item.displayName}}</text>
+              <text class="default-tag" wx:if="{{item.isDefault}}">默认</text>
+            </view>
+            <view class="model-id">{{item.modelId}}</view>
+          </view>
+          <view class="model-switch-wrap">
+            <switch class="model-switch" checked="{{item.enabled}}" disabled="{{modelBusyId === item.id || testingModelId || !selectedProvider.enabled}}" color="{{themePrimary}}" data-id="{{item.id}}" data-default="{{item.isDefault}}" bindchange="onModelEnabledChange" />
+          </view>
+        </view>
+
+        <view class="model-state-row">
+          <view class="model-availability {{item.enabled && selectedProvider.enabled ? 'ready' : ''}}">
+            <view class="availability-dot"></view>
+            <text>{{item.enabled && selectedProvider.enabled ? "已启用" : "已停用"}} · {{item.source === "sync" ? "自动同步" : "手动添加"}}</text>
+          </view>
+          <view class="model-test-state {{item.lastTestStatus}}">
+            <view class="test-state-dot"></view>
+            <view class="test-state-copy">
+              <text>{{item.testStatusText}}</text>
+              <text class="test-state-time" wx:if="{{item.testTimeText}}">{{item.testTimeText}}</text>
+            </view>
+          </view>
+        </view>
+
+        <view class="model-actions">
+          <view class="model-test-button {{testingModelId === item.id ? 'working' : ''}} {{!selectedProvider.enabled || modelBusyId || (testingModelId && testingModelId !== item.id) ? 'disabled' : ''}}" data-id="{{item.id}}" bindtap="testModel">
+            <view class="model-test-icon"><view></view></view>
+            <text>{{testingModelId === item.id ? "正在测试..." : "测试此模型"}}</text>
+          </view>
+          <view class="model-link {{item.isDefault || item.lastTestStatus !== 'success' || !item.enabled || !selectedProvider.enabled || modelBusyId || testingModelId ? 'disabled' : ''}}" data-id="{{item.id}}" data-enabled="{{item.enabled}}" data-default="{{item.isDefault}}" bindtap="setDefault">{{item.isDefault ? "当前默认" : item.lastTestStatus === "success" ? "设为默认" : "测试后设置"}}</view>
+          <view class="action-divider"></view>
+          <view class="model-link danger {{modelBusyId || testingModelId ? 'disabled' : ''}}" data-id="{{item.id}}" bindtap="archiveModel">归档</view>
+        </view>
+      </view>
+    </view>
+
+    <view class="models-note">模型测试只发送固定短提示，不占用成员额度，也不会保存为聊天记录。</view>
+  </block>
+</view>
+
+<view class="page models-error {{themeClass}}" wx:elif="{{!loading}}">
+  <view class="error-mark">AI</view>
+  <view class="error-title">模型列表没有读取成功</view>
+  <view class="error-copy">{{loadError || "请检查网络后重新加载"}}</view>
+  <view class="primary-btn error-action" bindtap="retryLoad">重新加载</view>
+</view>
+
+<view class="page loading-page {{themeClass}}" wx:else>
+  <view class="loading-panel"><view class="loading-text">正在整理模型清单...</view><view class="loading-dots"><view></view><view></view><view></view></view></view>
+</view>
+<theme-dialog id="incircle-theme-dialog" />

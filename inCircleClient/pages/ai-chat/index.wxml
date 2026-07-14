@@ -1,0 +1,230 @@
+<page-meta page-style="{{themeStyle}} {{incircleKeyboardPageStyle}}"></page-meta>
+
+<view class="chat-page {{themeClass}} {{incircleKeyboardOpen ? 'keyboard-open' : ''}} {{historyOpen || consentOpen ? 'modal-open' : ''}}" style="padding-bottom: calc(164rpx + env(safe-area-inset-bottom) + {{incircleKeyboardInset}}px);" wx:if="{{!loading && !unavailable}}">
+  <view class="chat-toolbar motion-hero">
+    <view class="toolbar-top">
+      <view class="assistant-context">
+        <view class="toolbar-ai">AI</view>
+        <view class="assistant-context-main">
+          <view class="assistant-context-name">{{status.assistantName}}</view>
+          <view class="assistant-context-circle"><view class="context-dot"></view><text>{{status.circleName}} · 私密对话</text></view>
+        </view>
+      </view>
+      <view class="toolbar-actions">
+        <view class="toolbar-action" bindtap="newConversation" aria-label="新建对话">
+          <view class="add-icon"></view>
+        </view>
+        <view class="toolbar-action" bindtap="openHistory" aria-label="历史对话">
+          <view class="history-lines"><view></view><view></view><view></view></view>
+        </view>
+      </view>
+    </view>
+
+    <picker class="model-picker-wrap" mode="selector" range="{{modelNames}}" value="{{modelIndex}}" disabled="{{sending}}" bindchange="onModelChange">
+      <view class="model-picker {{sending ? 'disabled' : ''}}">
+        <view class="model-symbol"><view></view><view></view><view></view><view></view></view>
+        <view class="model-picker-main">
+          <text class="model-picker-label">当前模型</text>
+          <text class="model-picker-value">{{modelNames[modelIndex]}}</text>
+        </view>
+        <view class="picker-chevron"></view>
+      </view>
+    </picker>
+
+    <view class="chat-mode-row">
+      <picker
+        class="reasoning-mode-picker"
+        mode="selector"
+        range="{{reasoningModeNames}}"
+        value="{{reasoningModeIndex}}"
+        disabled="{{sending || reasoningModeNames.length <= 1}}"
+        bindchange="onReasoningModeChange"
+      >
+        <view class="reasoning-mode motion-state {{reasoningMode === 'on' ? 'active' : ''}} {{sending ? 'disabled' : ''}} {{reasoningModeNames.length <= 1 ? 'single' : ''}}">
+          <view class="reasoning-mode-mark"><view></view></view>
+          <text class="reasoning-mode-label">思考模式</text>
+          <view class="reasoning-mode-value">
+            <text>{{reasoningModeNames[reasoningModeIndex]}}</text>
+            <view class="reasoning-mode-chevron" wx:if="{{reasoningModeNames.length > 1}}"></view>
+          </view>
+        </view>
+      </picker>
+    </view>
+  </view>
+
+  <scroll-view class="message-scroll" scroll-y enhanced show-scrollbar="{{false}}" scroll-into-view="{{scrollIntoView}}">
+    <view class="chat-empty" wx:if="{{!messages.length}}">
+      <view class="empty-ai-mark">AI</view>
+      <view class="empty-ai-title">今天想一起想点什么？</view>
+      <view class="empty-ai-copy">有什么想法，和 {{status.assistantName}} 一起理清。</view>
+
+      <view class="prompt-section" wx:if="{{status.quickPrompts.length}}">
+        <view class="prompt-heading"><text>快捷提问</text><text>灵感开场</text></view>
+        <view class="prompt-grid">
+          <view class="prompt-item {{index < 6 ? 'motion-list-item' : ''}}" wx:for="{{status.quickPrompts}}" wx:key="*this" data-text="{{item}}" bindtap="usePrompt" style="animation-delay: {{index * 35}}ms;">
+            <view class="prompt-number">{{index + 1}}</view>
+            <text class="prompt-text">{{item}}</text>
+            <view class="prompt-arrow"></view>
+          </view>
+        </view>
+      </view>
+    </view>
+
+    <view class="load-earlier" wx:if="{{hasMoreMessages}}" bindtap="loadEarlierMessages">
+      <view class="load-earlier-line"></view>
+      <text>{{loadingMore ? "正在读取..." : "查看更早消息"}}</text>
+      <view class="load-earlier-line"></view>
+    </view>
+
+    <view id="{{item.anchorId}}" class="message-row {{item.role}} {{index >= messages.length - 6 ? 'motion-message' : ''}}" wx:for="{{messages}}" wx:key="id">
+      <view class="assistant-avatar" wx:if="{{item.isAssistant}}">AI</view>
+      <view class="message-main">
+        <view class="message-meta" wx:if="{{item.isAssistant}}">
+          <text class="message-model">{{item.modelName || status.assistantName}}</text>
+          <text class="generated-label">AI 生成</text>
+        </view>
+
+        <view class="reasoning-panel {{item.reasoningExpanded ? 'expanded' : 'collapsed'}}" wx:if="{{item.isAssistant && item.hasReasoningContent}}">
+          <view class="reasoning-toggle" data-index="{{index}}" bindtap="toggleReasoning">
+            <view class="reasoning-mark"><view class="reasoning-mark-core"></view></view>
+            <text class="reasoning-title">{{item.reasoningStreaming ? "正在思考" : "思考过程"}}</text>
+            <view class="reasoning-live" wx:if="{{item.reasoningStreaming}}"><view></view><view></view><view></view></view>
+            <text class="reasoning-duration" wx:if="{{item.reasoningDurationText}}">{{item.reasoningDurationText}}</text>
+            <view class="reasoning-chevron {{item.reasoningExpanded ? 'up' : ''}}"></view>
+          </view>
+          <view class="reasoning-content" wx:if="{{item.reasoningExpanded}}">
+            <rich-text class="markdown-content reasoning-markdown" nodes="{{item.reasoningHtml}}" user-select="{{true}}"></rich-text><view class="reasoning-caret" wx:if="{{item.reasoningStreaming}}"></view>
+          </view>
+        </view>
+
+        <view class="thinking-bubble" wx:if="{{item.status === 'generating' && !item.content && (item.reasoningEnabled === false || !item.hasReasoningContent)}}">
+          <view class="typing-dots"><view></view><view></view><view></view></view>
+          <text>{{item.reasoningMode === "on" ? "正在思考" : "正在生成"}}</text>
+        </view>
+
+        <view class="message-bubble {{item.isFailed ? 'has-partial-error' : ''}}" wx:if="{{item.content}}">
+          <rich-text class="markdown-content message-markdown" nodes="{{item.contentHtml}}" user-select="{{true}}"></rich-text>
+        </view>
+
+        <view class="message-error-card" wx:if="{{item.isFailed}}">
+          <view class="message-error-mark">!</view>
+          <view class="message-error-main">
+            <view class="message-error-title">{{item.failureTitle || "回答没有完成"}}</view>
+            <view class="message-error-copy">{{item.errorText || "请稍后再试一次"}}</view>
+          </view>
+        </view>
+
+        <view class="message-actions" wx:if="{{item.isAssistant && item.status !== 'generating'}}">
+          <view class="message-action" wx:if="{{item.content}}" data-id="{{item.id}}" bindtap="copyMessage">
+            <view class="action-copy-icon"><view></view></view><text>复制</text>
+          </view>
+          <view class="message-action retry-action" data-id="{{item.id}}" bindtap="regenerateMessage">
+            <view class="action-retry-icon"></view><text>{{item.isFailed ? "再试一次" : "重新生成"}}</text>
+          </view>
+          <view class="message-action {{reportBusyId === item.id ? 'disabled' : ''}}" wx:if="{{!item.isFailed}}" data-id="{{item.id}}" bindtap="reportMessage">
+            <view class="action-report-icon">!</view><text>{{reportBusyId === item.id ? "提交中..." : "反馈"}}</text>
+          </view>
+        </view>
+      </view>
+    </view>
+    <view id="messages-bottom-a" class="messages-bottom"></view>
+    <view id="messages-bottom-b" class="messages-bottom-sentinel"></view>
+  </scroll-view>
+
+  <view id="ai-composer" class="composer-wrap" style="bottom: {{incircleKeyboardInset}}px;">
+    <view class="composer-meta">
+      <view class="usage-summary"><view class="usage-dot"></view><text>今日 {{status.usage.memberUsed}} / {{status.memberDailyLimit}}</text></view>
+      <text class="ai-disclaimer">内容由 AI 生成，请自行核实</text>
+    </view>
+    <view class="composer {{sending ? 'sending' : ''}}">
+      <textarea
+        class="composer-input"
+        value="{{inputValue}}"
+        maxlength="4000"
+        auto-height
+        fixed="{{true}}"
+        disable-default-padding="{{true}}"
+        show-confirm-bar="{{false}}"
+        adjust-position="{{false}}"
+        cursor-spacing="24"
+        bindfocus="onComposerFocus"
+        bindkeyboardheightchange="onKeyboardHeightChange"
+        disabled="{{sending}}"
+        bindinput="onInput"
+        confirm-type="send"
+        bindconfirm="sendMessage"
+        placeholder="问问圈内 AI..."
+      ></textarea>
+      <view class="send-button stop {{stopping ? 'disabled' : ''}}" wx:if="{{sending}}" bindtap="stopGenerating" aria-label="停止生成">
+        <view class="stop-icon"></view>
+      </view>
+      <view class="send-button {{!inputValue ? 'disabled' : ''}}" wx:else bindtap="sendMessage" aria-label="发送">
+        <image class="send-icon" src="/images/icons/send.svg" mode="aspectFit"></image>
+      </view>
+    </view>
+  </view>
+
+  <view class="modal-backdrop" wx:if="{{historyOpen}}" catchtouchmove="blockMove" bindtap="closeHistory"></view>
+  <view class="history-sheet" wx:if="{{historyOpen}}">
+    <view class="sheet-handle"></view>
+    <view class="sheet-head">
+      <view>
+        <view class="sheet-title">历史对话</view>
+        <view class="sheet-sub">{{status.circleName}} · 仅你可见</view>
+      </view>
+      <view class="sheet-close" bindtap="closeHistory" aria-label="关闭"><view></view><view></view></view>
+    </view>
+    <view class="history-search"><view class="search-icon"></view><input adjust-position="{{false}}" cursor-spacing="24" bindkeyboardheightchange="onKeyboardHeightChange" value="{{historySearch}}" bindinput="onHistorySearch" placeholder="搜索对话标题" /></view>
+    <scroll-view class="history-list" scroll-y lower-threshold="80" bindscrolltolower="loadMoreConversations">
+      <empty-state
+        wx:if="{{!historyLoading && !conversations.length}}"
+        kind="ai"
+        icon="/images/ui-icons/tools.png"
+        title="还没有历史对话"
+        description="发送第一条消息后，会自动保留在当前圈子的会话列表。"
+        embedded="{{true}}"
+        compact="{{true}}"
+      />
+      <view class="history-row {{index < 6 ? 'motion-list-item' : ''}}" wx:for="{{conversations}}" wx:key="id" data-id="{{item.id}}" bindtap="selectConversation" style="animation-delay: {{index * 35}}ms;">
+        <view class="history-item-mark"><view></view><view></view></view>
+        <view class="history-main">
+          <view class="history-title">{{item.title}}</view>
+          <view class="history-meta">{{item.modelName}} · {{item.updatedAtText}}</view>
+        </view>
+        <view class="history-delete" data-id="{{item.id}}" data-title="{{item.title}}" catchtap="deleteConversation">{{deletingConversationId === item.id ? "删除中..." : "删除"}}</view>
+      </view>
+      <view class="history-loading" wx:if="{{historyLoading || historyLoadingMore}}">正在读取...</view>
+    </scroll-view>
+    <view class="history-footer">
+      <view class="primary-btn history-new" bindtap="newConversation"><view class="history-new-icon"></view><text>新建对话</text></view>
+    </view>
+  </view>
+
+  <view class="modal-backdrop" wx:if="{{consentOpen}}" catchtouchmove="blockMove"></view>
+  <view class="consent-dialog" wx:if="{{consentOpen}}">
+    <view class="consent-mark">AI</view>
+    <view class="consent-title">发送前确认</view>
+    <view class="consent-copy">你的本次输入和当前对话上下文将发送给 {{consent.providerName}}（{{consent.providerDomain}}）生成回答，不会发送圈内成员、账单、活动、投票或资料数据。</view>
+    <view class="privacy-link" bindtap="copyPrivacyUrl">复制供应商隐私政策地址</view>
+    <view class="consent-actions">
+      <view class="ghost-btn consent-action {{consentBusy ? 'disabled' : ''}}" bindtap="closeConsent">暂不使用</view>
+      <view class="primary-btn consent-action {{consentBusy ? 'disabled' : ''}}" bindtap="grantConsent">{{consentBusy ? "授权中..." : "同意并继续"}}</view>
+    </view>
+  </view>
+</view>
+
+<view class="page ai-unavailable {{themeClass}}" wx:elif="{{!loading}}">
+  <view class="unavailable-mark">AI</view>
+  <view class="unavailable-title">圈内 AI 暂不可用</view>
+  <view class="unavailable-copy">圈主尚未开启，或当前没有可用模型。</view>
+  <view class="ghost-btn unavailable-action" bindtap="goBack">返回上一页</view>
+</view>
+
+<view class="page loading-page {{themeClass}}" wx:else>
+  <view class="loading-panel">
+    <view class="loading-illustration"><view class="loading-card-line first"></view><view class="loading-card-line second"></view><view class="loading-card-line third"></view><view class="loading-card-mark"></view></view>
+    <view class="loading-text">正在唤醒圈内 AI...</view>
+    <view class="loading-dots"><view></view><view></view><view></view></view>
+  </view>
+</view>
+<theme-dialog id="incircle-theme-dialog" />

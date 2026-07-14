@@ -1,0 +1,18 @@
+# Dependencies
+node_modules/
+
+# Local development settings and secrets
+.idea/
+project.private.config.json
+.env
+/project.config.json
+/inCircleClient/config/backend.js
+
+# Runtime and deployment artifacts
+server/uploads/
+incircle-server.tar.gz
+/scripts/deploy-server.ps1
+
+# Windows metadata
+[Dd]esktop.ini
+Thumbs.db

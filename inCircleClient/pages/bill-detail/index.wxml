@@ -1,0 +1,131 @@
+<page-meta page-style="{{themeStyle}} {{incircleKeyboardPageStyle}}"></page-meta>
+<view class="page bill-detail-page {{themeClass}}" wx:if="{{ready}}">
+  <view class="bill-hero motion-hero">
+    <view class="hero-row">
+      <view class="pill {{bill.statusClass}}">{{bill.status}}</view>
+      <view class="hero-inline-actions">
+        <view class="split-mode">{{bill.splitMode}}</view>
+        <view wx:if="{{bill.canEdit}}" class="detail-edit-action" bindtap="editBill">编辑</view>
+      </view>
+    </view>
+    <view class="bill-title">{{bill.title}}</view>
+    <view class="amount">¥{{bill.amount}}</view>
+    <view class="hero-copy">{{bill.punchline}}</view>
+  </view>
+
+  <view class="metric-grid motion-section">
+    <view class="metric-card card motion-list-item">
+      <view class="metric-value">{{bill.payerName}}</view>
+      <view class="metric-label">垫付人</view>
+    </view>
+    <view class="metric-card card motion-list-item" style="animation-delay: 35ms;">
+      <view class="metric-value">¥{{bill.perPerson}}</view>
+      <view class="metric-label">{{bill.perPersonLabel}}</view>
+    </view>
+    <view class="metric-card card motion-list-item" style="animation-delay: 70ms;">
+      <view class="metric-value">{{bill.unsettledCount}}</view>
+      <view class="metric-label">未结清</view>
+    </view>
+  </view>
+
+  <view class="section">
+    <view class="section-head">
+      <view class="section-title">消费明细</view>
+      <view class="section-action">多笔汇总</view>
+    </view>
+    <view class="expense-card card" wx:if="{{bill.hasExpenseItems}}">
+      <view class="expense-row {{expenseIndex < 6 ? 'motion-list-item' : ''}}" wx:for="{{bill.expenseItems}}" wx:key="name" wx:for-index="expenseIndex" style="animation-delay: {{expenseIndex * 35}}ms;">
+        <view>{{item.name}}</view>
+        <view>¥{{item.amount}}</view>
+      </view>
+    </view>
+    <empty-state
+      wx:else
+      kind="bill"
+      icon="/images/ui-icons/bill.png"
+      title="没有单独的消费明细"
+      description="当前账单直接按总金额计算，需要时可编辑并补充每笔消费。"
+      compact="{{true}}"
+    />
+  </view>
+
+  <view class="section">
+    <view class="section-head">
+      <view class="section-title">待结清成员</view>
+      <view class="section-action">熟人也要明算账</view>
+    </view>
+    <view class="debt-card card">
+      <view class="debt-summary">{{bill.debtorText}}</view>
+      <view class="tag-row" wx:if="{{bill.hasDebtors}}">
+        <view class="mini-tag danger" wx:for="{{bill.debtors}}" wx:key="*this">{{item}} 未结清</view>
+      </view>
+      <empty-state
+        wx:else
+        kind="bill"
+        icon="/images/ui-icons/bill.png"
+        title="账目已经清爽"
+        description="当前没有成员待结清，组织者可以安心收尾。"
+        embedded="{{true}}"
+        mini="{{true}}"
+      />
+      <view class="reminder">{{bill.reminderText}}</view>
+      <view class="notice-tip">点击提醒会优先请求微信服务通知授权；未配置模板或对方未订阅时，会保留群内文案兜底。</view>
+    </view>
+  </view>
+
+  <view class="section">
+    <view class="section-head">
+      <view class="section-title">转账建议</view>
+      <view class="section-action">直接照抄</view>
+    </view>
+    <view class="transfer-card card" wx:if="{{bill.hasTransfers}}">
+      <view class="transfer-row {{transferIndex < 6 ? 'motion-list-item' : ''}}" wx:for="{{bill.transfers}}" wx:key="from" wx:for-index="transferIndex" style="animation-delay: {{transferIndex * 35}}ms;">
+        <view>{{item.from}} → {{item.to}}</view>
+        <view>¥{{item.amount}}</view>
+      </view>
+    </view>
+    <empty-state
+      wx:else
+      kind="bill"
+      icon="/images/ui-icons/transfer.svg"
+      title="暂时不需要转账建议"
+      description="有待结清成员时，系统会自动生成谁转给谁以及对应金额。"
+      compact="{{true}}"
+    />
+  </view>
+
+  <view class="section">
+    <view class="section-head">
+      <view class="section-title">群内文案</view>
+      <view class="section-action">可复制</view>
+    </view>
+    <view class="copy-card card">{{bill.shareText}}</view>
+  </view>
+
+  <view class="sticky-actions {{bill.canDelete ? 'has-delete' : ''}}">
+    <view wx:if="{{bill.canDelete}}" class="danger-btn {{actionLoadingType === 'deleteBill' ? 'disabled' : ''}}" bindtap="deleteBill">
+      {{actionLoadingType === 'deleteBill' ? '删除中...' : '删除 AA'}}
+    </view>
+    <view class="ghost-btn" bindtap="copySummary">复制摘要</view>
+    <view class="ghost-btn {{actionLoadingType === 'remindBill' ? 'disabled' : ''}}" bindtap="remindBill">
+      {{actionLoadingType === 'remindBill' ? '提醒中...' : '提醒未结清'}}
+    </view>
+    <view class="primary-btn {{actionLoadingType === 'settleBill' ? 'disabled' : ''}}" bindtap="markSettled">
+      {{actionLoadingType === 'settleBill' ? '标记中...' : '标记全员结清'}}
+    </view>
+  </view>
+</view>
+
+<view class="page loading-page {{themeClass}}" wx:else>
+  <view class="loading-panel">
+    <view class="loading-illustration">
+      <view class="loading-card-line first"></view>
+      <view class="loading-card-line second"></view>
+      <view class="loading-card-line third"></view>
+      <view class="loading-card-mark"></view>
+    </view>
+    <view class="loading-text">正在算账...</view>
+    <view class="loading-dots"><view></view><view></view><view></view></view>
+  </view>
+</view>
+<theme-dialog id="incircle-theme-dialog" />

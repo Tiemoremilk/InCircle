@@ -1,0 +1,144 @@
+<page-meta page-style="{{themeStyle}} {{incircleKeyboardPageStyle}}"></page-meta>
+<view class="page ai-ui-page provider-page {{themeClass}}" wx:if="{{!loading && !loadError}}">
+  <view class="provider-intro motion-hero">
+    <view class="provider-intro-icon">AI</view>
+    <view class="provider-intro-main">
+      <view class="provider-intro-title">{{isEditing ? "编辑供应商连接" : "接入模型供应商"}}</view>
+      <view class="provider-intro-copy">密钥加密存储于自建服务器</view>
+    </view>
+    <view class="provider-mode">{{isEditing ? "编辑" : "新增"}}</view>
+  </view>
+
+  <view class="ai-ui-section provider-select-section">
+    <view class="ai-ui-section-head">
+      <view class="ai-ui-section-main">
+        <view class="ai-ui-title">供应商</view>
+        <view class="ai-ui-caption">{{isEditing ? "当前连接类型不可更换" : "选择模型服务"}}</view>
+      </view>
+    </view>
+
+    <view class="provider-locked ai-ui-surface" wx:if="{{isEditing}}">
+      <view class="provider-option-mark selected">{{selectedPreset.shortName || "AI"}}</view>
+      <view class="provider-option-main">
+        <view class="provider-option-name">{{selectedPreset.name}}</view>
+      </view>
+      <view class="provider-connected">已接入</view>
+    </view>
+
+    <view class="provider-grid" wx:else>
+      <view
+        class="provider-option motion-state {{providerIndex < 6 ? 'motion-list-item' : ''}} {{item.selected ? 'selected' : ''}} {{item.configured ? 'configured' : ''}}"
+        wx:for="{{presets}}"
+        wx:key="key"
+        wx:for-index="providerIndex"
+        style="animation-delay: {{providerIndex * 35}}ms;"
+        data-key="{{item.key}}"
+        bindtap="selectPreset"
+      >
+        <view class="provider-option-mark">{{item.shortName || "AI"}}</view>
+        <view class="provider-option-main">
+          <view class="provider-option-title-row">
+            <view class="provider-option-name">{{item.name}}</view>
+            <view class="provider-option-state" wx:if="{{item.configured}}">已接入</view>
+            <view class="provider-option-check" wx:elif="{{item.selected}}" aria-label="已选中">
+              <image class="provider-option-check-icon" src="/images/icons/check.svg" mode="aspectFit"></image>
+            </view>
+          </view>
+        </view>
+      </view>
+    </view>
+  </view>
+
+  <view class="ai-ui-section">
+    <view class="ai-ui-section-head">
+      <view class="ai-ui-section-main">
+        <view class="ai-ui-title">连接配置</view>
+        <view class="ai-ui-caption">{{selectedPreset.name || "供应商连接"}}</view>
+      </view>
+    </view>
+
+    <view class="ai-ui-surface ai-ui-form provider-form">
+      <view class="ai-ui-field" wx:if="{{isCustom}}">
+        <view class="ai-ui-label-row"><view class="ai-ui-label">接口协议<text class="ai-ui-required">*</text></view></view>
+        <picker mode="selector" range="{{protocolNames}}" value="{{protocolIndex}}" bindchange="onProtocolChange">
+          <view class="ai-ui-control ai-ui-picker">
+            <text class="ai-ui-picker-main">{{protocolNames[protocolIndex]}}</text>
+            <view class="ai-ui-chevron"></view>
+          </view>
+        </picker>
+      </view>
+
+      <view class="ai-ui-field" wx:if="{{requiresBaseUrl}}">
+        <view class="ai-ui-label-row"><view class="ai-ui-label">服务地址<text class="ai-ui-required">*</text></view><view class="ai-ui-field-meta">HTTPS</view></view>
+        <input class="ai-ui-control" adjust-position="{{true}}" cursor-spacing="24" value="{{draft.baseUrl}}" data-field="baseUrl" bindinput="onInput" placeholder="https://api.example.com/v1" />
+        <view class="ai-ui-help" wx:if="{{isAzure}}">填写 Azure 资源根地址，例如 https://资源名.openai.azure.com</view>
+        <view class="ai-ui-help" wx:elif="{{isCustom}}">仅支持公网 HTTPS 地址。</view>
+      </view>
+
+      <view class="ai-ui-field" wx:if="{{isAzure}}">
+        <view class="ai-ui-label-row"><view class="ai-ui-label">部署名称<text class="ai-ui-required">*</text></view><view class="ai-ui-field-meta">Azure</view></view>
+        <input class="ai-ui-control" adjust-position="{{true}}" cursor-spacing="24" value="{{draft.azureDeployment}}" data-field="azureDeployment" bindinput="onInput" placeholder="例如 gpt-4o" />
+      </view>
+
+      <view class="ai-ui-field" wx:if="{{isAzure}}">
+        <view class="ai-ui-label-row"><view class="ai-ui-label">API Version</view></view>
+        <input class="ai-ui-control" adjust-position="{{true}}" cursor-spacing="24" value="{{draft.apiVersion}}" data-field="apiVersion" bindinput="onInput" placeholder="2024-10-21" />
+      </view>
+
+      <view class="ai-ui-field">
+        <view class="ai-ui-label-row"><view class="ai-ui-label">API Key<text class="ai-ui-required">*</text></view><view class="ai-ui-field-meta" wx:if="{{existingMask}}">当前 {{existingMask}}</view></view>
+        <input class="ai-ui-control" password adjust-position="{{true}}" cursor-spacing="24" value="{{draft.apiKey}}" data-field="apiKey" bindinput="onInput" placeholder="{{existingMask ? '留空则保留当前密钥' : '填写供应商 API Key'}}" />
+        <view class="ai-ui-help">{{existingMask ? "留空保留当前密钥" : "密钥仅加密保存"}}</view>
+      </view>
+
+      <view class="advanced-toggle" bindtap="toggleAdvanced">
+        <view>
+          <view class="advanced-title">高级设置</view>
+          <view class="advanced-copy">名称、隐私与启用状态</view>
+        </view>
+        <view class="advanced-chevron {{advancedOpen ? 'open' : ''}}"></view>
+      </view>
+
+      <view class="advanced-content motion-content-swap" wx:if="{{advancedOpen}}">
+        <view class="ai-ui-field">
+          <view class="ai-ui-label-row"><view class="ai-ui-label">显示名称</view></view>
+          <input class="ai-ui-control" adjust-position="{{true}}" cursor-spacing="24" value="{{draft.name}}" maxlength="60" data-field="name" bindinput="onInput" placeholder="成员看到的供应商名称" />
+        </view>
+
+        <view class="ai-ui-field">
+          <view class="ai-ui-label-row"><view class="ai-ui-label">隐私政策地址<text class="ai-ui-required">*</text></view></view>
+          <input class="ai-ui-control" adjust-position="{{true}}" cursor-spacing="24" value="{{draft.privacyUrl}}" data-field="privacyUrl" bindinput="onInput" placeholder="https://..." />
+          <view class="ai-ui-help">首次使用时向成员展示。</view>
+        </view>
+
+        <view class="ai-ui-divider"></view>
+        <view class="ai-ui-switch-row">
+          <view class="ai-ui-switch-main">
+            <view class="ai-ui-switch-title">启用供应商</view>
+            <view class="ai-ui-switch-copy">关闭后保留配置，模型暂停使用。</view>
+          </view>
+          <switch checked="{{draft.enabled}}" color="{{themePrimary}}" bindchange="onEnabledChange" />
+        </view>
+      </view>
+
+      <view class="ai-ui-inline-status motion-state done {{operationStatus}}" wx:if="{{operationStatus}}">
+        <view class="ai-ui-status-mark">{{operationStatus === "success" ? "✓" : operationStatus === "error" ? "!" : "·"}}</view>
+        <text>{{operationMessage}}</text>
+      </view>
+
+      <view class="primary-btn provider-save {{saveBusy ? 'disabled' : ''}}" bindtap="saveProvider">{{saveBusy ? "保存中..." : isEditing ? "保存连接" : "保存并管理模型"}}</view>
+    </view>
+  </view>
+</view>
+
+<view class="page ai-manage-error {{themeClass}}" wx:elif="{{!loading}}">
+  <view class="error-mark">AI</view>
+  <view class="error-title">供应商配置没有读取成功</view>
+  <view class="error-copy">{{loadError || "请检查网络后重新加载"}}</view>
+  <view class="primary-btn error-action" bindtap="retryLoad">重新加载</view>
+</view>
+
+<view class="page loading-page {{themeClass}}" wx:else>
+  <view class="loading-panel"><view class="loading-text">正在读取供应商配置...</view><view class="loading-dots"><view></view><view></view><view></view></view></view>
+</view>
+<theme-dialog id="incircle-theme-dialog" />

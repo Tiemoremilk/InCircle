@@ -1,0 +1,240 @@
+<page-meta page-style="{{themeStyle}} {{incircleKeyboardPageStyle}}"></page-meta>
+<view class="page ai-manage-page {{themeClass}}" wx:if="{{!loading && settings}}">
+  <view class="ai-overview motion-hero">
+    <view class="overview-head">
+      <view class="assistant-badge">
+        <text>AI</text>
+        <view class="assistant-signal" wx:if="{{settings.canChat}}"></view>
+      </view>
+      <view class="overview-main">
+        <view class="overview-title">{{settings.assistantName}}</view>
+        <view class="overview-meta">{{settings.circleName}} · 圈内专属助手</view>
+      </view>
+      <view class="status-chip motion-state {{settings.canChat ? 'active' : settings.enabled ? 'pending' : ''}}">
+        <view class="status-dot"></view>
+        <text>{{settings.canChat ? "运行中" : settings.enabled ? "待配置" : "已关闭"}}</text>
+      </view>
+    </view>
+    <view class="overview-note">
+      {{settings.canChat ? "成员可以使用已启用模型开始独立对话" : settings.enabled ? "助手已开启，接入并选择默认模型后即可对话" : settings.configured ? "配置已就绪，可返回圈子设置开启" : "可以先开启助手，模型配置稍后继续"}}
+    </view>
+    <view class="overview-stats">
+      <view class="overview-stat">
+        <text class="overview-stat-value">{{settings.usage.circleUsed}} / {{settings.circleDailyLimit}}</text>
+        <text class="overview-stat-label">本圈今日用量</text>
+      </view>
+      <view class="overview-stat">
+        <text class="overview-stat-value">{{settings.usage.memberUsed}} / {{settings.memberDailyLimit}}</text>
+        <text class="overview-stat-label">我的今日用量</text>
+      </view>
+      <view class="overview-stat">
+        <text class="overview-stat-value">{{models.length}}</text>
+        <text class="overview-stat-label">已接入模型</text>
+      </view>
+    </view>
+  </view>
+
+  <view class="section compact-section">
+    <view class="panel-heading">
+      <view class="panel-heading-main">
+        <view class="panel-title">模型与供应商</view>
+        <view class="panel-caption">管理连接、模型与圈内默认项</view>
+      </view>
+      <view class="heading-action" bindtap="openNewProvider"><view class="heading-action-plus"></view><text>添加供应商</text></view>
+    </view>
+
+    <view class="surface access-surface">
+      <view class="surface-label-row">
+        <view class="surface-label">供应商连接</view>
+        <view class="surface-count" wx:if="{{providers.length}}">{{providers.length}} 个</view>
+        <view class="surface-count" wx:else>未配置</view>
+      </view>
+
+      <view class="provider-empty" wx:if="{{!providers.length}}" bindtap="openNewProvider">
+        <view class="empty-add-mark"><view></view></view>
+        <view class="empty-main">
+          <view class="empty-title">接入第一个模型供应商</view>
+          <view class="empty-copy">API Key 仅加密保存在自建服务器</view>
+        </view>
+        <view class="empty-action">去添加</view>
+      </view>
+
+      <view class="provider-list" wx:else>
+        <view class="provider-row {{providerIndex < 6 ? 'motion-list-item' : ''}}" wx:for="{{providers}}" wx:key="id" wx:for-index="providerIndex" style="animation-delay: {{providerIndex * 35}}ms;">
+          <view class="provider-head" data-id="{{item.id}}" bindtap="editProvider">
+            <view class="provider-logo">{{item.shortName}}</view>
+            <view class="provider-main">
+              <view class="provider-title-line">
+                <text class="provider-name">{{item.name}}</text>
+                <text class="provider-health failed" wx:if="{{item.failedTestModelCount}}">{{item.testedModelCount}} 通过 · {{item.failedTestModelCount}} 异常</text>
+                <text class="provider-health success" wx:elif="{{item.testedModelCount}}">{{item.testedModelCount}} 个模型已测试</text>
+                <text class="provider-health" wx:else>模型尚未测试</text>
+              </view>
+              <view class="provider-meta">{{item.domain}} · {{item.enabledModelCount}} 个可用模型</view>
+            </view>
+            <view class="row-chevron"></view>
+          </view>
+          <view class="provider-actions">
+            <view class="mini-action edit" data-id="{{item.id}}" catchtap="editProvider">编辑连接</view>
+            <view class="mini-action danger" data-id="{{item.id}}" data-name="{{item.name}}" catchtap="archiveProvider">{{deletingProviderId === item.id ? "停用中..." : "停用连接"}}</view>
+          </view>
+        </view>
+      </view>
+
+      <view class="access-divider"></view>
+      <view class="model-summary motion-state {{settings.defaultModel ? 'done' : ''}}" bindtap="openModels">
+        <view class="model-mark"><view></view><view></view><view></view><view></view></view>
+        <view class="model-main">
+          <view class="model-label">模型管理</view>
+          <view class="model-value">{{settings.defaultModel ? settings.defaultModel.displayName : "尚未选择"}}</view>
+          <view class="model-copy">共 {{models.length}} 个模型，成员仅能选择已启用项</view>
+        </view>
+        <view class="model-state {{settings.defaultModel ? 'ready' : ''}}">{{settings.defaultModel ? "已设置" : "待设置"}}</view>
+        <view class="row-chevron"></view>
+      </view>
+    </view>
+  </view>
+
+  <view class="section compact-section">
+    <view class="panel-heading">
+      <view class="panel-heading-main">
+        <view class="panel-title">助手行为</view>
+        <view class="panel-caption">名称、回答边界与常用提问</view>
+      </view>
+    </view>
+
+    <view class="surface settings-surface">
+      <view class="field-block first-field">
+        <view class="field-label">助手名称</view>
+        <input class="field-input" adjust-position="{{true}}" cursor-spacing="24" value="{{draft.assistantName}}" maxlength="30" data-field="assistantName" bindinput="onDraftInput" placeholder="例如：圈内 AI" />
+      </view>
+      <view class="field-block">
+        <view class="field-label-line">
+          <view class="field-label">系统提示词</view>
+          <view class="field-meta">最多 4000 字</view>
+        </view>
+        <textarea class="field-textarea prompt-textarea" show-confirm-bar="{{false}}" adjust-position="{{true}}" cursor-spacing="24" value="{{draft.systemPrompt}}" maxlength="4000" data-field="systemPrompt" bindinput="onDraftInput" placeholder="约束回答语气、原则和边界"></textarea>
+        <view class="field-help">只影响回答方式，不会自动读取圈内业务数据。</view>
+      </view>
+      <view class="field-block">
+        <view class="field-label-line">
+          <view class="field-label">快捷提问</view>
+          <view class="field-meta">每行一条 · 最多 8 条</view>
+        </view>
+        <textarea class="field-textarea quick-textarea" show-confirm-bar="{{false}}" adjust-position="{{true}}" cursor-spacing="24" value="{{draft.quickPromptsText}}" maxlength="700" data-field="quickPromptsText" bindinput="onDraftInput" placeholder="输入成员常用的问题"></textarea>
+      </view>
+
+      <view class="form-divider"></view>
+      <view class="quota-heading">
+        <view>
+          <view class="quota-title">使用额度</view>
+          <view class="quota-copy">每日北京时间 00:00 自动重置</view>
+        </view>
+      </view>
+      <view class="quota-grid">
+        <view class="quota-field">
+          <view class="quota-label">每位成员</view>
+          <view class="number-field">
+            <input type="number" maxlength="3" adjust-position="{{true}}" cursor-spacing="24" value="{{draft.memberDailyLimit}}" data-field="memberDailyLimit" bindinput="onDraftInput" />
+            <text>次 / 日</text>
+          </view>
+        </view>
+        <view class="quota-field">
+          <view class="quota-label">整个圈子</view>
+          <view class="number-field">
+            <input type="number" maxlength="4" adjust-position="{{true}}" cursor-spacing="24" value="{{draft.circleDailyLimit}}" data-field="circleDailyLimit" bindinput="onDraftInput" />
+            <text>次 / 日</text>
+          </view>
+        </view>
+      </view>
+      <view class="output-limit-row">
+        <view class="output-limit-main">
+          <view class="quota-label">单次最大输出</view>
+          <view class="output-limit-copy">推理模型建议 8192，避免思考占满正文额度</view>
+        </view>
+        <view class="number-field output-number-field">
+          <input type="number" maxlength="4" adjust-position="{{true}}" cursor-spacing="24" value="{{draft.maxOutputTokens}}" data-field="maxOutputTokens" bindinput="onDraftInput" />
+          <text>Token</text>
+        </view>
+      </view>
+
+      <view class="primary-btn save-settings {{saveBusy ? 'disabled' : ''}}" bindtap="saveSettings">{{saveBusy ? "保存中..." : "保存助手设置"}}</view>
+    </view>
+  </view>
+
+  <view class="section compact-section">
+    <view class="panel-heading">
+      <view class="panel-heading-main">
+        <view class="panel-title">运行概览</view>
+        <view class="panel-caption">近 14 天调用情况，不保存聊天正文</view>
+      </view>
+    </view>
+    <view class="surface runtime-surface">
+      <view class="compact-empty" wx:if="{{!usageDays.length}}">
+        <view class="empty-chart"><view></view><view></view><view></view></view>
+        <view>
+          <view class="compact-empty-title">还没有调用记录</view>
+          <view class="compact-empty-copy">成员开始使用后，这里会出现用量与耗时。</view>
+        </view>
+      </view>
+      <view class="usage-row {{usageIndex < 6 ? 'motion-list-item' : ''}}" wx:for="{{usageDays}}" wx:key="date" wx:for-index="usageIndex" style="animation-delay: {{usageIndex * 35}}ms;">
+        <view class="usage-date">{{item.date}}</view>
+        <view class="usage-results">
+          <text class="usage-success">{{item.success_count}} 成功</text>
+          <text class="usage-failed">{{item.failed_count}} 失败</text>
+        </view>
+        <view class="usage-latency">{{item.average_latency_ms}} ms</view>
+      </view>
+    </view>
+  </view>
+
+  <view class="section compact-section" wx:if="{{settings.isSuperAdmin}}">
+    <view class="panel-heading">
+      <view class="panel-heading-main">
+        <view class="panel-title">内容治理</view>
+        <view class="panel-caption">仅超管可查看成员主动提交的举报</view>
+      </view>
+      <view class="report-count" wx:if="{{reports.length}}">{{reports.length}} 条</view>
+    </view>
+    <view class="surface report-surface">
+      <view class="compact-empty report-empty" wx:if="{{!reports.length}}">
+        <view class="empty-shield">✓</view>
+        <view>
+          <view class="compact-empty-title">暂无待处理内容</view>
+          <view class="compact-empty-copy">当前圈子没有 AI 内容举报。</view>
+        </view>
+      </view>
+      <view class="report-row {{reportIndex < 6 ? 'motion-list-item' : ''}}" wx:for="{{reports}}" wx:key="id" wx:for-index="reportIndex" style="animation-delay: {{reportIndex * 35}}ms;">
+        <view class="report-head"><text>{{item.reason}}</text><text>{{item.createdAtText}}</text></view>
+        <view class="report-excerpt">{{item.message_excerpt}}</view>
+        <view class="report-detail" wx:if="{{item.detail}}">补充：{{item.detail}}</view>
+        <view class="report-actions">
+          <view class="report-action" wx:if="{{item.status === 'open'}}" data-id="{{item.id}}" bindtap="reviewReport">{{reportBusyId === item.id ? "处理中..." : "标记已查看"}}</view>
+          <view class="report-action done" wx:else>已查看</view>
+          <view class="report-action danger" data-id="{{item.id}}" bindtap="deleteReport">{{reportBusyId === item.id ? "处理中..." : "删除"}}</view>
+        </view>
+      </view>
+    </view>
+  </view>
+
+  <view class="ai-privacy-note">
+    <view class="privacy-lock"><view class="lock-shackle"></view><view class="lock-body"></view></view>
+    <text>成员对话彼此隔离，圈主只能查看聚合用量，不能读取聊天正文。</text>
+  </view>
+</view>
+
+<view class="page ai-manage-error {{themeClass}}" wx:elif="{{!loading}}">
+  <view class="error-mark">AI</view>
+  <view class="error-title">配置暂时没有读取成功</view>
+  <view class="error-copy">{{loadError || "请检查网络后重新加载"}}</view>
+  <view class="primary-btn error-action" bindtap="loadData">重新加载</view>
+</view>
+
+<view class="page loading-page {{themeClass}}" wx:else>
+  <view class="loading-panel">
+    <view class="loading-illustration"><view class="loading-card-line first"></view><view class="loading-card-line second"></view><view class="loading-card-mark"></view></view>
+    <view class="loading-text">正在整理 AI 配置...</view>
+    <view class="loading-dots"><view></view><view></view><view></view></view>
+  </view>
+</view>
+<theme-dialog id="incircle-theme-dialog" />

@@ -1,0 +1,22 @@
+<view class="empty-state kind-{{kind}} {{spacious ? 'is-spacious' : ''}} {{compact ? 'is-compact' : ''}} {{embedded ? 'is-embedded' : ''}} {{mini ? 'is-mini' : ''}}">
+  <view class="empty-art" aria-hidden="true">
+    <view class="empty-sheet back"></view>
+    <view class="empty-sheet front">
+      <view class="empty-icon-wrap">
+        <image class="empty-icon" src="{{icon}}" mode="aspectFit"></image>
+      </view>
+      <view class="empty-art-lines">
+        <view class="empty-art-line long"></view>
+        <view class="empty-art-line short"></view>
+      </view>
+    </view>
+    <view class="empty-tab"></view>
+  </view>
+
+  <view class="empty-content">
+    <view class="empty-eyebrow" wx:if="{{eyebrow}}">{{eyebrow}}</view>
+    <view class="empty-title">{{title}}</view>
+    <view class="empty-description" wx:if="{{description}}">{{description}}</view>
+    <view class="empty-action" wx:if="{{actionText}}" bindtap="onAction" role="button">{{actionText}}</view>
+  </view>
+</view>

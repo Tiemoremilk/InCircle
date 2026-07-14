@@ -1,0 +1,244 @@
+<page-meta page-style="{{themeStyle}} {{incircleKeyboardPageStyle}}"></page-meta>
+<view class="page member-detail-page {{themeClass}}" wx:if="{{ready}}">
+  <view class="identity-hero card motion-hero">
+    <image class="hero-avatar" src="{{member.avatar}}"></image>
+    <view class="identity-main">
+      <view class="hero-top">
+        <view class="pill {{member.roleClass}}">{{member.role}}</view>
+        <view class="safe-chip">娱乐标签可删除</view>
+      </view>
+      <view class="identity-title">{{member.name}} · {{member.title}}</view>
+      <view class="identity-note">{{member.note}}</view>
+    </view>
+  </view>
+
+  <view class="stats-card card motion-section">
+    <view class="stat-item" wx:for="{{member.stats}}" wx:key="label">
+      <view class="stat-value">{{item.value}}</view>
+      <view class="stat-label">{{item.label}}</view>
+    </view>
+  </view>
+
+  <view class="section">
+    <view class="section-head">
+      <view class="section-title">积分流水</view>
+      <view class="section-action">{{member.scoreLogTotal}} 条</view>
+    </view>
+    <view class="score-log-card card" wx:if="{{member.hasScoreLogs}}">
+      <view class="score-log {{scoreLogIndex < 6 ? 'motion-list-item' : ''}}" wx:for="{{member.scoreLogs}}" wx:key="id" wx:for-index="scoreLogIndex" style="animation-delay: {{scoreLogIndex * 35}}ms;">
+        <view class="score-log-mark {{item.deltaClass}}">积</view>
+        <view class="score-log-main">
+          <view class="score-log-title-row">
+            <text class="score-log-member">{{item.memberName}}</text>
+            <text class="score-log-type">{{item.typeText}}</text>
+          </view>
+          <view class="score-log-reason">{{item.reason}}</view>
+          <view class="score-log-time">{{item.createdAt}}</view>
+        </view>
+        <view class="score-log-delta {{item.deltaClass}}">{{item.deltaText}}</view>
+      </view>
+      <view class="view-more-row" wx:if="{{member.hasMoreScoreLogs}}" bindtap="openScoreLogs">
+        <text>查看更多</text>
+        <text class="view-more-meta">共 {{member.scoreLogTotal}} 条</text>
+      </view>
+    </view>
+    <view class="score-log-card card" wx:else>
+      <empty-state
+        kind="log"
+        icon="/images/ui-icons/history.svg"
+        title="还没有积分流水"
+        description="下一次约局、投票、打卡或沉淀资料后，会记录在这里。"
+        embedded="{{true}}"
+        compact="{{true}}"
+      />
+    </view>
+  </view>
+
+  <view class="section" wx:if="{{member.canShowFriendlyActions}}">
+    <view class="section-head">
+      <view class="section-title">友好印象</view>
+      <view class="section-action">每项只记一次</view>
+    </view>
+    <view class="tag-panel card">
+      <view class="friendly-copy">给 TA 留一个有用的圈内印象，满 2 位圈友认可后会进入标签墙。</view>
+      <view class="friendly-grid">
+        <view
+          class="friendly-chip motion-state {{item.activeClass}} {{actionLoadingType === 'addTag' && actionLoadingId === item.tag ? 'disabled' : ''}}"
+          wx:for="{{member.friendlyTagOptions}}"
+          wx:key="tag"
+          data-tag="{{item.tag}}"
+          bindtap="addFriendlyTag"
+        >
+          <view class="friendly-chip-name">{{item.tag}}</view>
+          <view class="friendly-chip-meta">
+            <block wx:if="{{actionLoadingType === 'addTag' && actionLoadingId === item.tag}}">
+              {{item.active ? '取消中...' : '记录中...'}}
+            </block>
+            <block wx:else>{{item.stateText}}</block>
+          </view>
+        </view>
+      </view>
+      <view class="tag-wall-head">
+        <view class="tag-wall-title">已上墙标签</view>
+        <view class="tag-wall-meta">{{member.hasTags ? '可沉淀为成员特色' : '还没有标签上墙'}}</view>
+      </view>
+      <view class="tag-row" wx:if="{{member.hasTags}}">
+        <view
+          class="removable-tag {{actionLoadingType === 'removeTag' && actionLoadingId === item ? 'disabled' : ''}} {{member.canEditTags ? '' : 'readonly'}}"
+          wx:for="{{member.tags}}"
+          wx:key="*this"
+          data-tag="{{item}}"
+          bindtap="removeTag"
+        >
+          <block wx:if="{{actionLoadingType === 'removeTag' && actionLoadingId === item}}">删除中...</block>
+          <block wx:elif="{{member.canEditTags}}">{{item}} ×</block>
+          <block wx:else>{{item}}</block>
+        </view>
+      </view>
+      <empty-state
+        wx:else
+        kind="members"
+        icon="/images/ui-icons/tag.svg"
+        title="还没有标签上墙"
+        description="同一友好印象获得 2 位圈友认可后，会自动出现在这里。"
+        embedded="{{true}}"
+        mini="{{true}}"
+      />
+      <view class="safety-note">{{member.safetyNote}}</view>
+      <view class="appeal-link" bindtap="appealTag">这个标签不合适？申请移除</view>
+    </view>
+  </view>
+
+  <view class="section" wx:if="{{member.canShowTagProposals}}">
+    <view class="section-head">
+      <view class="section-title">圈友提名</view>
+      <view class="section-action">满 2 票上墙</view>
+    </view>
+    <view class="tag-vote-card card">
+      <view class="tag-vote-form">
+        <input class="tag-vote-input" adjust-position="{{true}}" cursor-spacing="24" placeholder="例如：饭局导航 / 规则讲解" value="{{tagDraft}}" bindinput="onTagDraftInput" />
+        <view class="tag-vote-submit {{actionLoadingType === 'proposeTag' ? 'disabled' : ''}}" bindtap="proposeTag">
+          {{actionLoadingType === 'proposeTag' ? '提交中...' : '提名'}}
+        </view>
+      </view>
+      <view class="proposal-list" wx:if="{{member.hasTagProposals}}">
+        <view class="proposal-row {{proposalIndex < 6 ? 'motion-list-item' : ''}} {{proposal.statusClass}}" wx:for="{{member.tagProposals}}" wx:key="id" wx:for-item="proposal" wx:for-index="proposalIndex" style="animation-delay: {{proposalIndex * 35}}ms;">
+          <view class="proposal-main">
+            <view class="proposal-tag">{{proposal.tag}}</view>
+            <view class="proposal-meta">{{proposal.metaText}}</view>
+          </view>
+          <view
+            class="proposal-vote {{actionLoadingType === 'voteTag' && actionLoadingId === proposal.id ? 'disabled' : ''}}"
+            data-id="{{proposal.id}}"
+            data-status="{{proposal.status}}"
+            bindtap="voteTagProposal"
+          >{{actionLoadingType === 'voteTag' && actionLoadingId === proposal.id ? proposal.loadingText : proposal.voteText}}</view>
+        </view>
+      </view>
+      <empty-state
+        wx:else
+        kind="vote"
+        icon="/images/ui-icons/nomination.svg"
+        title="还没有候选标签"
+        description="写下一个友好的圈内印象，邀请圈友一起表态。"
+        embedded="{{true}}"
+        mini="{{true}}"
+      />
+      <view class="safety-note">标签投票只是娱乐印象，成员仍可删除或申诉。</view>
+    </view>
+  </view>
+
+  <view class="section">
+    <view class="section-head">
+      <view class="section-title">技能与偏好</view>
+      <view class="section-action">约局前先看</view>
+    </view>
+    <view class="info-grid">
+      <view class="info-card card">
+        <view class="info-label">擅长</view>
+        <block wx:if="{{member.skills.length}}">
+          <view class="mini-tag" wx:for="{{member.skills}}" wx:key="*this">{{item}}</view>
+        </block>
+        <empty-state wx:else kind="profile" icon="/images/ui-icons/skill.svg" title="等待补充" description="还没有填写擅长项。" embedded="{{true}}" mini="{{true}}" />
+      </view>
+      <view class="info-card card">
+        <view class="info-label">兴趣</view>
+        <block wx:if="{{member.interests.length}}">
+          <view class="mini-tag" wx:for="{{member.interests}}" wx:key="*this">{{item}}</view>
+        </block>
+        <empty-state wx:else kind="profile" icon="/images/ui-icons/heart.svg" title="等待补充" description="还没有填写兴趣。" embedded="{{true}}" mini="{{true}}" />
+      </view>
+      <view class="info-card card">
+        <view class="info-label">雷点 / 忌口</view>
+        <block wx:if="{{member.taboos.length}}">
+          <view class="mini-tag warning" wx:for="{{member.taboos}}" wx:key="*this">{{item}}</view>
+        </block>
+        <empty-state wx:else kind="profile" icon="/images/ui-icons/alert.svg" title="暂未填写" description="没有公开雷点或忌口。" embedded="{{true}}" mini="{{true}}" />
+      </view>
+      <view class="info-card card">
+        <view class="info-label">可约时间</view>
+        <view class="availability" wx:if="{{member.availability}}">{{member.availability}}</view>
+        <empty-state wx:else kind="profile" icon="/images/ui-icons/clock.svg" title="时间待定" description="还没有填写可约时段。" embedded="{{true}}" mini="{{true}}" />
+      </view>
+    </view>
+  </view>
+
+  <view class="section">
+    <view class="section-head">
+      <view class="section-title">最近参与</view>
+      <view class="section-action">{{member.recentActivities.length}} 条</view>
+    </view>
+    <view class="recent-card card">
+      <block wx:if="{{member.recentActivities.length}}">
+        <view class="recent-row {{recentIndex < 6 ? 'motion-list-item' : ''}}" wx:for="{{member.recentActivities}}" wx:key="*this" wx:for-index="recentIndex" style="animation-delay: {{recentIndex * 35}}ms;">
+          <view class="recent-dot"></view>
+          <view>{{item}}</view>
+        </view>
+      </block>
+      <empty-state
+        wx:else
+        kind="activity"
+        icon="/images/ui-icons/history.svg"
+        title="还没有参与记录"
+        description="参加活动、投票、打卡或 AA 后，最近动态会整理在这里。"
+        embedded="{{true}}"
+        compact="{{true}}"
+      />
+    </view>
+  </view>
+
+  <view class="section">
+    <view class="section-head">
+      <view class="section-title">勋章墙</view>
+      <view class="section-action">轻荣誉</view>
+    </view>
+    <view class="badge-card card">
+      <block wx:if="{{member.badges.length}}">
+        <view class="badge {{badgeIndex < 6 ? 'motion-list-item' : ''}}" wx:for="{{member.badges}}" wx:key="*this" wx:for-index="badgeIndex" style="animation-delay: {{badgeIndex * 35}}ms;">{{item}}</view>
+      </block>
+      <empty-state
+        wx:else
+        kind="honor"
+        icon="/images/ui-icons/medal.svg"
+        title="还没有点亮勋章"
+        description="完善身份卡或参与圈内活动后，趣味勋章会自动出现。"
+        embedded="{{true}}"
+        compact="{{true}}"
+      />
+    </view>
+  </view>
+</view>
+
+<view class="page loading-page {{themeClass}}" wx:else>
+  <view class="loading-panel">
+    <view class="loading-illustration">
+      <view class="loading-card-line first"></view>
+      <view class="loading-card-line second"></view>
+      <view class="loading-card-line third"></view>
+      <view class="loading-card-mark"></view>
+    </view>
+    <view class="loading-text">正在翻身份卡...</view>
+    <view class="loading-dots"><view></view><view></view><view></view></view>
+  </view>
+</view>
+<theme-dialog id="incircle-theme-dialog" />

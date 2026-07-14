@@ -1,0 +1,91 @@
+<page-meta page-style="{{themeStyle}} {{incircleKeyboardPageStyle}}"></page-meta>
+<view class="page admin-page {{themeClass}}" wx:if="{{!loading}}">
+  <view wx:if="{{isSuperAdmin}}">
+    <view class="admin-hero card motion-hero">
+      <view class="hero-row">
+        <view>
+          <view class="eyebrow">超管后台</view>
+          <view class="hero-title">平台管理中心</view>
+        </view>
+        <view class="circle-mark motion-theme-mark">
+          <image class="hero-icon" src="/images/ui-icons/admin.svg"></image>
+        </view>
+      </view>
+      <view class="hero-copy">集中处理圈子状态、用户账号与必要操作流水。</view>
+      <view class="metrics-grid">
+        <view class="metric {{metricIndex < 6 ? 'motion-list-item' : ''}}" wx:for="{{metrics}}" wx:key="label" wx:for-index="metricIndex" style="animation-delay: {{metricIndex * 35}}ms;">
+          <view class="metric-value">{{item.value}}</view>
+          <view class="metric-label">{{item.label}}</view>
+        </view>
+      </view>
+    </view>
+
+    <view class="section management-hub">
+      <view class="section-title">管理入口</view>
+      <view class="hub-entry motion-list-item" bindtap="openAdminCircles">
+        <view class="hub-icon"><image src="/images/ui-icons/layers.svg" mode="aspectFit"></image></view>
+        <view class="hub-copy"><view class="hub-title">管理所有圈子</view><view class="hub-subtitle">{{circleSummary.total}} 个圈子 · {{circleSummary.frozen}} 个冻结</view></view>
+        <view class="hub-arrow">›</view>
+      </view>
+      <view class="hub-entry motion-list-item" style="animation-delay: 35ms;" bindtap="openAdminUsers">
+        <view class="hub-icon"><image src="/images/ui-icons/profile.svg" mode="aspectFit"></image></view>
+        <view class="hub-copy"><view class="hub-title">用户管理</view><view class="hub-subtitle">{{userSummary.total}} 个用户 · {{userSummary.blocked}} 个封禁</view></view>
+        <view class="hub-arrow">›</view>
+      </view>
+    </view>
+
+    <view class="section">
+      <view class="section-head">
+        <view class="section-title with-icon">
+        <image class="section-icon" src="/images/ui-icons/history.svg"></image>
+          <text>操作日志</text>
+        </view>
+        <view class="section-action">{{logTotal}} 条</view>
+      </view>
+      <view class="log-card card" wx:if="{{logsPreview.length}}">
+        <view class="log-row {{logIndex < 6 ? 'motion-list-item' : ''}}" wx:for="{{logsPreview}}" wx:key="id" wx:for-index="logIndex" style="animation-delay: {{logIndex * 35}}ms;">
+          <view class="log-main">
+            <view class="log-title">{{item.actionText}}</view>
+            <view class="log-summary">{{item.summaryText}}</view>
+          </view>
+          <view class="log-side">
+            <view class="log-actor">{{item.actorName}}</view>
+            <view class="log-time">{{item.createdAtText}}</view>
+          </view>
+        </view>
+        <view class="view-more-row" wx:if="{{hasMoreLogs}}" bindtap="openAdminLogs">
+          <text>查看更多</text>
+          <text class="view-more-meta">共 {{logTotal}} 条</text>
+        </view>
+      </view>
+      <empty-state
+        wx:else
+        kind="log"
+        icon="/images/ui-icons/history.svg"
+        title="还没有操作日志"
+        description="圈子状态或成员关系发生管理操作后，会留下必要流水。"
+        compact="{{true}}"
+      />
+    </view>
+
+  </view>
+
+  <view class="denied-card card" wx:else>
+    <view class="denied-title">没有超管权限</view>
+    <view class="muted">当前账号不是超管，只能进入自己加入的圈子。</view>
+  </view>
+</view>
+
+<view class="page loading-page {{themeClass}}" wx:else>
+  <view class="loading-panel">
+    <view class="loading-illustration">
+      <view class="loading-card-line first"></view>
+      <view class="loading-card-line second"></view>
+      <view class="loading-card-line third"></view>
+      <view class="loading-card-mark"></view>
+    </view>
+    <view class="loading-text">正在读取超管后台...</view>
+    <view class="loading-dots"><view></view><view></view><view></view></view>
+  </view>
+</view>
+<theme-dialog id="incircle-theme-dialog" />

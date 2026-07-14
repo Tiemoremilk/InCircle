@@ -1,0 +1,2308 @@
+const { AppError } = require("../errors");
+const { canManageCircleRole, isOwnerRole } = require("../member-role");
+const { beijingDateKey } = require("../time");
+const { InCircleService } = require("./incircle");
+const { checkTextSecurity } = require("./wechat");
+const {
+  credentialLastFour,
+  decryptCredential,
+  encryptCredential,
+  maskedCredential,
+} = require("./ai/credentials");
+const {
+  listProviderModels,
+  listProviderPresets,
+  normalizeProviderDraft,
+  reasoningCapability,
+  resolveReasoningMode,
+  streamProviderCompletion,
+} = require("./ai/providers");
+
+const DEFAULT_SETTINGS = Object.freeze({
+  enabled: false,
+  assistantName: "圈内 AI",
+  systemPrompt: "你是一个友善、准确的圈内 AI 助手。回答应简洁、清楚；不确定时明确说明，不编造事实。",
+  quickPrompts: ["帮我梳理一下思路", "把这段话写得更清楚", "给我几个可执行的建议"],
+  memberDailyLimit: 20,
+  circleDailyLimit: 200,
+  maxOutputTokens: 8192,
+});
+const MAX_CONVERSATIONS_PER_MEMBER = 200;
+const OUTPUT_SECURITY_INITIAL_CHARS = 16;
+const OUTPUT_SECURITY_EARLY_BATCH_CHARS = 64;
+const OUTPUT_SECURITY_EARLY_WINDOW_CHARS = 1200;
+const OUTPUT_SECURITY_BATCH_CHARS = 128;
+const OUTPUT_STREAM_MAX_FRAME_CHARS = 10;
+const OUTPUT_SECURITY_CONTEXT_CHARS = 160;
+const OUTPUT_PARTIAL_FLUSH_MS = 110;
+const OUTPUT_QUEUE_HIGH_WATER_CHARS = 8192;
+const GENERATION_CHECKPOINT_INTERVAL_MS = 350;
+const EXISTING_GENERATION_POLL_MS = 350;
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const activeGenerationControllers = new Map();
+
+function hasVisibleReasoning(value) {
+  return String(value || "").replace(/[\s\u200b-\u200d\u2060\ufeff]/g, "").length > 0;
+}
+
+function normalizedReasoningContent(value) {
+  const content = String(value || "");
+  return hasVisibleReasoning(content) ? content.trim() : "";
+}
+
+function boundedTextFrames(value, maxChars) {
+  const source = String(value || "");
+  const limit = Math.max(1, Number(maxChars || OUTPUT_STREAM_MAX_FRAME_CHARS));
+  const frames = [];
+  for (let offset = 0; offset < source.length;) {
+    let end = Math.min(source.length, offset + limit);
+    const lastCode = source.charCodeAt(end - 1);
+    const nextCode = source.charCodeAt(end);
+    if (lastCode >= 0xd800 && lastCode <= 0xdbff && nextCode >= 0xdc00 && nextCode <= 0xdfff) end += 1;
+    frames.push({ content: source.slice(offset, end), offset, endOffset: end });
+    offset = end;
+  }
+  return frames;
+}
+
+function registerActiveGeneration(messageId, controller) {
+  const id = String(messageId || "");
+  if (!id || !controller) return () => {};
+  const controllers = activeGenerationControllers.get(id) || new Set();
+  controllers.add(controller);
+  activeGenerationControllers.set(id, controllers);
+  return () => {
+    const current = activeGenerationControllers.get(id);
+    if (!current) return;
+    current.delete(controller);
+    if (!current.size) activeGenerationControllers.delete(id);
+  };
+}
+
+function cancelActiveGeneration(messageId) {
+  const controllers = activeGenerationControllers.get(String(messageId || ""));
+  if (!controllers) return 0;
+  let cancelled = 0;
+  controllers.forEach((controller) => {
+    if (!controller || controller.signal.aborted) return;
+    controller.abort(Object.assign(new Error("用户停止生成"), {
+      code: "AI_USER_CANCELLED",
+      errCode: "AI_CANCELLED",
+    }));
+    cancelled += 1;
+  });
+  return cancelled;
+}
+
+function arrayOfStrings(value, limit, itemLimit) {
+  return (Array.isArray(value) ? value : [])
+    .map((item) => String(item || "").trim().slice(0, itemLimit || 100))
+    .filter(Boolean)
+    .slice(0, limit || 20);
+}
+
+function integerBetween(value, fallback, min, max) {
+  const number = Number(value);
+  return Number.isInteger(number) && number >= min && number <= max ? number : fallback;
+}
+
+function publicProvider(row) {
+  if (!row) return null;
+  let domain = "";
+  try {
+    domain = new URL(row.base_url).hostname;
+  } catch (error) {
+    domain = "";
+  }
+  return {
+    id: row.id,
+    presetKey: row.preset_key,
+    protocol: row.protocol,
+    name: row.name,
+    baseUrl: row.base_url,
+    domain,
+    privacyUrl: row.privacy_url,
+    privacyVersion: Number(row.privacy_version || 1),
+    apiVersion: row.api_version || "",
+    azureDeployment: row.azure_deployment || "",
+    enabled: !!row.enabled,
+    archived: !!row.archived,
+    isCustom: !!row.is_custom,
+    credentialMask: maskedCredential(row.credential_last_four),
+    hasCredential: !!row.credential_ciphertext,
+    modelCount: Number(row.model_count || 0),
+    enabledModelCount: Number(row.enabled_model_count || 0),
+    testedModelCount: Number(row.tested_model_count || 0),
+    failedTestModelCount: Number(row.failed_test_model_count || 0),
+    lastTestStatus: row.last_test_status || "",
+    lastTestErrorCode: row.last_test_error_code || "",
+    lastTestedAt: row.last_tested_at || null,
+    supportsModelSync: row.protocol !== "azure",
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function publicModel(row) {
+  if (!row) return null;
+  const reasoning = reasoningCapability(row, row);
+  return {
+    id: row.id,
+    providerId: row.provider_id,
+    providerName: row.provider_name || "",
+    providerEnabled: row.provider_enabled !== false,
+    providerDomain: row.provider_domain || "",
+    privacyUrl: row.privacy_url || "",
+    privacyVersion: Number(row.privacy_version || 1),
+    modelId: row.model_id,
+    displayName: row.display_name || row.model_id,
+    enabled: !!row.enabled,
+    archived: !!row.archived,
+    supportsStream: row.supports_stream !== false,
+    contextWindow: Number(row.context_window || 0),
+    source: row.source || "manual",
+    isDefault: !!row.is_default,
+    consented: !!row.consented,
+    lastTestStatus: row.last_test_status || "",
+    lastTestErrorCode: row.last_test_error_code || "",
+    lastTestLatencyMs: Number(row.last_test_latency_ms || 0),
+    lastTestedAt: row.last_tested_at || null,
+    reasoningControl: reasoning.control,
+    reasoningDefaultEnabled: reasoning.defaultEnabled,
+    reasoningToggleable: reasoning.toggleable,
+  };
+}
+
+function publicConversation(row) {
+  return {
+    id: row.id,
+    title: row.title || "新对话",
+    modelId: row.model_id || "",
+    modelName: row.model_name_snapshot || "",
+    providerName: row.provider_name_snapshot || "",
+    lastMessageAt: row.last_message_at,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function publicMessage(row) {
+  return {
+    id: row.id,
+    conversationId: row.conversation_id,
+    role: row.role,
+    content: row.content || "",
+    reasoningContent: normalizedReasoningContent(row.reasoning_content),
+    reasoningDurationMs: Math.max(0, Number(row.reasoning_duration_ms || 0)),
+    status: row.status,
+    requestId: row.request_id || "",
+    replyToMessageId: row.reply_to_message_id || "",
+    modelId: row.model_id_snapshot || "",
+    modelName: row.model_name_snapshot || "",
+    providerName: row.provider_name_snapshot || "",
+    inputTokens: Number(row.input_tokens || 0),
+    outputTokens: Number(row.output_tokens || 0),
+    errorCode: row.error_code || "",
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function requestIdOf(value) {
+  const id = String(value || "").trim();
+  if (!/^[a-zA-Z0-9_-]{8,128}$/.test(id)) {
+    throw new AppError("请求标识无效，请重试", { statusCode: 400, errCode: "AI_REQUEST_ID_INVALID" });
+  }
+  return id;
+}
+
+function requestedReasoningMode(body) {
+  const source = body || {};
+  if (Object.prototype.hasOwnProperty.call(source, "reasoningMode")) return source.reasoningMode;
+  if (Object.prototype.hasOwnProperty.call(source, "reasoningEnabled")) return source.reasoningEnabled;
+  return "auto";
+}
+
+function assertReasoningModeSupported(mode) {
+  if (mode && mode.supported) return;
+  let message = "当前模型只能使用自动思考模式";
+  if (mode && mode.control === "always") message = "当前模型固定开启思考，不能选择思考关";
+  else if (mode && mode.control === "none") message = "当前模型不支持思考，不能选择思考开";
+  throw new AppError(message, { statusCode: 400, errCode: "AI_REASONING_MODE_UNSUPPORTED" });
+}
+
+function uuidOf(value, label) {
+  const id = String(value || "").trim();
+  if (!UUID_PATTERN.test(id)) {
+    throw new AppError(`${label || "数据"}不存在`, { statusCode: 404, errCode: "AI_RESOURCE_NOT_FOUND" });
+  }
+  return id;
+}
+
+function titleFromContent(value) {
+  const title = String(value || "").replace(/\s+/g, " ").trim().slice(0, 26);
+  return title || "新对话";
+}
+
+function providerDomain(provider) {
+  try {
+    return new URL(provider.base_url).hostname;
+  } catch (error) {
+    return "";
+  }
+}
+
+function usageEstimate(text) {
+  return Math.max(1, Math.ceil(String(text || "").length / 4));
+}
+
+function outputSecurityBatchSize(acceptedLength) {
+  const length = Math.max(0, Number(acceptedLength || 0));
+  if (!length) return OUTPUT_SECURITY_INITIAL_CHARS;
+  return length < OUTPUT_SECURITY_EARLY_WINDOW_CHARS
+    ? OUTPUT_SECURITY_EARLY_BATCH_CHARS
+    : OUTPUT_SECURITY_BATCH_CHARS;
+}
+
+function modelRowsForUpsert(models, fallbackSource) {
+  return Array.from(
+    new Map((Array.isArray(models) ? models : []).map((model) => [model.modelId, model])).values()
+  ).map((model) => ({
+    model_id: model.modelId,
+    display_name: model.displayName,
+    context_window: Number(model.contextWindow || 0),
+    source: model.source === "manual" ? "manual" : fallbackSource || "sync",
+    metadata: model.metadata && typeof model.metadata === "object" ? model.metadata : {},
+  }));
+}
+
+function aiAccessFlags(circleRow, userId, isSuperAdmin) {
+  const row = circleRow || {};
+  const isMember = !!row.membership_id && row.membership_status === "active";
+  const isOwner =
+    String(row.owner_user_id || "") === String(userId || "") ||
+    (isMember && isOwnerRole(row.membership_role));
+  const isCircleSuperAdmin = isMember && canManageCircleRole(row.membership_role) && !isOwner;
+  return {
+    isMember,
+    isOwner,
+    isCircleSuperAdmin,
+    isSuperAdmin: !!isSuperAdmin,
+    canManage: isOwner || isCircleSuperAdmin || !!isSuperAdmin,
+  };
+}
+
+class AiService {
+  constructor(app, options) {
+    this.app = app;
+    this.db = app.db;
+    this.config = app.config;
+    this.request = options && options.request;
+    this.checkTextSecurity = (options && options.checkTextSecurity) || checkTextSecurity;
+    this.streamCompletion = (options && options.streamProviderCompletion) || streamProviderCompletion;
+    this.generationHeartbeatMs = Math.max(10, Number((options && options.generationHeartbeatMs) || 3000));
+    this.contentSecurityRetryDelays = Array.isArray(options && options.contentSecurityRetryDelays)
+      ? options.contentSecurityRetryDelays
+      : [200, 600];
+    this.core = new InCircleService(app, options);
+  }
+
+  async checkContentSecurity(options) {
+    const delays = this.contentSecurityRetryDelays;
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        return await this.checkTextSecurity(this.config, options);
+      } catch (error) {
+        if (!error || error.errCode !== "CONTENT_SECURITY_UNAVAILABLE" || attempt >= delays.length) throw error;
+        const delay = Math.max(0, Number(delays[attempt] || 0));
+        if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
+      }
+    }
+  }
+
+  async accessContext(body) {
+    const auth = await this.core.requireUser(body || {});
+    const circleId = String((body && body.circleId) || auth.user.current_circle_id || "");
+    if (!circleId) throw new AppError("请先进入圈子", { statusCode: 400, errCode: "CIRCLE_REQUIRED" });
+    uuidOf(circleId, "圈子");
+    const result = await this.db.query(
+      `
+      SELECT c.*, m.id AS membership_id, m.role AS membership_role, m.status AS membership_status
+      FROM incircle_circles c
+      LEFT JOIN incircle_circle_members m
+        ON m.circle_id = c.id AND m.user_id = $2 AND m.status = 'active'
+      WHERE c.id = $1
+      LIMIT 1
+      `,
+      [circleId, auth.user.id]
+    );
+    const row = result.rows[0];
+    if (!row) throw new AppError("圈子不存在或已删除", { statusCode: 404, errCode: "CIRCLE_NOT_FOUND" });
+    const flags = aiAccessFlags(row, auth.user.id, this.core.isSuperAdmin(auth.identity.openid, auth.user));
+    return {
+      auth,
+      circleId,
+      circle: row,
+      ...flags,
+    };
+  }
+
+  async requireMember(body) {
+    const ctx = await this.accessContext(body);
+    if (!ctx.isMember) {
+      throw new AppError("你不是这个圈子的有效成员", { statusCode: 404, errCode: "AI_NOT_AVAILABLE" });
+    }
+    if (ctx.circle.status !== "active") {
+      throw new AppError("这个圈子暂不可使用 AI", { statusCode: 403, errCode: "CIRCLE_DISABLED" });
+    }
+    return ctx;
+  }
+
+  async requireManager(body) {
+    const ctx = await this.accessContext(body);
+    if (!ctx.canManage) {
+      throw new AppError("只有圈主或超管可以配置圈内 AI", { statusCode: 403, errCode: "AI_CONFIG_FORBIDDEN" });
+    }
+    return ctx;
+  }
+
+  async ensureSettings(ctx) {
+    const result = await this.db.query(
+      `
+      INSERT INTO incircle_ai_settings (circle_id, created_by_user_id, updated_by_user_id)
+      VALUES ($1, $2, $2)
+      ON CONFLICT (circle_id) DO UPDATE SET circle_id = EXCLUDED.circle_id
+      RETURNING *
+      `,
+      [ctx.circleId, ctx.auth.user.id]
+    );
+    return result.rows[0];
+  }
+
+  async readSettings(circleId) {
+    const result = await this.db.query("SELECT * FROM incircle_ai_settings WHERE circle_id = $1 LIMIT 1", [circleId]);
+    return result.rows[0] || null;
+  }
+
+  async enabledModels(circleId, userId) {
+    const result = await this.db.query(
+      `
+      SELECT model.*, provider.name AS provider_name, provider.base_url AS provider_base_url,
+        provider.protocol AS provider_protocol, provider.preset_key AS provider_preset_key,
+        provider.enabled AS provider_enabled,
+        provider.privacy_url, provider.privacy_version,
+        settings.default_model_id = model.id AS is_default,
+        EXISTS (
+          SELECT 1 FROM incircle_ai_consents consent
+          WHERE consent.circle_id = model.circle_id
+            AND consent.user_id = $2
+            AND consent.provider_id = provider.id
+            AND consent.privacy_version = provider.privacy_version
+            AND consent.revoked_at IS NULL
+        ) AS consented
+      FROM incircle_ai_models model
+      JOIN incircle_ai_providers provider ON provider.id = model.provider_id AND provider.circle_id = model.circle_id
+      LEFT JOIN incircle_ai_settings settings ON settings.circle_id = model.circle_id
+      WHERE model.circle_id = $1
+        AND model.enabled = true AND model.archived = false
+        AND provider.enabled = true AND provider.archived = false
+        AND provider.credential_ciphertext <> ''
+      ORDER BY (settings.default_model_id = model.id) DESC, provider.name, model.display_name, model.model_id
+      `,
+      [circleId, userId]
+    );
+    return result.rows.map((row) => publicModel(Object.assign({}, row, {
+      provider_domain: providerDomain({ base_url: row.provider_base_url }),
+    })));
+  }
+
+  async usageCounts(circleId, userId, dateKey) {
+    const result = await this.db.query(
+      `
+      SELECT
+        count(*) FILTER (WHERE status = 'success')::int AS circle_used,
+        count(*) FILTER (WHERE status = 'success' AND user_id = $2)::int AS member_used
+      FROM incircle_ai_usage_events
+      WHERE circle_id = $1 AND beijing_date = $3::date
+      `,
+      [circleId, userId, dateKey]
+    );
+    return {
+      circleUsed: Number(result.rows[0].circle_used || 0),
+      memberUsed: Number(result.rows[0].member_used || 0),
+    };
+  }
+
+  async status(body) {
+    const ctx = await this.accessContext(body);
+    if (!ctx.isMember && !ctx.isSuperAdmin) {
+      throw new AppError("AI 助手不可用", { statusCode: 404, errCode: "AI_NOT_AVAILABLE" });
+    }
+    const settings = await this.readSettings(ctx.circleId);
+    const models = ctx.isMember || ctx.isSuperAdmin ? await this.enabledModels(ctx.circleId, ctx.auth.user.id) : [];
+    const counts = await this.usageCounts(ctx.circleId, ctx.auth.user.id, beijingDateKey());
+    const defaultModel = models.find((model) => model.isDefault) || null;
+    const configured = !!defaultModel;
+    const source = settings || {};
+    return {
+      circleId: ctx.circleId,
+      circleName: ctx.circle.name,
+      enabled: !!(settings && settings.enabled),
+      configured,
+      canChat: !!(ctx.isMember && ctx.circle.status === "active" && settings && settings.enabled && configured),
+      canManage: ctx.canManage,
+      isSuperAdmin: ctx.isSuperAdmin,
+      assistantName: source.assistant_name || DEFAULT_SETTINGS.assistantName,
+      quickPrompts: arrayOfStrings(source.quick_prompts || DEFAULT_SETTINGS.quickPrompts, 8, 80),
+      memberDailyLimit: Number(source.member_daily_limit || DEFAULT_SETTINGS.memberDailyLimit),
+      circleDailyLimit: Number(source.circle_daily_limit || DEFAULT_SETTINGS.circleDailyLimit),
+      maxOutputTokens: Number(source.max_output_tokens || DEFAULT_SETTINGS.maxOutputTokens),
+      modelCount: models.length,
+      defaultModel,
+      models,
+      usage: Object.assign(counts, { date: beijingDateKey() }),
+    };
+  }
+
+  async settings(body) {
+    const ctx = await this.requireManager(body);
+    const row = await this.ensureSettings(ctx);
+    const status = await this.status(body);
+    return Object.assign({}, status, {
+      systemPrompt: row.system_prompt || DEFAULT_SETTINGS.systemPrompt,
+      providerPresets: listProviderPresets(ctx.isSuperAdmin),
+    });
+  }
+
+  async updateSettings(body) {
+    const ctx = await this.requireManager(body);
+    const current = await this.ensureSettings(ctx);
+    const patch = (body && body.patch) || {};
+    const assistantName = String(
+      Object.prototype.hasOwnProperty.call(patch, "assistantName") ? patch.assistantName : current.assistant_name
+    ).trim().slice(0, 30) || DEFAULT_SETTINGS.assistantName;
+    const systemPrompt = String(
+      Object.prototype.hasOwnProperty.call(patch, "systemPrompt") ? patch.systemPrompt : current.system_prompt
+    ).trim().slice(0, 4000) || DEFAULT_SETTINGS.systemPrompt;
+    const quickPrompts = Object.prototype.hasOwnProperty.call(patch, "quickPrompts")
+      ? arrayOfStrings(patch.quickPrompts, 8, 80)
+      : arrayOfStrings(current.quick_prompts, 8, 80);
+    const memberDailyLimit = integerBetween(patch.memberDailyLimit, current.member_daily_limit, 1, 200);
+    const circleDailyLimit = integerBetween(patch.circleDailyLimit, current.circle_daily_limit, 1, 5000);
+    const maxOutputTokens = integerBetween(patch.maxOutputTokens, current.max_output_tokens, 128, 8192);
+    const changesDefaultModel = Object.prototype.hasOwnProperty.call(patch, "defaultModelId");
+    const defaultModelIdRaw = changesDefaultModel
+      ? String(patch.defaultModelId || "")
+      : String(current.default_model_id || "");
+    const defaultModelId = defaultModelIdRaw ? uuidOf(defaultModelIdRaw, "默认模型") : "";
+    if (defaultModelId && changesDefaultModel) {
+      const model = await this.db.query(
+        `
+        SELECT model.id FROM incircle_ai_models model
+        JOIN incircle_ai_providers provider ON provider.id = model.provider_id
+        WHERE model.id = $1 AND model.circle_id = $2 AND model.enabled AND NOT model.archived
+          AND provider.enabled AND NOT provider.archived AND provider.credential_ciphertext <> ''
+        LIMIT 1
+        `,
+        [defaultModelId, ctx.circleId]
+      );
+      if (!model.rows[0]) throw new AppError("默认模型不可用", { statusCode: 400, errCode: "AI_DEFAULT_MODEL_INVALID" });
+    }
+    const enabled = typeof patch.enabled === "boolean" ? patch.enabled : !!current.enabled;
+    await this.db.query(
+      `
+      UPDATE incircle_ai_settings SET
+        enabled = $2, assistant_name = $3, system_prompt = $4, quick_prompts = $5::jsonb,
+        member_daily_limit = $6, circle_daily_limit = $7, max_output_tokens = $8,
+        default_model_id = NULLIF($9, '')::uuid, updated_by_user_id = $10
+      WHERE circle_id = $1
+      `,
+      [
+        ctx.circleId, enabled, assistantName, systemPrompt, JSON.stringify(quickPrompts), memberDailyLimit,
+        circleDailyLimit, maxOutputTokens, defaultModelId, ctx.auth.user.id,
+      ]
+    );
+    await this.core.logOperation(ctx.circleId, ctx.auth, enabled ? "开启圈内AI" : "更新圈内AI设置", "ai_settings", ctx.circleId, {
+      enabled,
+      assistantName,
+      memberDailyLimit,
+      circleDailyLimit,
+      defaultModelId,
+    });
+    return this.settings(body);
+  }
+
+  async providerRows(circleId) {
+    return this.db.query(
+      `
+      SELECT provider.*,
+        count(model.id)::int AS model_count,
+        count(model.id) FILTER (WHERE model.enabled AND NOT model.archived)::int AS enabled_model_count,
+        count(model.id) FILTER (WHERE NOT model.archived AND model.last_test_status = 'success')::int AS tested_model_count,
+        count(model.id) FILTER (WHERE NOT model.archived AND model.last_test_status = 'failed')::int AS failed_test_model_count
+      FROM incircle_ai_providers provider
+      LEFT JOIN incircle_ai_models model ON model.provider_id = provider.id
+      WHERE provider.circle_id = $1 AND provider.archived = false
+      GROUP BY provider.id
+      ORDER BY provider.created_at
+      `,
+      [circleId]
+    );
+  }
+
+  async listProviders(body) {
+    const ctx = await this.requireManager(body);
+    const result = await this.providerRows(ctx.circleId);
+    return {
+      providers: result.rows.map(publicProvider),
+      presets: listProviderPresets(ctx.isSuperAdmin),
+      canUseCustomBaseUrl: ctx.isSuperAdmin,
+    };
+  }
+
+  async providerById(ctx, id, options) {
+    const providerId = uuidOf(id, "供应商");
+    const result = await this.db.query(
+      `SELECT * FROM incircle_ai_providers WHERE id = $1 AND circle_id = $2 ${options && options.includeArchived ? "" : "AND archived = false"} LIMIT 1`,
+      [providerId, ctx.circleId]
+    );
+    if (!result.rows[0]) throw new AppError("供应商不存在", { statusCode: 404, errCode: "AI_PROVIDER_NOT_FOUND" });
+    return result.rows[0];
+  }
+
+  async testProviderConnection(provider, apiKey) {
+    const started = Date.now();
+    let models = [];
+    if (provider.protocol === "azure") {
+      let modelId = String(provider.azure_deployment || "").trim();
+      if (!modelId && provider.id) {
+        const modelResult = await this.db.query(
+          "SELECT model_id FROM incircle_ai_models WHERE provider_id = $1 AND archived = false ORDER BY created_at LIMIT 1",
+          [provider.id]
+        );
+        modelId = String((modelResult.rows[0] && modelResult.rows[0].model_id) || "").trim();
+      }
+      if (!modelId) {
+        throw new AppError("请先填写 Azure 部署名称", { statusCode: 400, errCode: "AI_AZURE_DEPLOYMENT_REQUIRED" });
+      }
+      await this.runProviderCompletion({
+        provider,
+        model: { model_id: modelId },
+        apiKey,
+        messages: [{ role: "user", content: "Reply OK" }],
+        systemPrompt: "Reply with OK only.",
+        maxTokens: 8,
+        timeoutMs: 20000,
+        onDelta: async () => {},
+      });
+      models = [{ modelId, displayName: modelId, contextWindow: 0, source: "manual" }];
+    } else {
+      models = await listProviderModels(provider, apiKey, { timeoutMs: 20000 });
+    }
+    return { ok: true, modelCount: models.length, latencyMs: Date.now() - started, models };
+  }
+
+  async saveProvider(body) {
+    const ctx = await this.requireManager(body);
+    const input = (body && body.provider) || {};
+    const existing = body.providerId ? await this.providerById(ctx, body.providerId) : null;
+    const normalized = await normalizeProviderDraft(input, ctx.isSuperAdmin);
+    const apiKey = String(input.apiKey || "").trim();
+    if (!apiKey && (!existing || !existing.credential_ciphertext)) {
+      throw new AppError("请填写 API Key", { statusCode: 400, errCode: "AI_API_KEY_REQUIRED" });
+    }
+    const validateBeforeSave = body.validateBeforeSave === true;
+    const duplicateParams = [ctx.circleId, normalized.presetKey];
+    if (!existing && normalized.presetKey !== "custom") {
+      const duplicate = await this.db.query(
+        `SELECT id FROM incircle_ai_providers
+         WHERE circle_id = $1 AND preset_key = $2 AND archived = false LIMIT 1`,
+        duplicateParams
+      );
+      if (duplicate.rows[0]) {
+        throw new AppError("这个供应商已经接入，请直接编辑现有配置", {
+          statusCode: 409,
+          errCode: "AI_PROVIDER_ALREADY_EXISTS",
+          details: { providerId: duplicate.rows[0].id },
+        });
+      }
+    }
+    let testResult = null;
+    if (validateBeforeSave) {
+      const plainApiKey = apiKey || decryptCredential(this.config, existing.credential_ciphertext);
+      testResult = await this.testProviderConnection(
+        {
+          id: existing && existing.id,
+          protocol: normalized.protocol,
+          base_url: normalized.baseUrl,
+          api_version: normalized.apiVersion,
+          azure_deployment: normalized.azureDeployment,
+        },
+        plainApiKey
+      );
+    }
+    const ciphertext = apiKey ? encryptCredential(this.config, apiKey) : existing.credential_ciphertext;
+    const lastFour = apiKey ? credentialLastFour(apiKey) : existing.credential_last_four;
+    const providerEnabled = typeof input.enabled === "boolean" ? input.enabled : existing ? !!existing.enabled : true;
+    const transportChanged = !!(
+      existing && (
+        existing.base_url !== normalized.baseUrl || existing.protocol !== normalized.protocol ||
+        existing.preset_key !== normalized.presetKey
+      )
+    );
+    const privacyChanged = !!(
+      existing && (
+        transportChanged || existing.privacy_url !== normalized.privacyUrl || existing.name !== normalized.name
+      )
+    );
+    const connectionChanged = !!(transportChanged || apiKey || (existing && existing.azure_deployment !== normalized.azureDeployment));
+    let saved;
+    let modelsSynced = 0;
+    await this.db.withTransaction(async () => {
+      if (!existing && normalized.presetKey !== "custom") {
+        await this.db.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`ai-provider:${ctx.circleId}:${normalized.presetKey}`]);
+        const duplicate = await this.db.query(
+          `SELECT id FROM incircle_ai_providers
+           WHERE circle_id = $1 AND preset_key = $2 AND archived = false LIMIT 1`,
+          duplicateParams
+        );
+        if (duplicate.rows[0]) {
+          throw new AppError("这个供应商已经接入，请直接编辑现有配置", {
+            statusCode: 409,
+            errCode: "AI_PROVIDER_ALREADY_EXISTS",
+            details: { providerId: duplicate.rows[0].id },
+          });
+        }
+      }
+      if (existing) {
+        const result = await this.db.query(
+          `
+          UPDATE incircle_ai_providers SET
+            protocol = $3, preset_key = $4, name = $5, base_url = $6,
+            credential_ciphertext = $7, credential_last_four = $8, privacy_url = $9,
+            privacy_version = privacy_version + $10, api_version = $11, azure_deployment = $12,
+            enabled = $13, is_custom = $14, updated_by_user_id = $15,
+            last_test_status = CASE WHEN $16 THEN '' ELSE last_test_status END,
+            last_test_error_code = CASE WHEN $16 THEN '' ELSE last_test_error_code END
+          WHERE id = $1 AND circle_id = $2
+          RETURNING *
+          `,
+          [
+            existing.id, ctx.circleId, normalized.protocol, normalized.presetKey, normalized.name,
+            normalized.baseUrl, ciphertext, lastFour, normalized.privacyUrl, privacyChanged ? 1 : 0,
+            normalized.apiVersion, normalized.azureDeployment, providerEnabled, normalized.isCustom,
+            ctx.auth.user.id, connectionChanged,
+          ]
+        );
+        saved = result.rows[0];
+      } else {
+        const result = await this.db.query(
+          `
+          INSERT INTO incircle_ai_providers (
+            circle_id, protocol, preset_key, name, base_url, credential_ciphertext, credential_last_four,
+            privacy_url, api_version, azure_deployment, enabled, is_custom, created_by_user_id, updated_by_user_id
+          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$13)
+          RETURNING *
+          `,
+          [
+            ctx.circleId, normalized.protocol, normalized.presetKey, normalized.name, normalized.baseUrl,
+            ciphertext, lastFour, normalized.privacyUrl, normalized.apiVersion, normalized.azureDeployment,
+            providerEnabled, normalized.isCustom, ctx.auth.user.id,
+          ]
+        );
+        saved = result.rows[0];
+      }
+      if (transportChanged) {
+        await this.db.query(
+          "UPDATE incircle_ai_models SET enabled = false, archived = true WHERE provider_id = $1 AND circle_id = $2",
+          [saved.id, ctx.circleId]
+        );
+        await this.db.query(
+          `UPDATE incircle_ai_settings settings SET default_model_id = NULL, updated_by_user_id = $2
+           WHERE settings.circle_id = $1 AND EXISTS (
+             SELECT 1 FROM incircle_ai_models model
+             WHERE model.id = settings.default_model_id AND model.provider_id = $3
+           )`,
+          [ctx.circleId, ctx.auth.user.id, saved.id]
+        );
+      }
+      if (connectionChanged) {
+        await this.db.query(
+          `UPDATE incircle_ai_models
+           SET last_test_status = '', last_test_error_code = '',
+             last_test_latency_ms = 0, last_tested_at = NULL, updated_at = now()
+           WHERE provider_id = $1 AND circle_id = $2`,
+          [saved.id, ctx.circleId]
+        );
+      }
+      if (testResult) {
+        const discoveredModels = modelRowsForUpsert(testResult.models, "sync");
+        modelsSynced = discoveredModels.length;
+        if (discoveredModels.length) {
+          await this.db.query(
+            `
+            INSERT INTO incircle_ai_models (
+              circle_id, provider_id, model_id, display_name, context_window, source, metadata, enabled, archived
+            )
+            SELECT $1, $2, item.model_id, item.display_name, item.context_window, item.source, item.metadata, true, false
+            FROM jsonb_to_recordset($3::jsonb) AS item(
+              model_id text, display_name text, context_window integer, source text, metadata jsonb
+            )
+            ON CONFLICT (provider_id, model_id) DO UPDATE SET
+              display_name = EXCLUDED.display_name, context_window = EXCLUDED.context_window,
+              metadata = incircle_ai_models.metadata || EXCLUDED.metadata,
+              archived = false, updated_at = now()
+            `,
+            [ctx.circleId, saved.id, JSON.stringify(discoveredModels)]
+          );
+        }
+        const tested = await this.db.query(
+          `UPDATE incircle_ai_providers SET last_test_status = 'success', last_test_error_code = '',
+            last_tested_at = now() WHERE id = $1 AND circle_id = $2 RETURNING *`,
+          [saved.id, ctx.circleId]
+        );
+        saved = tested.rows[0] || saved;
+      }
+    });
+    await this.core.logOperation(ctx.circleId, ctx.auth, existing ? "更新AI供应商" : "新增AI供应商", "ai_provider", saved.id, {
+      providerName: saved.name,
+      presetKey: saved.preset_key,
+      rotatedCredential: !!(existing && apiKey),
+      connectionValidated: !!testResult,
+    });
+    return {
+      provider: publicProvider(saved),
+      testResult: testResult ? {
+        ok: true,
+        modelCount: testResult.modelCount,
+        latencyMs: testResult.latencyMs,
+        modelsSynced,
+      } : null,
+    };
+  }
+
+  async archiveProvider(body) {
+    const ctx = await this.requireManager(body);
+    const provider = await this.providerById(ctx, body.providerId);
+    await this.db.withTransaction(async () => {
+      await this.db.query(
+        `UPDATE incircle_ai_providers SET enabled = false, archived = true,
+          credential_ciphertext = '', credential_last_four = '', updated_by_user_id = $3
+         WHERE id = $1 AND circle_id = $2`,
+        [provider.id, ctx.circleId, ctx.auth.user.id]
+      );
+      await this.db.query("UPDATE incircle_ai_models SET enabled = false, archived = true WHERE provider_id = $1", [provider.id]);
+      await this.db.query(
+        `
+        UPDATE incircle_ai_settings settings SET default_model_id = NULL, updated_by_user_id = $2
+        WHERE settings.circle_id = $1 AND EXISTS (
+          SELECT 1 FROM incircle_ai_models model WHERE model.id = settings.default_model_id AND model.provider_id = $3
+        )
+        `,
+        [ctx.circleId, ctx.auth.user.id, provider.id]
+      );
+    });
+    await this.core.logOperation(ctx.circleId, ctx.auth, "停用AI供应商", "ai_provider", provider.id, { providerName: provider.name });
+    return this.listProviders(body);
+  }
+
+  async testProvider(body) {
+    const ctx = await this.requireManager(body);
+    const provider = await this.providerById(ctx, body.providerId);
+    const apiKey = decryptCredential(this.config, provider.credential_ciphertext);
+    let status = "success";
+    let errorCode = "";
+    let result;
+    try {
+      result = await this.testProviderConnection(provider, apiKey);
+    } catch (error) {
+      status = "failed";
+      errorCode = error.errCode || error.code || "AI_PROVIDER_TEST_FAILED";
+      throw error;
+    } finally {
+      await this.db.query(
+        `UPDATE incircle_ai_providers SET last_test_status = $2, last_test_error_code = $3, last_tested_at = now() WHERE id = $1`,
+        [provider.id, status, errorCode]
+      );
+    }
+    return {
+      ok: true,
+      modelCount: result.modelCount,
+      latencyMs: result.latencyMs,
+    };
+  }
+
+  async runProviderCompletion(options) {
+    return this.streamCompletion(options);
+  }
+
+  async testModel(body) {
+    const ctx = await this.requireManager(body);
+    const modelId = uuidOf(body.modelId, "模型");
+    const result = await this.db.query(
+      `
+      SELECT model.*, provider.name AS provider_name, provider.base_url, provider.protocol,
+        provider.preset_key, provider.credential_ciphertext, provider.api_version, provider.azure_deployment,
+        provider.enabled AS provider_enabled, provider.archived AS provider_archived
+      FROM incircle_ai_models model
+      JOIN incircle_ai_providers provider
+        ON provider.id = model.provider_id AND provider.circle_id = model.circle_id
+      WHERE model.id = $1 AND model.circle_id = $2 AND NOT model.archived
+      LIMIT 1
+      `,
+      [modelId, ctx.circleId]
+    );
+    const model = result.rows[0];
+    if (!model) throw new AppError("模型不存在", { statusCode: 404, errCode: "AI_MODEL_NOT_FOUND" });
+    if (!model.provider_enabled || model.provider_archived) {
+      throw new AppError("供应商已停用，请先启用连接", { statusCode: 409, errCode: "AI_PROVIDER_DISABLED" });
+    }
+    if (!model.credential_ciphertext) {
+      throw new AppError("供应商尚未配置 API Key", { statusCode: 409, errCode: "AI_PROVIDER_NOT_READY" });
+    }
+
+    const started = Date.now();
+    const testReasoning = reasoningCapability(model, model);
+    const testMaxTokens = testReasoning.control === "always" ? 1024 : 16;
+    let responseText = "";
+    let failure = null;
+    try {
+      const apiKey = decryptCredential(this.config, model.credential_ciphertext);
+      const provider = Object.assign({}, model, {
+        azure_deployment: model.protocol === "azure" ? model.model_id : model.azure_deployment,
+      });
+      await this.runProviderCompletion({
+        provider,
+        model,
+        apiKey,
+        messages: [{ role: "user", content: "Connection test. Reply with OK only." }],
+        systemPrompt: "Reply with the exact text OK and nothing else.",
+        maxTokens: testMaxTokens,
+        reasoningMode: testReasoning.control === "toggle" ? "off" : "auto",
+        timeoutMs: 25000,
+        onDelta: async (delta) => {
+          if (responseText.length < 512) responseText += String(delta || "").slice(0, 512 - responseText.length);
+        },
+      });
+      if (!responseText.trim()) {
+        throw new AppError("模型连接成功，但没有返回可识别内容", {
+          statusCode: 502,
+          errCode: "AI_MODEL_EMPTY_RESPONSE",
+        });
+      }
+    } catch (error) {
+      failure = error;
+    }
+
+    const latencyMs = Math.max(0, Date.now() - started);
+    const status = failure ? "failed" : "success";
+    const errorCode = failure ? failure.errCode || failure.code || "AI_MODEL_TEST_FAILED" : "";
+    await this.db.withTransaction(async () => {
+      await this.db.query(
+        `UPDATE incircle_ai_models
+         SET last_test_status = $3, last_test_error_code = $4,
+           last_test_latency_ms = $5, last_tested_at = now(), updated_at = now()
+         WHERE id = $1 AND circle_id = $2`,
+        [model.id, ctx.circleId, status, errorCode, latencyMs]
+      );
+      await this.db.query(
+        `UPDATE incircle_ai_providers
+         SET last_test_status = $3, last_test_error_code = $4, last_tested_at = now(), updated_at = now()
+         WHERE id = $1 AND circle_id = $2`,
+        [model.provider_id, ctx.circleId, status, errorCode]
+      );
+    });
+    if (failure) throw failure;
+
+    await this.core.logOperation(ctx.circleId, ctx.auth, "测试AI模型", "ai_model", model.id, {
+      providerName: model.provider_name,
+      modelId: model.model_id,
+      latencyMs,
+    });
+    return {
+      ok: true,
+      modelId: model.id,
+      modelName: model.display_name || model.model_id,
+      latencyMs,
+      testedAt: new Date().toISOString(),
+      reply: responseText.trim().slice(0, 80),
+    };
+  }
+
+  async listModels(body) {
+    const ctx = await this.requireManager(body);
+    const result = await this.db.query(
+      `
+      SELECT model.*, provider.name AS provider_name, provider.base_url AS provider_base_url,
+        provider.protocol AS provider_protocol, provider.preset_key AS provider_preset_key,
+        provider.enabled AS provider_enabled, provider.privacy_url, provider.privacy_version,
+        settings.default_model_id = model.id AS is_default
+      FROM incircle_ai_models model
+      JOIN incircle_ai_providers provider ON provider.id = model.provider_id
+      LEFT JOIN incircle_ai_settings settings ON settings.circle_id = model.circle_id
+      WHERE model.circle_id = $1 AND model.archived = false AND provider.archived = false
+      ORDER BY provider.created_at, model.created_at
+      `,
+      [ctx.circleId]
+    );
+    return {
+      models: result.rows.map((row) => publicModel(Object.assign({}, row, {
+        provider_domain: providerDomain({ base_url: row.provider_base_url }),
+      }))),
+    };
+  }
+
+  async syncModels(body) {
+    const ctx = await this.requireManager(body);
+    const provider = await this.providerById(ctx, body.providerId);
+    if (!provider.enabled) {
+      throw new AppError("供应商已停用，请先启用连接", { statusCode: 409, errCode: "AI_PROVIDER_DISABLED" });
+    }
+    const apiKey = decryptCredential(this.config, provider.credential_ciphertext);
+    const models = await listProviderModels(provider, apiKey, { timeoutMs: 25000 });
+    await this.db.withTransaction(async () => {
+      const discoveredModels = modelRowsForUpsert(models, "sync");
+      if (discoveredModels.length) {
+        await this.db.query(
+          `
+          INSERT INTO incircle_ai_models (
+            circle_id, provider_id, model_id, display_name, context_window, source, metadata, enabled, archived
+          )
+          SELECT $1, $2, item.model_id, item.display_name, item.context_window, item.source, item.metadata, true, false
+          FROM jsonb_to_recordset($3::jsonb) AS item(
+            model_id text, display_name text, context_window integer, source text, metadata jsonb
+          )
+          ON CONFLICT (provider_id, model_id) DO UPDATE SET
+            display_name = EXCLUDED.display_name, context_window = EXCLUDED.context_window,
+            metadata = incircle_ai_models.metadata || EXCLUDED.metadata,
+            archived = false, updated_at = now()
+          `,
+          [ctx.circleId, provider.id, JSON.stringify(discoveredModels)]
+        );
+      }
+    });
+    await this.core.logOperation(ctx.circleId, ctx.auth, "同步AI模型", "ai_provider", provider.id, {
+      providerName: provider.name,
+      modelCount: models.length,
+    });
+    return this.listModels(body);
+  }
+
+  async saveModel(body) {
+    const ctx = await this.requireManager(body);
+    const input = (body && body.model) || {};
+    const provider = await this.providerById(ctx, input.providerId || body.providerId);
+    const modelId = String(input.modelId || "").trim();
+    if (!modelId || modelId.length > 200 || /[\u0000-\u001f]/.test(modelId)) {
+      throw new AppError("模型 ID 格式不正确", { statusCode: 400, errCode: "AI_MODEL_ID_INVALID" });
+    }
+    const result = await this.db.query(
+      `
+      INSERT INTO incircle_ai_models (
+        circle_id, provider_id, model_id, display_name, enabled, archived, supports_stream, context_window, source
+      ) VALUES ($1,$2,$3,$4,$5,false,$6,$7,'manual')
+      ON CONFLICT (provider_id, model_id) DO UPDATE SET
+        display_name = EXCLUDED.display_name, enabled = EXCLUDED.enabled, archived = false,
+        supports_stream = EXCLUDED.supports_stream, context_window = EXCLUDED.context_window, updated_at = now()
+      RETURNING *
+      `,
+      [
+        ctx.circleId, provider.id, modelId, String(input.displayName || modelId).trim().slice(0, 120),
+        typeof input.enabled === "boolean" ? input.enabled : true,
+        typeof input.supportsStream === "boolean" ? input.supportsStream : true,
+        integerBetween(input.contextWindow, 0, 0, 2000000),
+      ]
+    );
+    await this.core.logOperation(ctx.circleId, ctx.auth, "添加AI模型", "ai_model", result.rows[0].id, {
+      providerName: provider.name,
+      modelId,
+    });
+    return this.listModels(body);
+  }
+
+  async updateModel(body) {
+    const ctx = await this.requireManager(body);
+    const modelId = uuidOf(body.modelId, "模型");
+    const result = await this.db.query(
+      `SELECT model.*, provider.enabled AS provider_enabled, provider.archived AS provider_archived,
+        provider.credential_ciphertext AS provider_credential_ciphertext
+       FROM incircle_ai_models model
+       JOIN incircle_ai_providers provider ON provider.id = model.provider_id AND provider.circle_id = model.circle_id
+       WHERE model.id = $1 AND model.circle_id = $2 LIMIT 1`,
+      [modelId, ctx.circleId]
+    );
+    const model = result.rows[0];
+    if (!model) throw new AppError("模型不存在", { statusCode: 404, errCode: "AI_MODEL_NOT_FOUND" });
+    const patch = body.patch || {};
+    const enabled = typeof patch.enabled === "boolean" ? patch.enabled : !!model.enabled;
+    const archived = typeof patch.archived === "boolean" ? patch.archived : !!model.archived;
+    await this.db.withTransaction(async () => {
+      await this.db.query(
+        `UPDATE incircle_ai_models SET enabled = $3, archived = $4,
+          display_name = COALESCE(NULLIF($5, ''), display_name) WHERE id = $1 AND circle_id = $2`,
+        [model.id, ctx.circleId, enabled, archived, String(patch.displayName || "").trim().slice(0, 120)]
+      );
+      if (patch.isDefault === true) {
+        if (!enabled || archived) throw new AppError("停用的模型不能设为默认", { statusCode: 400, errCode: "AI_MODEL_DISABLED" });
+        if (model.last_test_status !== "success") {
+          throw new AppError("请先测试这个模型，确认可用后再设为默认", {
+            statusCode: 409,
+            errCode: "AI_MODEL_TEST_REQUIRED",
+          });
+        }
+        if (!model.provider_enabled || model.provider_archived || !model.provider_credential_ciphertext) {
+          throw new AppError("请先启用供应商并配置 API Key", { statusCode: 409, errCode: "AI_PROVIDER_NOT_READY" });
+        }
+        await this.ensureSettings(ctx);
+        await this.db.query(
+          "UPDATE incircle_ai_settings SET default_model_id = $2, updated_by_user_id = $3 WHERE circle_id = $1",
+          [ctx.circleId, model.id, ctx.auth.user.id]
+        );
+      } else if (!enabled || archived) {
+        await this.db.query(
+          `UPDATE incircle_ai_settings SET default_model_id = NULL, updated_by_user_id = $2
+           WHERE circle_id = $1 AND default_model_id = $3`,
+          [ctx.circleId, ctx.auth.user.id, model.id]
+        );
+      }
+    });
+    return this.listModels(body);
+  }
+
+  async requireEnabledAi(body) {
+    const ctx = await this.requireMember(body);
+    const settings = await this.readSettings(ctx.circleId);
+    if (!settings || !settings.enabled) {
+      throw new AppError("这个圈子还没有开启 AI 助手", { statusCode: 404, errCode: "AI_NOT_ENABLED" });
+    }
+    if (!settings.default_model_id) {
+      throw new AppError("圈内 AI 尚未配置可用模型", { statusCode: 409, errCode: "AI_MODEL_NOT_CONFIGURED" });
+    }
+    return { ctx, settings };
+  }
+
+  async modelForChat(ctx, settings, modelId) {
+    const selectedId = uuidOf(modelId || settings.default_model_id, "模型");
+    const result = await this.db.query(
+      `
+      SELECT model.*, provider.name AS provider_name, provider.base_url, provider.protocol,
+        provider.credential_ciphertext, provider.privacy_url, provider.privacy_version,
+        provider.preset_key, provider.api_version, provider.azure_deployment, provider.enabled AS provider_enabled,
+        provider.archived AS provider_archived
+      FROM incircle_ai_models model
+      JOIN incircle_ai_providers provider ON provider.id = model.provider_id AND provider.circle_id = model.circle_id
+      WHERE model.id = $1 AND model.circle_id = $2
+        AND model.enabled AND NOT model.archived
+        AND provider.enabled AND NOT provider.archived AND provider.credential_ciphertext <> ''
+      LIMIT 1
+      `,
+      [selectedId, ctx.circleId]
+    );
+    if (!result.rows[0]) throw new AppError("所选模型当前不可用", { statusCode: 409, errCode: "AI_MODEL_NOT_AVAILABLE" });
+    return result.rows[0];
+  }
+
+  async assertConsent(ctx, provider) {
+    const result = await this.db.query(
+      `
+      SELECT id FROM incircle_ai_consents
+      WHERE circle_id = $1 AND user_id = $2 AND provider_id = $3
+        AND privacy_version = $4 AND revoked_at IS NULL
+      LIMIT 1
+      `,
+      [ctx.circleId, ctx.auth.user.id, provider.provider_id, provider.privacy_version]
+    );
+    if (!result.rows[0]) {
+      throw new AppError("发送前需要确认 AI 服务授权", {
+        statusCode: 428,
+        errCode: "AI_CONSENT_REQUIRED",
+        details: {
+          providerId: provider.provider_id,
+          providerName: provider.provider_name,
+          providerDomain: providerDomain(provider),
+          privacyUrl: provider.privacy_url,
+          privacyVersion: Number(provider.privacy_version || 1),
+        },
+      });
+    }
+  }
+
+  async grantConsent(body) {
+    const ctx = await this.requireMember(body);
+    const providerId = uuidOf(body.providerId, "供应商");
+    const providerResult = await this.db.query(
+      `SELECT * FROM incircle_ai_providers WHERE id = $1 AND circle_id = $2 AND enabled AND NOT archived LIMIT 1`,
+      [providerId, ctx.circleId]
+    );
+    const provider = providerResult.rows[0];
+    if (!provider) throw new AppError("供应商不可用", { statusCode: 404, errCode: "AI_PROVIDER_NOT_FOUND" });
+    await this.db.query(
+      `
+      INSERT INTO incircle_ai_consents (
+        circle_id, user_id, provider_id, privacy_version, provider_domain, granted_at, revoked_at
+      ) VALUES ($1,$2,$3,$4,$5,now(),NULL)
+      ON CONFLICT (circle_id, user_id, provider_id) DO UPDATE SET
+        privacy_version = EXCLUDED.privacy_version, provider_domain = EXCLUDED.provider_domain,
+        granted_at = now(), revoked_at = NULL, updated_at = now()
+      `,
+      [ctx.circleId, ctx.auth.user.id, provider.id, provider.privacy_version, providerDomain(provider)]
+    );
+    return { granted: true, providerId: provider.id, privacyVersion: provider.privacy_version };
+  }
+
+  async listConversations(body) {
+    const { ctx } = await this.requireEnabledAi(body);
+    const search = String(body.search || "").trim().slice(0, 80);
+    const page = integerBetween(body.page, 1, 1, 100000);
+    const pageSize = integerBetween(body.pageSize, 20, 1, 50);
+    const result = await this.db.query(
+      `
+      SELECT * FROM incircle_ai_conversations
+      WHERE circle_id = $1 AND user_id = $2 AND ($3 = '' OR title ILIKE '%' || $3 || '%')
+      ORDER BY last_message_at DESC, id DESC
+      LIMIT $4 OFFSET $5
+      `,
+      [ctx.circleId, ctx.auth.user.id, search, pageSize + 1, (page - 1) * pageSize]
+    );
+    return {
+      conversations: result.rows.slice(0, pageSize).map(publicConversation),
+      page,
+      pageSize,
+      hasMore: result.rows.length > pageSize,
+    };
+  }
+
+  async createConversation(body) {
+    const { ctx, settings } = await this.requireEnabledAi(body);
+    const model = await this.modelForChat(ctx, settings, body.modelId);
+    return this.db.withTransaction(async () => {
+      await this.assertConversationCapacity(ctx);
+      const result = await this.db.query(
+        `
+        INSERT INTO incircle_ai_conversations (
+          circle_id, user_id, model_id, title, model_name_snapshot, provider_name_snapshot
+        ) VALUES ($1,$2,$3,'新对话',$4,$5)
+        RETURNING *
+        `,
+        [ctx.circleId, ctx.auth.user.id, model.id, model.display_name || model.model_id, model.provider_name]
+      );
+      return { conversation: publicConversation(result.rows[0]) };
+    });
+  }
+
+  async assertConversationCapacity(ctx) {
+    const lockKey = `ai-conversations:${ctx.circleId}:${ctx.auth.user.id}`;
+    await this.db.query("SELECT pg_advisory_xact_lock(hashtext($1))", [lockKey]);
+    const result = await this.db.query(
+      "SELECT count(*)::int AS total FROM incircle_ai_conversations WHERE circle_id = $1 AND user_id = $2",
+      [ctx.circleId, ctx.auth.user.id]
+    );
+    if (Number(result.rows[0].total || 0) >= MAX_CONVERSATIONS_PER_MEMBER) {
+      throw new AppError("历史对话已达到 200 个，请先删除不再需要的对话", {
+        statusCode: 409,
+        errCode: "AI_CONVERSATION_LIMIT",
+      });
+    }
+  }
+
+  async deleteConversation(body) {
+    const { ctx } = await this.requireEnabledAi(body);
+    const conversationId = uuidOf(body.conversationId, "对话");
+    return this.db.withTransaction(async () => {
+      const conversation = await this.db.query(
+        `SELECT id FROM incircle_ai_conversations
+         WHERE id = $1 AND circle_id = $2 AND user_id = $3 FOR UPDATE`,
+        [conversationId, ctx.circleId, ctx.auth.user.id]
+      );
+      if (!conversation.rows[0]) throw new AppError("对话不存在", { statusCode: 404, errCode: "AI_CONVERSATION_NOT_FOUND" });
+      const generating = await this.db.query(
+        "SELECT id FROM incircle_ai_messages WHERE conversation_id = $1 AND role = 'assistant' AND status = 'generating' LIMIT 1",
+        [conversationId]
+      );
+      if (generating.rows[0]) {
+        throw new AppError("请先停止正在生成的回答", { statusCode: 409, errCode: "AI_CONVERSATION_BUSY" });
+      }
+      await this.db.query("DELETE FROM incircle_ai_conversations WHERE id = $1", [conversationId]);
+      return { deleted: true, conversationId };
+    });
+  }
+
+  async listMessages(body) {
+    const { ctx } = await this.requireEnabledAi(body);
+    const conversationId = uuidOf(body.conversationId, "对话");
+    const limit = integerBetween(body.pageSize, 50, 1, 100);
+    const cursor = String(body.before || "").slice(0, 200);
+    const cursorParts = cursor ? cursor.split("|") : [];
+    const hasRoleRank = cursorParts.length >= 3 && /^[01]$/.test(cursorParts[cursorParts.length - 2]);
+    const beforeText = hasRoleRank
+      ? cursorParts.slice(0, -2).join("|")
+      : cursorParts.length >= 2
+        ? cursorParts.slice(0, -1).join("|")
+        : cursor;
+    const beforeId = cursorParts.length >= 2 ? cursorParts[cursorParts.length - 1] : "";
+    const beforeRoleRank = hasRoleRank ? Number(cursorParts[cursorParts.length - 2]) : -1;
+    const before = beforeText ? new Date(beforeText) : null;
+    if (before && Number.isNaN(before.getTime())) throw new AppError("分页时间无效", { statusCode: 400, errCode: "AI_CURSOR_INVALID" });
+    if (beforeId && !UUID_PATTERN.test(beforeId)) throw new AppError("分页标识无效", { statusCode: 400, errCode: "AI_CURSOR_INVALID" });
+    const conversation = await this.db.query(
+      "SELECT * FROM incircle_ai_conversations WHERE id = $1 AND circle_id = $2 AND user_id = $3 LIMIT 1",
+      [conversationId, ctx.circleId, ctx.auth.user.id]
+    );
+    if (!conversation.rows[0]) throw new AppError("对话不存在", { statusCode: 404, errCode: "AI_CONVERSATION_NOT_FOUND" });
+    await this.failStaleGenerations(ctx, conversationId);
+    const result = await this.db.query(
+      `
+      SELECT * FROM incircle_ai_messages
+      WHERE conversation_id = $1 AND circle_id = $2 AND user_id = $3
+        AND (
+          $4::timestamptz IS NULL OR created_at < $4 OR
+          (created_at = $4 AND $5 <> '' AND (
+            ($6::int < 0 AND id < $5::uuid) OR
+            ($6::int >= 0 AND (
+              CASE WHEN role = 'assistant' THEN 1 ELSE 0 END < $6::int OR
+              (CASE WHEN role = 'assistant' THEN 1 ELSE 0 END = $6::int AND id < $5::uuid)
+            ))
+          ))
+        )
+      ORDER BY created_at DESC,
+        CASE WHEN role = 'assistant' THEN 1 ELSE 0 END DESC,
+        id DESC
+      LIMIT $7
+      `,
+      [
+        conversationId, ctx.circleId, ctx.auth.user.id,
+        before ? before.toISOString() : null, beforeId, beforeRoleRank, limit + 1,
+      ]
+    );
+    const rows = result.rows.slice(0, limit);
+    return {
+      conversation: publicConversation(conversation.rows[0]),
+      messages: rows.slice().reverse().map(publicMessage),
+      hasMore: result.rows.length > limit,
+      nextCursor: result.rows.length > limit && rows.length
+        ? `${new Date(rows[rows.length - 1].created_at).toISOString()}|${rows[rows.length - 1].role === "assistant" ? 1 : 0}|${rows[rows.length - 1].id}`
+        : "",
+    };
+  }
+
+  async cancelGeneration(body) {
+    const ctx = await this.requireMember(body);
+    const messageId = uuidOf(body.messageId, "回答");
+    const result = await this.db.query(
+      `SELECT id, status FROM incircle_ai_messages
+       WHERE id = $1 AND circle_id = $2 AND user_id = $3 AND role = 'assistant'
+       LIMIT 1`,
+      [messageId, ctx.circleId, ctx.auth.user.id]
+    );
+    const message = result.rows[0];
+    if (!message) throw new AppError("回答不存在", { statusCode: 404, errCode: "AI_MESSAGE_NOT_FOUND" });
+    if (message.status !== "generating") {
+      return { cancelled: message.status === "cancelled", status: message.status, messageId };
+    }
+    const activeCount = cancelActiveGeneration(messageId);
+    if (!activeCount) {
+      await this.db.query(
+        `UPDATE incircle_ai_messages
+         SET status = 'cancelled', error_code = 'AI_CANCELLED'
+         WHERE id = $1 AND circle_id = $2 AND user_id = $3 AND status = 'generating'`,
+        [messageId, ctx.circleId, ctx.auth.user.id]
+      );
+    }
+    return { cancelled: true, status: "cancelled", messageId };
+  }
+
+  async reportMessage(body) {
+    const ctx = await this.requireMember(body);
+    const messageId = uuidOf(body.messageId, "回答");
+    const result = await this.db.query(
+      `
+      SELECT message.* FROM incircle_ai_messages message
+      WHERE message.id = $1 AND message.circle_id = $2 AND message.user_id = $3
+        AND message.role = 'assistant'
+      LIMIT 1
+      `,
+      [messageId, ctx.circleId, ctx.auth.user.id]
+    );
+    const message = result.rows[0];
+    if (!message) throw new AppError("回答不存在", { statusCode: 404, errCode: "AI_MESSAGE_NOT_FOUND" });
+    await this.db.query(
+      `
+      INSERT INTO incircle_ai_reports (
+        circle_id, user_id, conversation_id, message_id, reason, detail, message_excerpt
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7)
+      ON CONFLICT (message_id, user_id)
+        WHERE message_id IS NOT NULL AND user_id IS NOT NULL
+      DO UPDATE SET reason = EXCLUDED.reason, detail = EXCLUDED.detail,
+        message_excerpt = EXCLUDED.message_excerpt, status = 'open', updated_at = now()
+      `,
+      [
+        ctx.circleId, ctx.auth.user.id, message.conversation_id, message.id,
+        String(body.reason || "回答不准确").trim().slice(0, 60),
+        String(body.detail || "").trim().slice(0, 500),
+        String(message.content || "").slice(0, 500),
+      ]
+    );
+    return { reported: true };
+  }
+
+  async usage(body) {
+    const ctx = await this.requireManager(body);
+    const result = await this.db.query(
+      `
+      SELECT beijing_date::text AS date,
+        count(*) FILTER (WHERE status = 'success')::int AS success_count,
+        count(*) FILTER (WHERE status = 'failed')::int AS failed_count,
+        count(*) FILTER (WHERE status = 'cancelled')::int AS cancelled_count,
+        COALESCE(sum(input_tokens) FILTER (WHERE status = 'success'), 0)::int AS input_tokens,
+        COALESCE(sum(output_tokens) FILTER (WHERE status = 'success'), 0)::int AS output_tokens,
+        COALESCE(avg(latency_ms) FILTER (WHERE status = 'success'), 0)::int AS average_latency_ms
+      FROM incircle_ai_usage_events
+      WHERE circle_id = $1 AND beijing_date >= (now() AT TIME ZONE 'Asia/Shanghai')::date - 13
+      GROUP BY beijing_date
+      ORDER BY beijing_date DESC
+      `,
+      [ctx.circleId]
+    );
+    return { days: result.rows };
+  }
+
+  async listReports(body) {
+    const ctx = await this.requireManager(body);
+    if (!ctx.isSuperAdmin) throw new AppError("只有超管可以查看举报内容", { statusCode: 403, errCode: "FORBIDDEN" });
+    const result = await this.db.query(
+      `SELECT id, circle_id, reason, detail, message_excerpt, status, created_at
+       FROM incircle_ai_reports WHERE circle_id = $1
+       ORDER BY created_at DESC LIMIT 100`,
+      [ctx.circleId]
+    );
+    return { reports: result.rows };
+  }
+
+  async updateReport(body) {
+    const ctx = await this.requireManager(body);
+    if (!ctx.isSuperAdmin) throw new AppError("只有超管可以处理举报内容", { statusCode: 403, errCode: "FORBIDDEN" });
+    const reportId = uuidOf(body.reportId, "举报记录");
+    const existed = await this.db.query(
+      "SELECT id FROM incircle_ai_reports WHERE id = $1 AND circle_id = $2 LIMIT 1",
+      [reportId, ctx.circleId]
+    );
+    if (!existed.rows[0]) throw new AppError("举报记录不存在", { statusCode: 404, errCode: "AI_REPORT_NOT_FOUND" });
+    if (body.delete === true) {
+      await this.db.query("DELETE FROM incircle_ai_reports WHERE id = $1 AND circle_id = $2", [reportId, ctx.circleId]);
+    } else {
+      const status = ["open", "reviewed", "closed"].includes(body.status) ? body.status : "reviewed";
+      await this.db.query("UPDATE incircle_ai_reports SET status = $3 WHERE id = $1 AND circle_id = $2", [reportId, ctx.circleId, status]);
+    }
+    await this.core.logOperation(ctx.circleId, ctx.auth, body.delete === true ? "删除AI举报" : "处理AI举报", "ai_report", reportId, {
+      status: body.delete === true ? "deleted" : body.status || "reviewed",
+    });
+    return this.listReports(body);
+  }
+
+  async generationContext(conversationId, ctx, currentUserMessageId) {
+    const result = await this.db.query(
+      `
+      SELECT message.role, message.content FROM incircle_ai_messages message
+      WHERE message.conversation_id = $1 AND message.circle_id = $2 AND message.user_id = $3
+        AND (
+          (message.role = 'assistant' AND message.status = 'complete') OR
+          (message.role = 'user' AND message.status = 'complete' AND (
+            message.id = $4 OR EXISTS (
+              SELECT 1 FROM incircle_ai_messages reply
+              WHERE reply.reply_to_message_id = message.id
+                AND reply.role = 'assistant' AND reply.status = 'complete'
+            )
+          ))
+        )
+      ORDER BY message.created_at DESC,
+        CASE WHEN message.role = 'assistant' THEN 1 ELSE 0 END DESC,
+        message.id DESC
+      LIMIT 20
+      `,
+      [conversationId, ctx.circleId, ctx.auth.user.id, currentUserMessageId]
+    );
+    const reversed = result.rows.reverse();
+    let remaining = 24000;
+    const kept = [];
+    for (let index = reversed.length - 1; index >= 0; index -= 1) {
+      const content = String(reversed[index].content || "");
+      if (!content) continue;
+      const slice = content.slice(Math.max(0, content.length - remaining));
+      kept.unshift({ role: reversed[index].role, content: slice });
+      remaining -= slice.length;
+      if (remaining <= 0) break;
+    }
+    return kept;
+  }
+
+  async failStaleGenerations(ctx, conversationId) {
+    return this.db.query(
+      `UPDATE incircle_ai_messages
+       SET status = 'failed', error_code = 'AI_STALE_GENERATION'
+       WHERE circle_id = $1 AND role = 'assistant' AND status = 'generating'
+         AND ($2::uuid IS NULL OR conversation_id = $2::uuid)
+         AND updated_at < now() - interval '10 minutes'`,
+      [ctx.circleId, conversationId || null]
+    );
+  }
+
+  async existingRequest(ctx, requestId) {
+    const result = await this.db.query(
+      `
+      SELECT user_message.*, assistant.id AS assistant_id, assistant.content AS assistant_content,
+        assistant.reasoning_content AS assistant_reasoning_content,
+        assistant.reasoning_duration_ms AS assistant_reasoning_duration_ms,
+        assistant.created_at AS assistant_created_at,
+        assistant.status AS assistant_status, assistant.error_code AS assistant_error_code,
+        conversation.title AS conversation_title
+      FROM incircle_ai_messages user_message
+      JOIN incircle_ai_conversations conversation ON conversation.id = user_message.conversation_id
+      LEFT JOIN incircle_ai_messages assistant ON assistant.reply_to_message_id = user_message.id AND assistant.role = 'assistant'
+      WHERE user_message.circle_id = $1 AND user_message.user_id = $2
+        AND user_message.request_id = $3 AND user_message.role = 'user'
+      LIMIT 1
+      `,
+      [ctx.circleId, ctx.auth.user.id, requestId]
+    );
+    return result.rows[0] || null;
+  }
+
+  async streamExistingRequest(prepared, body, emit, signal, reasoningEnabled) {
+    const contentOffsetValue = Number(body && body.contentOffset);
+    const reasoningOffsetValue = Number(body && body.reasoningOffset);
+    let contentOffset = Number.isInteger(contentOffsetValue) && contentOffsetValue >= 0 ? contentOffsetValue : 0;
+    let reasoningOffset = Number.isInteger(reasoningOffsetValue) && reasoningOffsetValue >= 0 ? reasoningOffsetValue : 0;
+    const timeoutMs = Math.min(10 * 60 * 1000, Math.max(30000, Number(this.config.aiProviderTimeoutMs || 300000) + 30000));
+    const deadline = Date.now() + timeoutMs;
+    let row = prepared.replay;
+
+    const emitSnapshot = async () => {
+      if (!row) return;
+      const rawReasoning = String(row.assistant_reasoning_content || "");
+      const reasoning = hasVisibleReasoning(rawReasoning) ? rawReasoning : "";
+      const content = String(row.assistant_content || "");
+      if (reasoningEnabled && reasoning.length > reasoningOffset) {
+        const delta = reasoning.slice(reasoningOffset);
+        const baseOffset = reasoningOffset;
+        for (const frame of boundedTextFrames(delta)) {
+          reasoningOffset = baseOffset + frame.endOffset;
+          await emit({
+            type: "reasoning",
+            content: frame.content,
+            offset: baseOffset + frame.offset,
+            endOffset: reasoningOffset,
+            resumed: true,
+            reasoningDurationMs: Math.max(0, Number(row.assistant_reasoning_duration_ms || 0)),
+          });
+        }
+      }
+      if (content.length > contentOffset) {
+        const delta = content.slice(contentOffset);
+        const baseOffset = contentOffset;
+        for (const frame of boundedTextFrames(delta)) {
+          contentOffset = baseOffset + frame.endOffset;
+          await emit({
+            type: "delta",
+            content: frame.content,
+            offset: baseOffset + frame.offset,
+            endOffset: contentOffset,
+            resumed: true,
+            reasoningDurationMs: Math.max(0, Number(row.assistant_reasoning_duration_ms || 0)),
+          });
+        }
+      }
+    };
+
+    while (row && row.assistant_status === "generating" && Date.now() < deadline) {
+      await emitSnapshot();
+      if (signal && signal.aborted) {
+        throw Object.assign(new Error("请求已取消"), { name: "AbortError" });
+      }
+      await new Promise((resolve) => setTimeout(resolve, EXISTING_GENERATION_POLL_MS));
+      row = await this.existingRequest(prepared.ctx, prepared.requestId);
+    }
+    await emitSnapshot();
+    return row;
+  }
+
+  async prepareGeneration(body) {
+    const { ctx, settings } = await this.requireEnabledAi(body);
+    const content = String(body.content || "").trim();
+    if (!content) throw new AppError("请输入问题", { statusCode: 400, errCode: "AI_CONTENT_REQUIRED" });
+    if (content.length > 4000) throw new AppError("单次输入不能超过 4000 个字", { statusCode: 400, errCode: "AI_CONTENT_TOO_LONG" });
+    const requestId = requestIdOf(body.requestId);
+    const model = await this.modelForChat(ctx, settings, body.modelId);
+    assertReasoningModeSupported(resolveReasoningMode(model, model, requestedReasoningMode(body)));
+    await this.assertConsent(ctx, model);
+    const already = await this.existingRequest(ctx, requestId);
+    if (already) {
+      if (String(already.content || "").trim() !== content) {
+        throw new AppError("请求标识已用于其他问题，请重新发送", {
+          statusCode: 409,
+          errCode: "AI_REQUEST_ALREADY_USED",
+        });
+      }
+      return { replay: already, ctx, settings, model, requestId };
+    }
+    await this.checkContentSecurity({ content, openid: ctx.auth.user.openid });
+
+    try {
+      return await this.db.withTransaction(async () => {
+        let conversation;
+        if (body.conversationId) {
+          const conversationId = uuidOf(body.conversationId, "对话");
+          const result = await this.db.query(
+            `SELECT * FROM incircle_ai_conversations
+             WHERE id = $1 AND circle_id = $2 AND user_id = $3 FOR UPDATE`,
+            [conversationId, ctx.circleId, ctx.auth.user.id]
+          );
+          conversation = result.rows[0];
+          if (!conversation) throw new AppError("对话不存在", { statusCode: 404, errCode: "AI_CONVERSATION_NOT_FOUND" });
+        } else {
+          await this.assertConversationCapacity(ctx);
+          const result = await this.db.query(
+            `
+            INSERT INTO incircle_ai_conversations (
+              circle_id, user_id, model_id, title, model_name_snapshot, provider_name_snapshot
+            ) VALUES ($1,$2,$3,$4,$5,$6) RETURNING *
+            `,
+            [ctx.circleId, ctx.auth.user.id, model.id, titleFromContent(content), model.display_name || model.model_id, model.provider_name]
+          );
+          conversation = result.rows[0];
+        }
+        await this.db.query("SELECT pg_advisory_xact_lock(hashtext($1))", [String(conversation.id)]);
+        await this.failStaleGenerations(ctx, null);
+        const active = await this.db.query(
+          "SELECT id FROM incircle_ai_messages WHERE conversation_id = $1 AND role = 'assistant' AND status = 'generating' LIMIT 1",
+          [conversation.id]
+        );
+        if (active.rows[0]) throw new AppError("当前对话正在生成回答", { statusCode: 409, errCode: "AI_CONVERSATION_BUSY" });
+        const dateKey = beijingDateKey();
+        await this.db.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`ai-circle:${ctx.circleId}:${dateKey}`]);
+        await this.db.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`ai-user:${ctx.circleId}:${ctx.auth.user.id}:${dateKey}`]);
+        const usage = await this.usageCounts(ctx.circleId, ctx.auth.user.id, dateKey);
+        const reservations = await this.db.query(
+          `
+          SELECT
+            count(*)::int AS circle_active,
+            count(*) FILTER (WHERE user_id = $2)::int AS member_active
+          FROM incircle_ai_messages
+          WHERE circle_id = $1 AND role = 'assistant' AND status = 'generating'
+            AND (created_at AT TIME ZONE 'Asia/Shanghai')::date = $3::date
+          `,
+          [ctx.circleId, ctx.auth.user.id, dateKey]
+        );
+        const circleReserved = Number(reservations.rows[0].circle_active || 0);
+        const memberReserved = Number(reservations.rows[0].member_active || 0);
+        if (usage.memberUsed + memberReserved >= settings.member_daily_limit) {
+          throw new AppError("你今天的 AI 使用次数已用完", { statusCode: 429, errCode: "AI_MEMBER_DAILY_LIMIT" });
+        }
+        if (usage.circleUsed + circleReserved >= settings.circle_daily_limit) {
+          throw new AppError("本圈今天的 AI 使用次数已用完", { statusCode: 429, errCode: "AI_CIRCLE_DAILY_LIMIT" });
+        }
+        const minute = await this.db.query(
+          `SELECT count(*)::int AS total FROM incircle_ai_messages
+           WHERE circle_id = $1 AND user_id = $2 AND role = 'user' AND created_at >= now() - interval '1 minute'`,
+          [ctx.circleId, ctx.auth.user.id]
+        );
+        if (Number(minute.rows[0].total || 0) >= 5) {
+          throw new AppError("发送太快了，请稍后再试", { statusCode: 429, errCode: "AI_RATE_LIMITED" });
+        }
+        const userMessageResult = await this.db.query(
+          `
+          INSERT INTO incircle_ai_messages (
+            circle_id, conversation_id, user_id, role, content, status, request_id,
+            model_id_snapshot, model_name_snapshot, provider_name_snapshot
+          ) VALUES ($1,$2,$3,'user',$4,'complete',$5,$6,$7,$8)
+          RETURNING *
+          `,
+          [ctx.circleId, conversation.id, ctx.auth.user.id, content, requestId, model.model_id, model.display_name || model.model_id, model.provider_name]
+        );
+        const assistantResult = await this.db.query(
+          `
+          INSERT INTO incircle_ai_messages (
+            circle_id, conversation_id, user_id, role, status, reply_to_message_id,
+            model_id_snapshot, model_name_snapshot, provider_name_snapshot
+          ) VALUES ($1,$2,$3,'assistant','generating',$4,$5,$6,$7)
+          RETURNING *
+          `,
+          [ctx.circleId, conversation.id, ctx.auth.user.id, userMessageResult.rows[0].id, model.model_id, model.display_name || model.model_id, model.provider_name]
+        );
+        await this.db.query(
+          `UPDATE incircle_ai_conversations SET model_id = $2,
+            title = CASE WHEN title = '新对话' THEN $3 ELSE title END,
+            model_name_snapshot = $4, provider_name_snapshot = $5, last_message_at = now()
+           WHERE id = $1`,
+          [conversation.id, model.id, titleFromContent(content), model.display_name || model.model_id, model.provider_name]
+        );
+        return {
+          ctx, settings, model, requestId, conversation,
+          userMessage: userMessageResult.rows[0], assistantMessage: assistantResult.rows[0], content,
+        };
+      });
+    } catch (error) {
+      if (error && error.code === "23505") {
+        const replay = await this.existingRequest(ctx, requestId);
+        if (replay) return { replay, ctx, settings, model, requestId };
+        throw new AppError("当前对话正在生成回答", { statusCode: 409, errCode: "AI_CONVERSATION_BUSY" });
+      }
+      throw error;
+    }
+  }
+
+  async checkpointGeneration(prepared, content, reasoningContent, reasoningDurationMs) {
+    return this.db.query(
+      `UPDATE incircle_ai_messages
+       SET content = $2, reasoning_content = $3,
+         reasoning_duration_ms = GREATEST(reasoning_duration_ms, $4)
+       WHERE id = $1 AND circle_id = $5 AND user_id = $6 AND status = 'generating'`,
+      [
+        prepared.assistantMessage.id,
+        content || "",
+        reasoningContent || "",
+        Math.min(3600000, Math.max(0, Number(reasoningDurationMs || 0))),
+        prepared.ctx.circleId,
+        prepared.ctx.auth.user.id,
+      ]
+    );
+  }
+
+  async saveGenerationResult(prepared, options) {
+    const status = options.status;
+    const inputTokens = Number(options.inputTokens || 0);
+    const outputTokens = Number(options.outputTokens || 0);
+    const reasoningContent = normalizedReasoningContent(options.reasoningContent);
+    const reasoningDurationMs = Math.min(3600000, Math.max(0, Number(options.reasoningDurationMs || 0)));
+    await this.db.withTransaction(async () => {
+      const conversation = await this.db.query(
+        "SELECT id FROM incircle_ai_conversations WHERE id = $1 AND circle_id = $2 AND user_id = $3 FOR UPDATE",
+        [prepared.conversation.id, prepared.ctx.circleId, prepared.ctx.auth.user.id]
+      );
+      if (!conversation.rows[0]) return;
+      await this.db.query(
+        `
+        UPDATE incircle_ai_messages SET content = $2, reasoning_content = $3,
+          reasoning_duration_ms = $4, status = $5, input_tokens = $6,
+          output_tokens = $7, error_code = $8 WHERE id = $1
+        `,
+        [
+          prepared.assistantMessage.id,
+          options.content || "",
+          reasoningContent,
+          reasoningDurationMs,
+          status === "success" ? "complete" : status,
+          inputTokens,
+          outputTokens,
+          options.errorCode || "",
+        ]
+      );
+      await this.db.query(
+        "UPDATE incircle_ai_conversations SET last_message_at = now() WHERE id = $1",
+        [prepared.conversation.id]
+      );
+      await this.db.query(
+        `
+        INSERT INTO incircle_ai_usage_events (
+          circle_id, user_id, conversation_id, provider_id, model_id, request_id, beijing_date,
+          status, input_tokens, output_tokens, latency_ms, error_code
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7::date,$8,$9,$10,$11,$12)
+        ON CONFLICT (circle_id, user_id, request_id) WHERE request_id <> '' DO NOTHING
+        `,
+        [
+          prepared.ctx.circleId, prepared.ctx.auth.user.id, prepared.conversation.id,
+          prepared.model.provider_id, prepared.model.id, prepared.requestId, beijingDateKey(),
+          status, inputTokens, outputTokens, Number(options.latencyMs || 0), options.errorCode || "",
+        ]
+      );
+    });
+  }
+
+  async chatStream(body, emit, signal) {
+    // Open the response stream before input moderation and conversation setup.
+    // Some reasoning models can be quiet for a while before their first token.
+    await emit({ type: "ping" });
+    const reasoningRequested = requestedReasoningMode(body);
+    const prepared = await this.prepareGeneration(body);
+    const reasoningMode = resolveReasoningMode(prepared.model, prepared.model, reasoningRequested);
+    assertReasoningModeSupported(reasoningMode);
+    const reasoningEnabled = reasoningMode.enabled;
+    if (prepared.replay) {
+      let row = prepared.replay;
+      let streamedExisting = false;
+      await emit({
+        type: "start", requestId: prepared.requestId, conversationId: row.conversation_id,
+        messageId: row.assistant_id || "", replay: true, reasoningEnabled,
+        reasoningControl: reasoningMode.control, reasoningMode: reasoningMode.selection,
+        startedAt: row.assistant_created_at || row.created_at || null,
+      });
+      if (row.assistant_status === "generating") {
+        streamedExisting = true;
+        row = await this.streamExistingRequest(prepared, body, emit, signal, reasoningEnabled);
+      }
+      if (!row) {
+        throw new AppError("对话已不存在", { statusCode: 404, errCode: "AI_CONVERSATION_NOT_FOUND" });
+      }
+      if (row.assistant_status === "complete") {
+        if (!streamedExisting) {
+          const requestedContentOffset = Math.max(0, Number(body && body.contentOffset) || 0);
+          const requestedReasoningOffset = Math.max(0, Number(body && body.reasoningOffset) || 0);
+          const replayReasoning = normalizedReasoningContent(row.assistant_reasoning_content);
+          if (reasoningEnabled && replayReasoning.length > requestedReasoningOffset) {
+            for (const frame of boundedTextFrames(replayReasoning.slice(requestedReasoningOffset))) {
+              await emit({
+                type: "reasoning",
+                content: frame.content,
+                offset: requestedReasoningOffset + frame.offset,
+                endOffset: requestedReasoningOffset + frame.endOffset,
+                resumed: true,
+              });
+            }
+          }
+          const replayContent = String(row.assistant_content || "");
+          if (replayContent.length > requestedContentOffset) {
+            for (const frame of boundedTextFrames(replayContent.slice(requestedContentOffset))) {
+              await emit({
+                type: "delta",
+                content: frame.content,
+                offset: requestedContentOffset + frame.offset,
+                endOffset: requestedContentOffset + frame.endOffset,
+                resumed: true,
+              });
+            }
+          }
+        }
+        await emit({
+          type: "done",
+          conversationId: row.conversation_id,
+          messageId: row.assistant_id,
+          reasoningDurationMs: Math.max(0, Number(row.assistant_reasoning_duration_ms || 0)),
+          replay: true,
+        });
+        return;
+      }
+      if (row.assistant_status === "cancelled") {
+        throw new AppError("回答已停止，请重新发送", { statusCode: 409, errCode: "AI_CANCELLED" });
+      }
+      if (row.assistant_status === "blocked") {
+        throw new AppError("内容未通过安全检查，请调整后再试", { statusCode: 400, errCode: "CONTENT_SECURITY_BLOCKED" });
+      }
+      if (row.assistant_status === "failed") {
+        throw new AppError("上次回答没有完成，请再试一次", {
+          statusCode: 409,
+          errCode: row.assistant_error_code || "AI_GENERATION_FAILED",
+        });
+      }
+      throw new AppError("当前回答仍在生成，请稍后再试", { statusCode: 409, errCode: "AI_CONVERSATION_BUSY" });
+    }
+    await emit({
+      type: "start",
+      requestId: prepared.requestId,
+      conversationId: prepared.conversation.id,
+      messageId: prepared.assistantMessage.id,
+      modelName: prepared.model.display_name || prepared.model.model_id,
+      reasoningEnabled,
+      reasoningControl: reasoningMode.control,
+      reasoningMode: reasoningMode.selection,
+      startedAt: prepared.assistantMessage.created_at || null,
+    });
+    const context = await this.generationContext(
+      prepared.conversation.id,
+      prepared.ctx,
+      prepared.userMessage.id
+    );
+    const apiKey = decryptCredential(this.config, prepared.model.credential_ciphertext);
+    const started = Date.now();
+    let pending = "";
+    let accepted = "";
+    const pendingFrames = [];
+    let reasoningPending = "";
+    let reasoningAccepted = "";
+    const reasoningPendingFrames = [];
+    let reasoningObservedChars = 0;
+    let reasoningObservedVisibleChars = 0;
+    let bodyStarted = false;
+    let answerStartedAt = 0;
+    let firstOutputAt = 0;
+    let directAnswerRetryAttempted = false;
+    let outputSecurityChecks = 0;
+    let emittedTextFrames = 0;
+    let emittedReasoningFrames = 0;
+    let maxQueuedOutputChars = 0;
+    let usage = { inputTokens: 0, outputTokens: 0 };
+    let outputFailure = null;
+    let outputWorkerPromise = null;
+    const outputRequests = [];
+    let checkpointBusy = false;
+    let checkpointDirty = false;
+    let checkpointTimer = null;
+    let checkpointPromise = Promise.resolve();
+    const providerStats = {
+      protocol: prepared.model.protocol || "",
+      statusCode: 0,
+      contentType: "",
+      responseBytes: 0,
+      events: 0,
+      textDeltas: 0,
+      reasoningDeltas: 0,
+      parseErrors: 0,
+      doneSeen: false,
+    };
+    const configuredMaxOutputTokens = Math.min(
+      8192,
+      Math.max(128, Number(prepared.settings.max_output_tokens || DEFAULT_SETTINGS.maxOutputTokens))
+    );
+    const currentReasoningDurationMs = () => {
+      if (!reasoningEnabled || (!reasoningObservedVisibleChars && !hasVisibleReasoning(reasoningAccepted))) return 0;
+      const finishedAt = answerStartedAt || Date.now();
+      return Math.min(3600000, Math.max(1, finishedAt - started));
+    };
+    const runCheckpoint = async () => {
+      if (checkpointBusy) {
+        checkpointDirty = true;
+        return checkpointPromise;
+      }
+      checkpointBusy = true;
+      checkpointDirty = false;
+      const contentSnapshot = accepted;
+      const reasoningSnapshot = reasoningAccepted;
+      const durationSnapshot = currentReasoningDurationMs();
+      checkpointPromise = this.checkpointGeneration(
+        prepared,
+        contentSnapshot,
+        reasoningSnapshot,
+        durationSnapshot
+      ).finally(() => {
+        checkpointBusy = false;
+        if (checkpointDirty && !checkpointTimer) scheduleCheckpoint();
+      });
+      return checkpointPromise;
+    };
+    const scheduleCheckpoint = (delayMs) => {
+      checkpointDirty = true;
+      if (checkpointBusy || checkpointTimer) return;
+      checkpointTimer = setTimeout(() => {
+        checkpointTimer = null;
+        runCheckpoint().catch(() => {});
+      }, Math.max(0, Number.isFinite(delayMs) ? delayMs : GENERATION_CHECKPOINT_INTERVAL_MS));
+      if (checkpointTimer && typeof checkpointTimer.unref === "function") checkpointTimer.unref();
+    };
+    const clearCheckpointTimer = () => {
+      if (checkpointTimer) clearTimeout(checkpointTimer);
+      checkpointTimer = null;
+    };
+    const takePendingFrames = (frames, length) => {
+      const pieces = [];
+      let remaining = Math.max(0, Number(length || 0));
+      while (remaining > 0 && frames.length) {
+        const source = String(frames[0] || "");
+        if (!source) {
+          frames.shift();
+          continue;
+        }
+        let size = Math.min(source.length, remaining);
+        const lastCode = source.charCodeAt(size - 1);
+        const nextCode = source.charCodeAt(size);
+        if (lastCode >= 0xd800 && lastCode <= 0xdbff && nextCode >= 0xdc00 && nextCode <= 0xdfff) size += 1;
+        pieces.push(source.slice(0, size));
+        remaining -= size;
+        if (size >= source.length) frames.shift();
+        else frames[0] = source.slice(size);
+      }
+      return pieces;
+    };
+    const emitApproved = async (type, frames, sourceOffset) => {
+      let absoluteOffset = Math.max(0, Number(sourceOffset || 0));
+      for (const frame of frames) {
+        const source = String(frame || "");
+        for (let offset = 0; offset < source.length;) {
+          let end = Math.min(source.length, offset + OUTPUT_STREAM_MAX_FRAME_CHARS);
+          const lastCode = source.charCodeAt(end - 1);
+          const nextCode = source.charCodeAt(end);
+          if (lastCode >= 0xd800 && lastCode <= 0xdbff && nextCode >= 0xdc00 && nextCode <= 0xdfff) end += 1;
+          const content = source.slice(offset, end);
+          const frameOffset = absoluteOffset;
+          absoluteOffset += content.length;
+          if (type === "delta" && !answerStartedAt) answerStartedAt = Date.now();
+          if (!firstOutputAt) firstOutputAt = Date.now();
+          await emit({
+            type,
+            content,
+            offset: frameOffset,
+            endOffset: absoluteOffset,
+            reasoningDurationMs: currentReasoningDurationMs(),
+          });
+          if (type === "reasoning") emittedReasoningFrames += 1;
+          else emittedTextFrames += 1;
+          offset = end;
+          if (offset < source.length) await new Promise((resolve) => setImmediate(resolve));
+        }
+      }
+    };
+    const appendPendingFrame = (frames, value) => {
+      const content = String(value || "");
+      if (content) frames.push(content);
+      return content;
+    };
+    const flush = async (kind, force) => {
+      const isReasoning = kind === "reasoning";
+      const frames = isReasoning ? reasoningPendingFrames : pendingFrames;
+      if (isReasoning && !reasoningAccepted) {
+        const source = reasoningPending;
+        reasoningPending = reasoningPending.replace(/^[\s\u200b-\u200d\u2060\ufeff]+/, "");
+        const removed = source.length - reasoningPending.length;
+        if (removed) takePendingFrames(frames, removed);
+        if (!reasoningPending) return;
+      }
+      let targetLength = isReasoning
+        ? outputSecurityBatchSize(reasoningAccepted.length)
+        : outputSecurityBatchSize(accepted.length);
+      const pendingLength = () => isReasoning ? reasoningPending.length : pending.length;
+      while (pendingLength() >= targetLength || (force && pendingLength())) {
+        if (signal && signal.aborted) throw Object.assign(new Error("请求已取消"), { name: "AbortError" });
+        const source = isReasoning ? reasoningPending : pending;
+        let length = Math.min(targetLength, source.length);
+        const candidate = source.slice(0, Math.min(targetLength, source.length));
+        const boundary = Math.max(
+          candidate.lastIndexOf("。"),
+          candidate.lastIndexOf("！"),
+          candidate.lastIndexOf("？"),
+          candidate.lastIndexOf("."),
+          candidate.lastIndexOf("!"),
+          candidate.lastIndexOf("?"),
+          candidate.lastIndexOf("\n")
+        );
+        if (boundary >= Math.max(24, Math.floor(targetLength * 0.55))) length = boundary + 1;
+        if (force && source.length < targetLength) length = source.length;
+        const lastCode = source.charCodeAt(length - 1);
+        const nextCode = source.charCodeAt(length);
+        if (lastCode >= 0xd800 && lastCode <= 0xdbff && nextCode >= 0xdc00 && nextCode <= 0xdfff) length += 1;
+        const segment = source.slice(0, length);
+        const segmentFrames = takePendingFrames(frames, length);
+        if (isReasoning) reasoningPending = source.slice(length);
+        else pending = source.slice(length);
+        const approvedBefore = isReasoning ? reasoningAccepted : accepted;
+        const securityContext = `${approvedBefore.slice(-OUTPUT_SECURITY_CONTEXT_CHARS)}${segment}`;
+        outputSecurityChecks += 1;
+        await this.checkContentSecurity({ content: securityContext, openid: prepared.ctx.auth.user.openid });
+        if (isReasoning) {
+          const sourceOffset = reasoningAccepted.length;
+          reasoningAccepted += segment;
+          if (reasoningAccepted.length > 48000) {
+            throw new AppError("模型思考内容过长，已停止生成", { statusCode: 502, errCode: "AI_OUTPUT_TOO_LONG" });
+          }
+          await emitApproved("reasoning", segmentFrames.length ? segmentFrames : [segment], sourceOffset);
+          scheduleCheckpoint();
+          targetLength = outputSecurityBatchSize(reasoningAccepted.length);
+        } else {
+          const sourceOffset = accepted.length;
+          accepted += segment;
+          if (accepted.length > 36000) throw new AppError("模型回答过长，已停止生成", { statusCode: 502, errCode: "AI_OUTPUT_TOO_LONG" });
+          await emitApproved("delta", segmentFrames.length ? segmentFrames : [segment], sourceOffset);
+          scheduleCheckpoint();
+          targetLength = outputSecurityBatchSize(accepted.length);
+        }
+      }
+    };
+    const startOutputWorker = () => {
+      if (outputWorkerPromise || outputFailure || !outputRequests.length) return;
+      outputWorkerPromise = (async () => {
+        while (outputRequests.length && !outputFailure) {
+          const request = outputRequests.shift();
+          await flush(request.kind, request.force);
+        }
+      })()
+        .catch((error) => {
+          outputFailure = error;
+          outputRequests.length = 0;
+        })
+        .finally(() => {
+          outputWorkerPromise = null;
+          if (outputRequests.length && !outputFailure) startOutputWorker();
+        });
+    };
+    const requestOutputDrain = (kind, force) => {
+      if (outputFailure) return;
+      const queued = outputRequests.find((request) => request.kind === kind);
+      if (queued) queued.force = queued.force || !!force;
+      else outputRequests.push({ kind, force: !!force });
+      startOutputWorker();
+    };
+    const drainOutput = async () => {
+      while (outputWorkerPromise) await outputWorkerPromise;
+      if (outputFailure) throw outputFailure;
+    };
+    const applyOutputBackpressure = async () => {
+      if (pending.length + reasoningPending.length < OUTPUT_QUEUE_HIGH_WATER_CHARS) return;
+      await drainOutput();
+    };
+    const partialFlushTimers = { reasoning: null, content: null };
+    const clearPartialFlush = (kind) => {
+      if (partialFlushTimers[kind]) clearTimeout(partialFlushTimers[kind]);
+      partialFlushTimers[kind] = null;
+    };
+    const clearPartialFlushes = () => {
+      clearPartialFlush("reasoning");
+      clearPartialFlush("content");
+    };
+    const schedulePartialFlush = (kind) => {
+      if (partialFlushTimers[kind] || outputFailure) return;
+      partialFlushTimers[kind] = setTimeout(() => {
+        partialFlushTimers[kind] = null;
+        requestOutputDrain(kind, true);
+      }, OUTPUT_PARTIAL_FLUSH_MS);
+      if (partialFlushTimers[kind] && typeof partialFlushTimers[kind].unref === "function") {
+        partialFlushTimers[kind].unref();
+      }
+    };
+    const heartbeatTimer = setInterval(() => {
+      scheduleCheckpoint(0);
+    }, this.generationHeartbeatMs);
+    if (typeof heartbeatTimer.unref === "function") heartbeatTimer.unref();
+    try {
+      usage = await this.runProviderCompletion({
+        provider: prepared.model,
+        model: prepared.model,
+        apiKey,
+        messages: context,
+        systemPrompt: `${prepared.settings.system_prompt || DEFAULT_SETTINGS.systemPrompt}${
+          reasoningMode.selection === "off"
+            ? "\n请直接给出最终答案，不要输出分析过程、思考标签或中间推理。"
+            : "\n完成分析后必须预留足够输出额度给出完整最终回答，不能只返回思考过程。"
+        }`,
+        maxTokens: configuredMaxOutputTokens,
+        reasoningMode: reasoningMode.selection,
+        timeoutMs: this.config.aiProviderTimeoutMs,
+        signal,
+        stats: providerStats,
+        onReasoning: async (delta) => {
+          if (outputFailure) throw outputFailure;
+          const reasoningDelta = String(delta || "");
+          reasoningObservedChars += reasoningDelta.length;
+          reasoningObservedVisibleChars += reasoningDelta.replace(/[\s\u200b-\u200d\u2060\ufeff]/g, "").length;
+          if (reasoningObservedChars > 48000) {
+            throw new AppError("模型思考内容过长，已停止生成", { statusCode: 502, errCode: "AI_OUTPUT_TOO_LONG" });
+          }
+          if (!reasoningEnabled) return;
+          reasoningPending += appendPendingFrame(reasoningPendingFrames, reasoningDelta);
+          maxQueuedOutputChars = Math.max(maxQueuedOutputChars, pending.length + reasoningPending.length);
+          if (reasoningAccepted.length + reasoningPending.length > 48000) {
+            throw new AppError("模型思考内容过长，已停止生成", { statusCode: 502, errCode: "AI_OUTPUT_TOO_LONG" });
+          }
+          requestOutputDrain("reasoning", false);
+          schedulePartialFlush("reasoning");
+          await applyOutputBackpressure();
+        },
+        onDelta: async (delta) => {
+          if (outputFailure) throw outputFailure;
+          if (!bodyStarted) {
+            bodyStarted = true;
+            clearPartialFlush("reasoning");
+            requestOutputDrain("reasoning", true);
+          }
+          pending += appendPendingFrame(pendingFrames, delta);
+          maxQueuedOutputChars = Math.max(maxQueuedOutputChars, pending.length + reasoningPending.length);
+          if (accepted.length + pending.length > 36000) {
+            throw new AppError("模型回答过长，已停止生成", { statusCode: 502, errCode: "AI_OUTPUT_TOO_LONG" });
+          }
+          requestOutputDrain("content", false);
+          schedulePartialFlush("content");
+          await applyOutputBackpressure();
+        },
+      });
+      clearPartialFlushes();
+      requestOutputDrain("reasoning", true);
+      requestOutputDrain("content", true);
+      await drainOutput();
+      if (!accepted.trim() && (reasoningAccepted.trim() || reasoningObservedVisibleChars > 0)) {
+        directAnswerRetryAttempted = true;
+        const firstUsage = usage;
+        const retryStats = {
+          protocol: prepared.model.protocol || "",
+          statusCode: 0,
+          contentType: "",
+          responseBytes: 0,
+          events: 0,
+          textDeltas: 0,
+          reasoningDeltas: 0,
+          parseErrors: 0,
+          doneSeen: false,
+        };
+        const retryUsage = await this.runProviderCompletion({
+          provider: prepared.model,
+          model: prepared.model,
+          apiKey,
+          messages: context,
+          systemPrompt: `${prepared.settings.system_prompt || DEFAULT_SETTINGS.systemPrompt}\n上一次生成只完成了分析。本次不要展示思考过程，直接给出完整、可独立阅读的最终回答。`,
+          maxTokens: Math.min(4096, configuredMaxOutputTokens),
+          reasoningMode: "off",
+          timeoutMs: Math.min(120000, Math.max(10000, Number(this.config.aiProviderTimeoutMs || 300000))),
+          signal,
+          stats: retryStats,
+          onReasoning: (delta) => {
+            const reasoningDelta = String(delta || "");
+            reasoningObservedChars += reasoningDelta.length;
+            reasoningObservedVisibleChars += reasoningDelta.replace(/[\s\u200b-\u200d\u2060\ufeff]/g, "").length;
+          },
+          onDelta: async (delta) => {
+            if (outputFailure) throw outputFailure;
+            const contentDelta = String(delta || "");
+            if (!contentDelta) return;
+            if (!bodyStarted) {
+              bodyStarted = true;
+              clearPartialFlush("reasoning");
+              requestOutputDrain("reasoning", true);
+            }
+            pending += appendPendingFrame(pendingFrames, contentDelta);
+            maxQueuedOutputChars = Math.max(maxQueuedOutputChars, pending.length + reasoningPending.length);
+            if (accepted.length + pending.length > 36000) {
+              throw new AppError("模型回答过长，已停止生成", { statusCode: 502, errCode: "AI_OUTPUT_TOO_LONG" });
+            }
+            requestOutputDrain("content", false);
+            schedulePartialFlush("content");
+            await applyOutputBackpressure();
+          },
+        });
+        usage = {
+          inputTokens: Number(firstUsage.inputTokens || 0) + Number(retryUsage.inputTokens || 0),
+          outputTokens: Number(firstUsage.outputTokens || 0) + Number(retryUsage.outputTokens || 0),
+        };
+        providerStats.retryStatusCode = retryStats.statusCode;
+        providerStats.retryContentType = retryStats.contentType;
+        providerStats.retryFinishReason = retryStats.finishReason || "";
+        providerStats.responseBytes += Number(retryStats.responseBytes || 0);
+        providerStats.events += Number(retryStats.events || 0);
+        providerStats.textDeltas += Number(retryStats.textDeltas || 0);
+        providerStats.reasoningDeltas += Number(retryStats.reasoningDeltas || 0);
+        providerStats.parseErrors += Number(retryStats.parseErrors || 0);
+        providerStats.doneSeen = providerStats.doneSeen || retryStats.doneSeen;
+        if (retryStats.finishReason) providerStats.finishReason = retryStats.finishReason;
+        clearPartialFlush("content");
+        requestOutputDrain("content", true);
+        await drainOutput();
+      }
+      if (!accepted.trim() && (reasoningAccepted.trim() || reasoningObservedVisibleChars > 0)) {
+        if (/length|max[_ -]?tokens?|token[_ -]?limit|incomplete/i.test(String(providerStats.finishReason || ""))) {
+          throw new AppError("模型的思考内容用完了输出额度，请提高单次最大输出后重试", {
+            statusCode: 502,
+            errCode: "AI_OUTPUT_LIMIT_REACHED",
+            details: { finishReason: providerStats.finishReason },
+          });
+        }
+        throw new AppError("模型完成了思考，但没有生成最终回答，请重新生成", {
+          statusCode: 502,
+          errCode: "AI_REASONING_WITHOUT_ANSWER",
+        });
+      }
+      if (!accepted.trim()) throw new AppError("模型没有返回内容，请重试", { statusCode: 502, errCode: "AI_EMPTY_RESPONSE" });
+      const inputTokens = usage.inputTokens || usageEstimate(context.map((message) => message.content).join("\n"));
+      const outputTokens = usage.outputTokens || usageEstimate(accepted) + Math.ceil(reasoningObservedChars / 4);
+      const savedReasoning = reasoningEnabled ? normalizedReasoningContent(reasoningAccepted) : "";
+      const reasoningDurationMs = currentReasoningDurationMs();
+      await this.saveGenerationResult(prepared, {
+        status: "success", content: accepted, reasoningContent: savedReasoning,
+        reasoningDurationMs, inputTokens, outputTokens, latencyMs: Date.now() - started,
+      });
+      if (this.request && this.request.log && typeof this.request.log.info === "function") {
+        this.request.log.info({
+          aiStream: {
+            protocol: providerStats.protocol,
+            contentType: providerStats.contentType,
+            networkChunks: Number(providerStats.networkChunks || 0),
+            providerEvents: Number(providerStats.events || 0),
+            textDeltas: Number(providerStats.textDeltas || 0),
+            reasoningDeltas: Number(providerStats.reasoningDeltas || 0),
+            firstProviderChunkMs: providerStats.firstChunkAt ? providerStats.firstChunkAt - started : null,
+            firstProviderDeltaMs: providerStats.firstDeltaAt ? providerStats.firstDeltaAt - started : null,
+            firstClientOutputMs: firstOutputAt ? firstOutputAt - started : null,
+            outputSecurityChecks,
+            emittedTextFrames,
+            emittedReasoningFrames,
+            maxQueuedOutputChars,
+            totalMs: Date.now() - started,
+          },
+        }, "AI generation completed");
+      }
+      await emit({
+        type: "usage", inputTokens, outputTokens,
+      });
+      await emit({
+        type: "done",
+        conversationId: prepared.conversation.id,
+        messageId: prepared.assistantMessage.id,
+        reasoningDurationMs,
+      });
+    } catch (error) {
+      clearPartialFlushes();
+      await drainOutput().catch(() => {});
+      const cancelled = !!(
+        signal && signal.aborted && signal.reason &&
+        (signal.reason.code === "AI_USER_CANCELLED" || signal.reason.errCode === "AI_CANCELLED")
+      );
+      if (outputFailure && !cancelled) error = outputFailure;
+      const blocked = error.errCode === "CONTENT_SECURITY_BLOCKED";
+      const status = cancelled ? "cancelled" : blocked ? "blocked" : "failed";
+      const errorCode = cancelled ? "AI_CANCELLED" : error.errCode || error.code || "AI_GENERATION_FAILED";
+      const reasoningDurationMs = currentReasoningDurationMs();
+      if (error && typeof error === "object") {
+        if (reasoningDurationMs) {
+          error.details = Object.assign({}, error.details || {}, { reasoningDurationMs });
+        }
+        error.aiDiagnostics = {
+          durationMs: Date.now() - started,
+          protocol: providerStats.protocol,
+          statusCode: providerStats.statusCode,
+          contentType: providerStats.contentType,
+          responseBytes: providerStats.responseBytes,
+          events: providerStats.events,
+          textDeltas: providerStats.textDeltas,
+          reasoningDeltas: providerStats.reasoningDeltas,
+          parseErrors: providerStats.parseErrors,
+          doneSeen: providerStats.doneSeen,
+          finishReason: providerStats.finishReason || "",
+          acceptedChars: accepted.length,
+          acceptedReasoningChars: reasoningAccepted.length,
+          observedReasoningChars: reasoningObservedChars,
+          observedVisibleReasoningChars: reasoningObservedVisibleChars,
+          directAnswerRetryAttempted,
+          retryStatusCode: providerStats.retryStatusCode || 0,
+          retryFinishReason: providerStats.retryFinishReason || "",
+          outputSecurityChecks,
+          emittedTextFrames,
+          emittedReasoningFrames,
+          maxQueuedOutputChars,
+          userCancelled: cancelled,
+        };
+      }
+      await this.saveGenerationResult(prepared, {
+        status, content: accepted,
+        reasoningContent: reasoningEnabled ? normalizedReasoningContent(reasoningAccepted) : "",
+        reasoningDurationMs,
+        inputTokens: usage.inputTokens || 0,
+        outputTokens: usage.outputTokens || usageEstimate(accepted) + Math.ceil(reasoningObservedChars / 4),
+        latencyMs: Date.now() - started, errorCode,
+      });
+      if (cancelled) {
+        throw new AppError("已停止生成", {
+          statusCode: 499,
+          errCode: "AI_CANCELLED",
+          details: reasoningDurationMs ? { reasoningDurationMs } : undefined,
+        });
+      }
+      throw error;
+    } finally {
+      clearPartialFlushes();
+      clearCheckpointTimer();
+      clearInterval(heartbeatTimer);
+    }
+  }
+}
+
+module.exports = {
+  aiAccessFlags,
+  AiService,
+  DEFAULT_SETTINGS,
+  MAX_CONVERSATIONS_PER_MEMBER,
+  publicModel,
+  publicProvider,
+  registerActiveGeneration,
+};

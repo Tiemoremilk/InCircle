@@ -1,0 +1,204 @@
+<page-meta page-style="{{themeStyle}} {{incircleKeyboardPageStyle}}"></page-meta>
+
+<view class="page activities-page {{themeClass}}" style="{{tabBarInsetStyle}}" wx:if="{{!loading}}">
+  <view class="top-panel motion-hero">
+    <view>
+      <view class="eyebrow">本周约局</view>
+      <view class="page-title">把接龙变成一键表态</view>
+      <view class="page-desc">活动、人数、费用、沉默名单和趣味复盘都在一张卡里。</view>
+    </view>
+    <view class="create-btn" bindtap="createActivity">发起</view>
+  </view>
+
+  <view class="activity-list">
+    <empty-state
+      wx:if="{{!activities.length}}"
+      kind="activity"
+      icon="/images/ui-icons/activity.png"
+      eyebrow="第一局，从一个想法开始"
+      title="还没有约局"
+      description="发起吃饭、运动或桌游计划，圈友可以直接表态，人数进度也会自动整理。"
+      action-text="发起第一局"
+      spacious="{{true}}"
+      bindaction="createActivity"
+    />
+    <block wx:else>
+    <view class="activity-card card {{activityIndex < 6 ? 'motion-list-item' : ''}}" wx:for="{{activities}}" wx:key="id" wx:for-item="activity" wx:for-index="activityIndex" data-id="{{activity.id}}" bindtap="openActivity" style="animation-delay: {{activityIndex * 35}}ms;">
+      <view class="card-head">
+        <view class="activity-main">
+          <view class="activity-type">
+            <image class="label-icon" src="/images/ui-icons/activity.png"></image>
+            <text>{{activity.type}}</text>
+          </view>
+          <view class="activity-title">{{activity.title}}</view>
+          <view class="activity-meta">{{activity.time}} · {{activity.location}}</view>
+        </view>
+        <view class="pill {{activity.statusClass}}">{{activity.status}}</view>
+      </view>
+
+      <view class="detail-grid">
+        <view class="detail-item">
+          <view class="detail-value">{{activity.hostName}}</view>
+          <view class="detail-label">发起人</view>
+        </view>
+        <view class="detail-item">
+          <view class="detail-value">{{activity.fee}}</view>
+          <view class="detail-label">费用</view>
+        </view>
+        <view class="detail-item">
+          <view class="detail-value">缺 {{activity.needCount}} 人</view>
+          <view class="detail-label">成局缺口</view>
+        </view>
+      </view>
+
+      <view class="progress-block">
+        <view class="progress-track">
+          <view class="progress-fill motion-progress" style="width: {{activity.percent}}%;"></view>
+        </view>
+        <view class="progress-copy">已来 {{activity.coming}} / {{activity.capacity}}，待定 {{activity.pending.length}}，候补 {{activity.waitlist.length}}</view>
+      </view>
+
+      <view class="status-row">
+        <view
+          class="status-btn motion-state {{option.activeClass}} {{actionLoadingType === 'status' && actionLoadingId === activity.id ? 'disabled' : ''}}"
+          wx:for="{{activity.statusOptions}}"
+          wx:key="value"
+          wx:for-item="option"
+          data-id="{{activity.id}}"
+          data-status="{{option.value}}"
+          catchtap="chooseStatus"
+        >
+          <block wx:if="{{actionLoadingType === 'status' && actionLoadingId === activity.id && actionLoadingName === option.value}}">提交中...</block>
+          <block wx:else>{{option.value}}</block>
+        </view>
+      </view>
+
+      <view class="tag-row">
+        <view class="mini-tag" wx:for="{{activity.tags}}" wx:key="*this">{{item}}</view>
+      </view>
+
+      <view class="insight-box">
+        <view class="insight-line">{{activity.highlight}}</view>
+        <view class="muted">沉默名单：{{activity.silentText}}</view>
+      </view>
+
+      <view class="recap-row">
+        <view>本局 MVP：{{activity.recap.mvp}}</view>
+        <view>早鸟：{{activity.recap.earlyBird}}</view>
+        <view wx:if="{{activity.canEdit}}" class="recap-action" catchtap="editActivity" data-id="{{activity.id}}">编辑</view>
+        <button
+          class="recap-action"
+          open-type="share"
+          data-share-type="activity"
+          data-id="{{activity.id}}"
+          catchtap="prepareActivityShare"
+        >分享</button>
+        <view
+          wx:if="{{activity.canDelete}}"
+          class="recap-action danger {{actionLoadingType === 'delete' && actionLoadingId === activity.id ? 'disabled' : ''}}"
+          catchtap="deleteActivity"
+          data-id="{{activity.id}}"
+        >{{actionLoadingType === 'delete' && actionLoadingId === activity.id ? '删除中...' : '删除'}}</view>
+      </view>
+    </view>
+    </block>
+  </view>
+
+  <view class="sheet-mask" wx:if="{{showCreatePanel}}" bindtap="closeCreatePanel" catchtouchmove="noop">
+    <view class="create-sheet" catchtap="noop">
+      <view class="sheet-head">
+        <view>
+          <view class="sheet-kicker">{{activityFormKicker}}</view>
+          <view class="sheet-title">{{activityFormTitle}}</view>
+        </view>
+        <view class="sheet-close" bindtap="closeCreatePanel">×</view>
+      </view>
+
+      <view class="form-grid">
+        <view class="field">
+          <view class="field-label">活动名称</view>
+          <input class="field-input" adjust-position="{{true}}" cursor-spacing="96" placeholder="例如：周六电影局" value="{{draft.title}}" data-field="title" bindinput="onDraftInput" />
+        </view>
+        <view class="field-row">
+          <view class="field">
+            <view class="field-label">类型</view>
+            <picker range="{{typeOptions}}" bindchange="onTypeChange">
+              <view class="field-picker">{{draft.type}}</view>
+            </picker>
+          </view>
+          <view class="field">
+            <view class="field-label">人数上限</view>
+            <picker range="{{capacityOptions}}" bindchange="onCapacityChange">
+              <view class="field-picker">{{draft.capacity}}</view>
+            </picker>
+          </view>
+        </view>
+        <view class="field">
+          <view class="field-label">时间</view>
+          <input class="field-input" adjust-position="{{true}}" cursor-spacing="96" placeholder="例如：周六 19:30" value="{{draft.time}}" data-field="time" bindinput="onDraftInput" />
+        </view>
+        <view class="field">
+          <view class="field-label">地点</view>
+          <input class="field-input" adjust-position="{{true}}" cursor-spacing="96" placeholder="例如：万象城 5F" value="{{draft.location}}" data-field="location" bindinput="onDraftInput" />
+          <view class="location-picker" bindtap="chooseActivityLocation">
+            <view>
+              <view class="location-picker-title">{{draft.mapLocationLabel}}</view>
+              <view class="location-picker-copy">可用微信地图选点，详情页能展示更准确的位置。</view>
+            </view>
+            <view class="location-picker-action">选点</view>
+          </view>
+        </view>
+        <view class="field">
+          <view class="field-label">费用预估</view>
+          <input class="field-input" adjust-position="{{true}}" cursor-spacing="96" placeholder="例如：约 80 元/人" value="{{draft.fee}}" data-field="fee" bindinput="onDraftInput" />
+        </view>
+      </view>
+
+      <view class="sheet-tip">
+        {{editingActivityId ? '活动结束后内容会锁定；修改时间或地点后记得通知已报名成员。' : '创建后会自动进入报名中，发起人默认为“我来”。'}}
+      </view>
+      <view class="form-submit-row">
+        <view class="ghost-btn sheet-submit {{actionLoadingType === 'saveActivity' ? 'disabled' : ''}}" bindtap="submitActivity">
+          {{actionLoadingType === 'saveActivity' ? '保存中...' : '保存'}}
+        </view>
+        <view
+          class="primary-btn sheet-submit {{actionLoadingType === 'saveActivity' ? 'disabled' : ''}}"
+          data-share-after="{{true}}"
+          bindtap="submitActivity"
+        >
+          {{actionLoadingType === 'saveActivity' ? '保存中...' : '保存并分享'}}
+        </view>
+      </view>
+    </view>
+  </view>
+
+  <view class="sheet-mask" wx:if="{{showShareSheet}}" bindtap="closeShareSheet" catchtouchmove="noop">
+    <view class="share-ready-sheet" catchtap="noop">
+      <view class="share-ready-mark">✓</view>
+      <view class="share-ready-title">活动已保存</view>
+      <view class="share-ready-copy">现在可以通过微信原生分享，把活动详情发给好友或群聊。</view>
+      <button
+        class="primary-btn share-ready-primary"
+        open-type="share"
+        data-share-type="activity"
+        data-id="{{shareTargetActivity.id}}"
+      >分享给微信好友或群</button>
+      <view class="ghost-btn share-ready-secondary" bindtap="closeShareSheet">暂不分享</view>
+    </view>
+  </view>
+</view>
+
+<view class="page activities-page loading-page {{themeClass}}" style="{{tabBarInsetStyle}}" wx:else>
+  <view class="loading-panel">
+    <view class="loading-illustration">
+      <view class="loading-card-line first"></view>
+      <view class="loading-card-line second"></view>
+      <view class="loading-card-line third"></view>
+      <view class="loading-card-mark"></view>
+    </view>
+    <view class="loading-text">正在整理约局...</view>
+    <view class="loading-dots"><view></view><view></view><view></view></view>
+  </view>
+</view>
+<ai-fab />
+<theme-dialog id="incircle-theme-dialog" />

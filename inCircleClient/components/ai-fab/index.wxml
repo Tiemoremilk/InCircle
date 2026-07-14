@@ -1,0 +1,25 @@
+<view
+  wx:if="{{visible && positionReady}}"
+  class="ai-fab-shell {{motionReady ? 'motion-ready' : ''}} {{pressed ? 'pressed' : ''}} {{snapping ? 'snapping' : ''}} {{docked ? 'docked' : ''}} {{docked && dockSide === 'left' ? 'docked-left' : ''}} {{docked && dockSide === 'right' ? 'docked-right' : ''}} {{reduceMotion ? 'reduce-motion' : ''}}"
+  style="{{positionStyle}} {{visualStyle}}"
+  bindtouchstart="onTouchStart"
+  catchtouchmove="onTouchMove"
+  bindtouchend="onTouchEnd"
+  bindtouchcancel="onTouchCancel"
+  aria-role="button"
+  aria-label="打开圈内 AI 助手"
+>
+  <view class="ai-bubble-cluster" aria-hidden="true">
+    <view class="ai-bubble ai-bubble-one"></view>
+    <view class="ai-bubble ai-bubble-two"></view>
+    <view class="ai-bubble ai-bubble-three"></view>
+  </view>
+  <view class="ai-fab-pulse"></view>
+  <view class="ai-fab-glow"></view>
+  <view class="ai-fab-face">
+    <view class="ai-fab-shine"></view>
+    <text class="ai-fab-label">AI</text>
+    <view class="ai-spark ai-spark-one"></view>
+    <view class="ai-spark ai-spark-two"></view>
+  </view>
+</view>

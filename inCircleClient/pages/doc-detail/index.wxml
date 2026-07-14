@@ -1,0 +1,106 @@
+<page-meta page-style="{{themeStyle}} {{incircleKeyboardPageStyle}}"></page-meta>
+<view class="page doc-detail-page {{themeClass}}" wx:if="{{ready}}">
+  <view class="doc-hero motion-hero">
+    <view class="doc-hero-top">
+      <view class="pill {{doc.pillClass}}">{{doc.pillText}}</view>
+      <view class="hero-inline-actions">
+        <view class="read-time">{{doc.readTime}}</view>
+        <view wx:if="{{doc.canEdit}}" class="detail-edit-action" bindtap="editDoc">编辑</view>
+      </view>
+    </view>
+    <view class="doc-title">{{doc.title}}</view>
+    <view class="doc-summary">{{doc.summary}}</view>
+    <view class="doc-meta-row">
+      <view>维护人：{{doc.owner}}</view>
+      <view>{{doc.updatedAtText}}</view>
+    </view>
+  </view>
+
+  <view class="section">
+    <view class="section-head">
+      <view class="section-title">正文</view>
+      <view class="section-action">适合转回微信群</view>
+    </view>
+    <view class="body-card card">
+      <block wx:if="{{doc.body.length}}">
+        <view class="body-paragraph {{bodyIndex < 6 ? 'motion-list-item' : ''}}" wx:for="{{doc.body}}" wx:key="*this" wx:for-index="bodyIndex" style="animation-delay: {{bodyIndex * 35}}ms;">{{item}}</view>
+      </block>
+      <empty-state
+        wx:else
+        kind="docs"
+        icon="/images/ui-icons/docs.png"
+        title="正文还没有补充"
+        description="维护人可以编辑这条资料，补上值得长期保留的内容。"
+        embedded="{{true}}"
+        compact="{{true}}"
+      />
+    </view>
+  </view>
+
+  <view class="section">
+    <view class="section-head">
+      <view class="section-title">使用清单</view>
+      <view class="section-action">别漏事</view>
+    </view>
+    <view class="check-card card">
+      <block wx:if="{{doc.checklist.length}}">
+      <view class="check-row {{checkIndex < 6 ? 'motion-list-item' : ''}}" wx:for="{{doc.checklist}}" wx:key="*this" wx:for-index="checkIndex" style="animation-delay: {{checkIndex * 35}}ms;">
+        <view class="check-dot">✓</view>
+        <view>{{item}}</view>
+      </view>
+      </block>
+      <empty-state
+        wx:else
+        kind="docs"
+        icon="/images/ui-icons/checklist.svg"
+        title="这条资料没有使用清单"
+        description="需要执行步骤时，再把关键事项补充到这里。"
+        embedded="{{true}}"
+        mini="{{true}}"
+      />
+    </view>
+  </view>
+
+  <view class="section">
+    <view class="section-head">
+      <view class="section-title">相关资料</view>
+      <view class="section-action">继续沉淀</view>
+    </view>
+    <view class="related-card card">
+      <block wx:if="{{doc.related.length}}">
+        <view class="mini-tag" wx:for="{{doc.related}}" wx:key="*this">{{item}}</view>
+      </block>
+      <empty-state
+        wx:else
+        kind="docs"
+        icon="/images/ui-icons/link.svg"
+        title="还没有关联资料"
+        description="后续有相关规则、清单或复盘时，可以继续串联。"
+        embedded="{{true}}"
+        mini="{{true}}"
+      />
+    </view>
+  </view>
+
+  <view class="sticky-actions {{doc.canDelete ? 'has-delete' : ''}}">
+    <view wx:if="{{doc.canDelete}}" class="danger-btn {{actionLoadingType === 'deleteDoc' ? 'disabled' : ''}}" bindtap="deleteDoc">
+      {{actionLoadingType === 'deleteDoc' ? '删除中...' : '删除资料'}}
+    </view>
+    <view class="ghost-btn" bindtap="copyShareText">复制分享文案</view>
+    <button class="primary-btn share-btn" open-type="share">发给群友</button>
+  </view>
+</view>
+
+<view class="page loading-page {{themeClass}}" wx:else>
+  <view class="loading-panel">
+    <view class="loading-illustration">
+      <view class="loading-card-line first"></view>
+      <view class="loading-card-line second"></view>
+      <view class="loading-card-line third"></view>
+      <view class="loading-card-mark"></view>
+    </view>
+    <view class="loading-text">正在打开资料...</view>
+    <view class="loading-dots"><view></view><view></view><view></view></view>
+  </view>
+</view>
+<theme-dialog id="incircle-theme-dialog" />

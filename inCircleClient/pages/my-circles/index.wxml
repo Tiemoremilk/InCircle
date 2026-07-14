@@ -1,0 +1,35 @@
+<page-meta page-style="{{themeStyle}} {{incircleKeyboardPageStyle}}"></page-meta>
+<view class="page all-circles-page {{themeClass}}" wx:if="{{!loading}}">
+  <view class="search-shell">
+    <image class="search-icon" src="/images/ui-icons/search.svg" mode="aspectFit"></image>
+    <input class="search-input" adjust-position="{{true}}" cursor-spacing="24" value="{{searchText}}" placeholder="搜索圈子名称或介绍" confirm-type="search" bindinput="onSearchInput" />
+    <view class="search-clear" wx:if="{{searchText}}" bindtap="clearSearch">清空</view>
+  </view>
+
+  <view class="list-summary"><text>{{keyword ? '搜索结果' : '全部圈子'}}</text><text>{{total}} 个</text></view>
+
+  <view class="circle-list" wx:if="{{circles.length}}">
+    <view class="circle-item motion-state {{circleIndex < 6 ? 'motion-list-item' : ''}} {{item.currentClass}} {{item.disabledClass}}" wx:for="{{circles}}" wx:key="id" wx:for-index="circleIndex" style="animation-delay: {{circleIndex * 35}}ms;">
+      <view class="circle-head">
+        <view class="circle-copy"><view class="circle-name">{{item.name}}</view><view class="circle-slogan">{{item.slogan || '这个圈子还没有填写介绍'}}</view></view>
+        <view class="pill {{item.statusClass}}">{{item.displayStatusText}}</view>
+      </view>
+      <view class="circle-meta"><text>{{item.role}}</text><text>·</text><text>{{item.memberText}}</text><text>·</text><text>{{item.lastEnteredText}}</text></view>
+      <view class="circle-actions">
+        <view class="primary-btn enter-button {{switchingCircleId || !item.canEnter ? 'disabled' : ''}}" data-id="{{item.id}}" bindtap="enterCircle">
+          {{switchingCircleId === item.id ? '正在进入...' : item.isCurrent ? '进入圈子' : '切换进入'}}
+        </view>
+        <view class="settings-button {{switchingCircleId ? 'disabled' : ''}}" data-id="{{item.id}}" bindtap="openSettings"><image src="/images/ui-icons/settings.png"></image><text>设置</text></view>
+      </view>
+    </view>
+  </view>
+
+  <empty-state wx:else kind="search" icon="/images/ui-icons/search.svg" title="没有匹配的圈子" description="换个名称试试，清空搜索可以查看全部圈子。" compact="{{true}}" />
+  <view class="loading-more" wx:if="{{loadingMore}}">正在加载...</view>
+  <view class="list-end" wx:if="{{circles.length && !hasMore}}">已显示全部圈子</view>
+</view>
+
+<view class="page loading-page {{themeClass}}" wx:else>
+  <view class="loading-panel"><view class="loading-illustration"><view class="loading-card-line first"></view><view class="loading-card-line second"></view><view class="loading-card-line third"></view><view class="loading-card-mark"></view></view><view class="loading-text">正在整理全部圈子...</view><view class="loading-dots"><view></view><view></view><view></view></view></view>
+</view>
+<theme-dialog id="incircle-theme-dialog" />

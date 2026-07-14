@@ -1,0 +1,93 @@
+{
+  "pages": [
+    "pages/login/index",
+    "pages/circle-switch/index",
+    "pages/my-circles/index",
+    "pages/circle-join/index",
+    "pages/circle-settings/index",
+    "pages/circle-member/index",
+    "pages/ai-manage/index",
+    "pages/ai-provider/index",
+    "pages/ai-models/index",
+    "pages/ai-chat/index",
+    "pages/admin/index",
+    "pages/admin-circles/index",
+    "pages/admin-users/index",
+    "pages/admin-user-detail/index",
+    "pages/admin-logs/index",
+    "pages/index/index",
+    "pages/activity-detail/index",
+    "pages/doc-detail/index",
+    "pages/member-detail/index",
+    "pages/bill-detail/index",
+    "pages/vote-detail/index",
+    "pages/checkin-detail/index",
+    "pages/activities/index",
+    "pages/tools/index",
+    "pages/docs/index",
+    "pages/members/index",
+    "pages/score-logs/index"
+  ],
+  "window": {
+    "backgroundColor": "#F3F7F2",
+    "backgroundTextStyle": "light",
+    "navigationBarBackgroundColor": "#F3F7F2",
+    "navigationBarTitleText": "InCircle",
+    "navigationBarTextStyle": "black"
+  },
+  "usingComponents": {
+    "ai-fab": "/components/ai-fab/index",
+    "empty-state": "/components/empty-state/index",
+    "theme-dialog": "/components/theme-dialog/index"
+  },
+  "tabBar": {
+    "custom": true,
+    "color": "#79827F",
+    "selectedColor": "#2E6F61",
+    "backgroundColor": "#FCFEFB",
+    "borderStyle": "white",
+    "list": [
+      {
+        "pagePath": "pages/index/index",
+        "text": "首页",
+        "iconPath": "images/icons/home.png",
+        "selectedIconPath": "images/icons/home.png"
+      },
+      {
+        "pagePath": "pages/activities/index",
+        "text": "约局",
+        "iconPath": "images/icons/examples.png",
+        "selectedIconPath": "images/icons/examples.png"
+      },
+      {
+        "pagePath": "pages/tools/index",
+        "text": "工具",
+        "iconPath": "images/icons/business.png",
+        "selectedIconPath": "images/icons/business.png"
+      },
+      {
+        "pagePath": "pages/docs/index",
+        "text": "资料",
+        "iconPath": "images/icons/goods.png",
+        "selectedIconPath": "images/icons/goods.png"
+      },
+      {
+        "pagePath": "pages/members/index",
+        "text": "成员",
+        "iconPath": "images/icons/usercenter.png",
+        "selectedIconPath": "images/icons/usercenter.png"
+      }
+    ]
+  },
+  "sitemapLocation": "sitemap.json",
+  "permission": {
+    "scope.userLocation": {
+      "desc": "用于创建地点投票或约局时选择位置，方便圈内成员查看聚会地点。"
+    }
+  },
+  "requiredPrivateInfos": [
+    "chooseLocation"
+  ],
+  "style": "v2",
+  "lazyCodeLoading": "requiredComponents"
+}

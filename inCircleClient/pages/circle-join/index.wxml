@@ -1,0 +1,87 @@
+<page-meta page-style="{{themeStyle}} {{incircleKeyboardPageStyle}}"></page-meta>
+<view class="page join-page {{themeClass}}" wx:if="{{!loading}}">
+  <view class="join-hero card motion-hero">
+    <view class="hero-row">
+      <view>
+        <view class="eyebrow">邀请码加入</view>
+        <view class="hero-title">确认这是你的熟人圈。</view>
+      </view>
+      <view class="circle-mark motion-theme-mark">
+        <image class="hero-icon" src="/images/ui-icons/add.png"></image>
+      </view>
+    </view>
+    <view class="hero-copy">输入圈子口令或打开微信群分享卡片，加入后才可查看活动、账单和成员卡。</view>
+  </view>
+
+  <view class="section">
+    <view class="join-card card">
+      <view class="section-title with-icon">
+        <image class="section-icon" src="/images/ui-icons/share.png"></image>
+        <text>输入邀请码</text>
+      </view>
+      <view class="field">
+        <view class="field-label">6-8 位圈子口令</view>
+        <input class="field-input" adjust-position="{{true}}" cursor-spacing="24" value="{{joinCode}}" maxlength="8" placeholder="例如 A7K9P2Q4" bindinput="onCodeInput" />
+      </view>
+
+      <view class="invite-code" wx:if="{{hasPreview}}">
+        <view class="invite-text">{{joinCode}}</view>
+        <view class="invite-meta">{{circle.name}} · {{circle.ownerName}}邀请</view>
+      </view>
+      <view class="invite-code empty" wx:else>
+        <view class="invite-text">------</view>
+        <view class="invite-meta">输入邀请码后预览圈子</view>
+      </view>
+
+      <view class="join-actions">
+        <view class="primary-btn {{joining || previewing ? 'disabled' : ''}}" bindtap="joinCircle">
+          <text>{{joinButtonText}}</text>
+        </view>
+        <view class="ghost-btn {{joining || previewing ? 'disabled' : ''}}" bindtap="previewCode">
+          <text>{{previewing ? "预览中..." : "预览"}}</text>
+        </view>
+      </view>
+      <view class="hint">加入后默认为成员，圈主和超管负责维护圈内秩序。</view>
+    </view>
+  </view>
+
+  <view class="section" wx:if="{{hasPreview}}">
+    <view class="preview-card card motion-section">
+      <view class="section-head">
+        <view class="section-title with-icon">
+          <image class="section-icon" src="/images/ui-icons/docs.png"></image>
+          <text>加入前可见</text>
+        </view>
+        <view class="pill {{circle.statusClass}}">{{circle.statusText}}</view>
+      </view>
+      <view class="preview-row">
+        <view>
+          <view class="preview-title">圈子公告</view>
+          <view class="muted">{{circle.notice}}</view>
+        </view>
+      </view>
+      <view class="preview-row">
+        <view>
+          <view class="preview-title">基础规模</view>
+          <view class="muted">{{circle.memberText}} · {{circle.activityText}} · {{circle.debtText}}</view>
+        </view>
+      </view>
+    </view>
+  </view>
+
+  <view class="back-link {{joining || previewing ? 'disabled' : ''}}" bindtap="openMyCircles">返回我的圈子</view>
+</view>
+
+<view class="page loading-page {{themeClass}}" wx:else>
+  <view class="loading-panel">
+    <view class="loading-illustration">
+      <view class="loading-card-line first"></view>
+      <view class="loading-card-line second"></view>
+      <view class="loading-card-line third"></view>
+      <view class="loading-card-mark"></view>
+    </view>
+    <view class="loading-text">正在读取邀请信息...</view>
+    <view class="loading-dots"><view></view><view></view><view></view></view>
+  </view>
+</view>
+<theme-dialog id="incircle-theme-dialog" />

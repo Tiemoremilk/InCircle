@@ -1,0 +1,147 @@
+<page-meta page-style="{{themeStyle}} {{incircleKeyboardPageStyle}}"></page-meta>
+<view class="page login-page {{themeClass}}" wx:if="{{!loading}}">
+  <view class="inline-notice {{feedbackType}}" wx:if="{{feedbackText}}">{{feedbackText}}</view>
+  <view class="login-shell">
+    <view class="brand-panel motion-hero">
+      <view class="brand-main">
+        <view>
+          <view class="eyebrow">InCircle</view>
+          <view class="hero-title">先认人，再进圈。</view>
+        </view>
+        <view class="circle-mark motion-theme-mark">圈</view>
+      </view>
+      <view class="hero-copy">{{heroCopy}}</view>
+    </view>
+
+    <view class="error-card card" wx:if="{{hasBackendError}}">
+      <view class="error-title">操作未完成</view>
+      <view class="error-copy">{{backendError}}</view>
+      <view class="error-hint">请确认当前后端域名可访问，账号密码接口已部署，且当前微信就是这个账号绑定的微信。</view>
+      <button class="ghost-btn retry-btn" bindtap="retrySession">重新检查</button>
+    </view>
+
+    <view class="login-panel card motion-section">
+      <view class="panel-head">
+        <view>
+          <view class="panel-title">{{modeTitle}}</view>
+          <view class="panel-copy">{{modeCopy}}</view>
+        </view>
+      </view>
+
+      <view class="mode-tabs" wx:if="{{mode !== 'bind'}}">
+        <view class="mode-tab motion-state {{mode === 'login' ? 'active' : ''}}" data-mode="login" bindtap="switchMode">登录</view>
+        <view class="mode-tab motion-state {{mode === 'register' ? 'active' : ''}}" data-mode="register" bindtap="switchMode">注册</view>
+        <view class="mode-tab motion-state {{mode === 'forgot' ? 'active' : ''}}" data-mode="forgot" bindtap="switchMode">忘记密码</view>
+      </view>
+
+      <view class="bind-alert" wx:if="{{mode === 'bind'}}">
+        <view class="bind-title">当前微信待绑定</view>
+        <view class="bind-copy">绑定账号密码后，原有圈子、成员卡和业务数据会继续沿用。</view>
+      </view>
+
+      <view class="form-grid auth-grid">
+        <view class="field">
+          <view class="field-label">账号</view>
+          <input class="field-input" adjust-position="{{true}}" cursor-spacing="24" value="{{account}}" placeholder="手机号、邮箱或英文数字账号" bindinput="onAccountInput" />
+        </view>
+        <view class="field">
+          <view class="field-label">{{mode === 'login' ? '密码' : '设置密码'}}</view>
+          <input class="field-input" password="{{true}}" adjust-position="{{true}}" cursor-spacing="24" value="{{password}}" placeholder="{{mode === 'login' ? '请输入密码' : '8-64 位，包含字母和数字'}}" bindinput="onPasswordInput" />
+        </view>
+        <view class="field" wx:if="{{mode !== 'login'}}">
+          <view class="field-label">确认密码</view>
+          <input class="field-input" password="{{true}}" adjust-position="{{true}}" cursor-spacing="24" value="{{confirmPassword}}" placeholder="再次输入密码" bindinput="onConfirmPasswordInput" />
+        </view>
+      </view>
+
+      <view wx:if="{{mode === 'register' || mode === 'bind'}}">
+        <view class="profile-row">
+          <button class="avatar-button" open-type="chooseAvatar" bindchooseavatar="onChooseAvatar">
+            <image class="avatar" src="{{avatarUrlDisplay || avatarUrl}}"></image>
+          </button>
+          <view class="profile-main">
+            <view class="preview-name-row">
+              <view class="preview-name">{{displayName}}</view>
+            </view>
+            <view class="preview-meta">微信昵称：{{wechatNameText}}</view>
+            <view class="profile-link {{syncingWechat ? 'is-disabled' : ''}}" bindtap="syncWechatProfile">{{syncingWechat ? "正在同步" : "同步微信资料"}}</view>
+          </view>
+        </view>
+
+        <view class="form-grid">
+          <view class="field">
+            <view class="field-label">圈内昵称</view>
+            <input class="field-input" type="nickname" adjust-position="{{true}}" cursor-spacing="24" value="{{nickName}}" placeholder="选择微信昵称，或手动填写" bindinput="onNickInput" bindblur="onNickInput" />
+          </view>
+          <view class="field">
+            <view class="field-label">手机号</view>
+            <input class="field-input" type="number" maxlength="11" adjust-position="{{true}}" cursor-spacing="24" value="{{phone}}" placeholder="仅用于熟人圈结款和必要联系" bindinput="onPhoneInput" />
+          </view>
+          <view class="field">
+            <view class="field-label">圈内称呼</view>
+            <input class="field-input" adjust-position="{{true}}" cursor-spacing="24" value="{{title}}" placeholder="例如：组织者、羽毛球搭子" bindinput="onTitleInput" />
+          </view>
+          <view class="field">
+            <view class="field-label">备注</view>
+            <textarea class="field-textarea" show-confirm-bar="{{false}}" adjust-position="{{true}}" cursor-spacing="24" value="{{profileNote}}" placeholder="可约时间、忌口、偏好等，选填" bindinput="onNoteInput"></textarea>
+          </view>
+        </view>
+      </view>
+
+      <view class="setup-error" wx:if="{{setupError}}">{{setupError}}</view>
+
+      <view class="theme-block">
+        <view class="theme-head">
+          <view class="theme-title">主题色</view>
+          <view class="theme-count">{{themeOptions.length}} 套</view>
+        </view>
+        <view class="theme-picker login-theme-picker">
+          <view
+            class="theme-swatch motion-state {{item.activeClass}}"
+            wx:for="{{themeOptions}}"
+            wx:key="key"
+            data-key="{{item.key}}"
+            bindtap="onThemeSelect"
+          >
+            <view class="swatch-dot" style="background: {{item.swatch}};"></view>
+            <view class="swatch-name">{{item.name}}</view>
+          </view>
+        </view>
+      </view>
+
+      <view class="login-actions">
+        <button class="primary-btn" bindtap="submitAuth" disabled="{{loginDisabled}}">{{primaryButtonText}}</button>
+      </view>
+
+      <view class="mode-links" wx:if="{{mode === 'login'}}">
+        <view data-mode="register" bindtap="switchMode">没有账号，注册并绑定微信</view>
+        <view data-mode="forgot" bindtap="switchMode">忘记密码</view>
+      </view>
+      <view class="mode-links" wx:elif="{{mode === 'register' || mode === 'forgot'}}">
+        <view data-mode="login" bindtap="switchMode">返回账号密码登录</view>
+      </view>
+
+      <view class="status-row">
+        <view class="status-main">
+          <view class="status-title">微信绑定校验</view>
+          <view class="status-copy">账号密码正确后，还会确认当前微信是否为该账号绑定微信。</view>
+        </view>
+        <view class="pill pill-amber">{{mode === 'login' ? '未登录' : '绑定中'}}</view>
+      </view>
+    </view>
+  </view>
+</view>
+
+<view class="page loading-page {{themeClass}}" wx:else>
+  <view class="loading-panel">
+    <view class="loading-illustration">
+      <view class="loading-card-line first"></view>
+      <view class="loading-card-line second"></view>
+      <view class="loading-card-line third"></view>
+      <view class="loading-card-mark"></view>
+    </view>
+    <view class="loading-text">正在检查登录状态...</view>
+    <view class="loading-dots"><view></view><view></view><view></view></view>
+  </view>
+</view>
+<theme-dialog id="incircle-theme-dialog" />

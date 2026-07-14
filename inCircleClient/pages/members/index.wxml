@@ -1,0 +1,284 @@
+<page-meta page-style="{{themeStyle}} {{incircleKeyboardPageStyle}} {{showEditSheet ? 'overflow: hidden;' : ''}}"></page-meta>
+
+<view class="page members-page {{themeClass}}" style="{{tabBarInsetStyle}}" wx:if="{{!loading}}">
+  <view class="profile-hero card motion-hero">
+    <view class="profile-hero-top">
+      <image class="profile-avatar" src="{{myCard.avatar}}"></image>
+      <view class="profile-main">
+        <view class="eyebrow">我的身份卡</view>
+        <view class="profile-title">{{myCard.name}} · {{myCard.title}}</view>
+        <view class="profile-note">{{myCard.note}}</view>
+      </view>
+      <view class="edit-btn" bindtap="editCard">编辑</view>
+    </view>
+    <view class="hero-badge-panel" wx:if="{{myCard.badges.length}}">
+      <view class="hero-badge-grid">
+        <view class="hero-badge" wx:for="{{myCard.badges}}" wx:key="*this">{{item}}</view>
+      </view>
+    </view>
+    <empty-state
+      wx:else
+      kind="honor"
+      icon="/images/ui-icons/medal.svg"
+      title="第一枚勋章正在路上"
+      description="完善身份卡或参与圈内活动后会自动点亮。"
+      embedded="{{true}}"
+      mini="{{true}}"
+    />
+  </view>
+
+  <view class="section">
+    <view class="section-head">
+      <view class="section-title with-icon">
+        <image class="section-icon" src="/images/ui-icons/trophy.png"></image>
+        <text>成员榜单</text>
+      </view>
+      <view class="section-action" bindtap="toggleSensitiveRank">{{sensitiveRankText}}</view>
+    </view>
+    <view class="honor-grid" wx:if="{{monthlyHonors.length}}">
+      <view class="honor-card {{honorIndex < 6 ? 'motion-list-item' : ''}}" wx:for="{{monthlyHonors}}" wx:key="label" wx:for-index="honorIndex" style="animation-delay: {{honorIndex * 35}}ms;">
+        <view class="honor-label">{{item.label}}</view>
+        <view class="honor-name">{{item.name}}</view>
+      </view>
+    </view>
+    <empty-state
+      wx:else
+      kind="honor"
+      icon="/images/ui-icons/trophy.png"
+      title="本月还没有荣誉数据"
+      description="出现真实参与差异后再生成荣誉，不会随意给成员排名。"
+      compact="{{true}}"
+    />
+    <view class="rank-tabs">
+      <view
+        class="rank-tab motion-state {{tab.activeClass}}"
+        wx:for="{{rankTabs}}"
+        wx:key="key"
+        wx:for-item="tab"
+        data-key="{{tab.key}}"
+        bindtap="switchRank"
+      >{{tab.label}}</view>
+    </view>
+    <view class="rank-card card" wx:if="{{hasRankData}}">
+      <view class="rank-item {{rankIndex < 6 ? 'motion-list-item' : ''}}" wx:for="{{rankedMembers}}" wx:key="id" wx:for-item="member" wx:for-index="rankIndex" data-id="{{member.id}}" bindtap="openMember" style="animation-delay: {{rankIndex * 35}}ms;">
+        <view class="rank-no">#{{member.rank}}</view>
+        <image class="avatar" src="{{member.avatar}}"></image>
+        <view class="rank-body">
+          <view class="rank-title-row">
+            <view class="rank-name">{{member.name}}</view>
+            <view class="rank-title">{{member.title}}</view>
+          </view>
+          <view class="rank-meta-row">
+            <text>{{member.role}}</text>
+            <text>{{member.activityCount}} 次活动</text>
+            <text>{{member.badges.length}} 枚勋章</text>
+          </view>
+        </view>
+        <view class="score">{{member.rankValue}}</view>
+      </view>
+    </view>
+    <view class="rank-empty-card card" wx:else>
+      <view class="rank-empty-visual">
+        <view class="rank-empty-line wide"></view>
+        <view class="rank-empty-line"></view>
+        <view class="rank-empty-dot"></view>
+      </view>
+      <view class="rank-empty-main">
+        <view class="rank-empty-title">{{rankEmptyTitle}}</view>
+        <view class="rank-empty-copy">{{rankEmptyCopy}}</view>
+      </view>
+    </view>
+  </view>
+
+  <view class="section">
+    <view class="section-head">
+      <view class="section-title with-icon">
+        <image class="section-icon" src="/images/ui-icons/score.svg"></image>
+        <text>积分规则</text>
+      </view>
+      <view class="section-action">轻荣誉，不金融化</view>
+    </view>
+    <view class="score-rule-card card">
+      <view class="score-rule" wx:for="{{visibleScoreRules}}" wx:key="label">
+        <text>{{item.label}}</text>
+        <text class="{{item.valueClass}}">{{item.value}}</text>
+      </view>
+      <view class="score-rule-toggle" wx:if="{{hasHiddenScoreRules}}" bindtap="toggleScoreRules">
+        <text>{{scoreRuleToggleText}}</text>
+        <text class="score-rule-toggle-meta">{{scoreRuleToggleMeta}}</text>
+      </view>
+      <view class="safety-note">标签和榜单默认娱乐向，成员详情可删除和申诉，敏感榜单可关闭。</view>
+    </view>
+  </view>
+
+  <view class="section">
+    <view class="section-head">
+      <view class="section-title with-icon">
+        <image class="section-icon" src="/images/ui-icons/history.svg"></image>
+        <text>积分动态</text>
+      </view>
+      <view class="section-action">{{scoreLogTotal}} 条</view>
+    </view>
+    <view class="score-log-card card">
+      <view class="score-log {{logIndex < 6 ? 'motion-list-item' : ''}}" wx:for="{{recentScoreLogs}}" wx:key="id" wx:for-index="logIndex" style="animation-delay: {{logIndex * 35}}ms;">
+        <view class="score-log-mark {{item.deltaClass}}">积</view>
+        <view class="score-log-main">
+          <view class="score-log-title-row">
+            <text class="score-log-member">{{item.memberName}}</text>
+            <text class="score-log-type">{{item.typeText}}</text>
+          </view>
+          <view class="score-log-reason">{{item.reason}}</view>
+          <view class="score-log-time">{{item.createdAt}}</view>
+        </view>
+        <view class="score-log-delta {{item.deltaClass}}">{{item.deltaText}}</view>
+      </view>
+      <empty-state
+        wx:if="{{!recentScoreLogs.length}}"
+        kind="log"
+        icon="/images/ui-icons/history.svg"
+        title="还没有积分动态"
+        description="约局、投票、打卡或沉淀资料后，积分变化会记录在这里。"
+        embedded="{{true}}"
+        compact="{{true}}"
+      />
+      <view class="view-more-row" wx:if="{{hasMoreScoreLogs}}" bindtap="openScoreLogs">
+        <text>查看更多</text>
+        <text class="view-more-meta">共 {{scoreLogTotal}} 条</text>
+      </view>
+    </view>
+  </view>
+
+  <view class="section">
+    <view class="section-head">
+      <view class="section-title with-icon">
+        <image class="section-icon" src="/images/ui-icons/members.png"></image>
+        <text>成员图鉴</text>
+      </view>
+      <view class="section-action">{{members.length}} 人</view>
+    </view>
+    <view class="member-card card {{memberIndex < 6 ? 'motion-list-item' : ''}}" wx:for="{{members}}" wx:key="id" wx:for-item="member" wx:for-index="memberIndex" data-id="{{member.id}}" bindtap="openMember" style="animation-delay: {{memberIndex * 35}}ms;">
+      <view class="member-top">
+        <image class="avatar large" src="{{member.avatar}}"></image>
+        <view class="member-main">
+          <view class="member-name-row">
+            <view class="member-name">{{member.name}}</view>
+            <view class="pill {{member.roleClass}}">{{member.role}}</view>
+          </view>
+          <view class="member-title">{{member.title}}</view>
+          <view class="muted">{{member.availability}}</view>
+        </view>
+      </view>
+      <view class="tag-row" wx:if="{{member.tags.length}}">
+        <view class="mini-tag" wx:for="{{member.tags}}" wx:key="*this">{{item}}</view>
+      </view>
+      <view class="badge-row" wx:if="{{member.badges.length}}">
+        <view class="badge" wx:for="{{member.badges}}" wx:key="*this">{{item}}</view>
+      </view>
+      <empty-state
+        wx:if="{{!member.tags.length && !member.badges.length}}"
+        kind="profile"
+        icon="/images/ui-icons/profile.svg"
+        title="身份卡内容待补充"
+        description="标签和勋章会在完善资料、参与圈内活动后出现。"
+        embedded="{{true}}"
+        mini="{{true}}"
+      />
+      <view class="member-note">{{member.note}}</view>
+    </view>
+    <empty-state
+      wx:if="{{!members.length}}"
+      kind="members"
+      icon="/images/ui-icons/members.png"
+      title="成员图鉴还是空的"
+      description="邀请圈友加入后，每个人都会拥有一张独立身份卡。"
+      spacious="{{true}}"
+    />
+  </view>
+
+  <view class="sheet-mask" wx:if="{{showEditSheet}}" bindtap="closeEditSheet" catchtouchmove="noop">
+    <view class="edit-sheet" catchtap="noop">
+      <scroll-view class="edit-sheet-scroll" scroll-y enhanced show-scrollbar="{{false}}">
+        <view class="sheet-head">
+          <view>
+            <view class="sheet-kicker">编辑身份卡</view>
+            <view class="sheet-title">让圈友更快知道怎么约你</view>
+          </view>
+          <view class="sheet-close" bindtap="closeEditSheet">×</view>
+        </view>
+
+        <view class="profile-edit-card">
+          <button class="edit-avatar-button" open-type="chooseAvatar" bindchooseavatar="onChooseCardAvatar">
+            <image class="edit-avatar" src="{{cardDraft.avatarDisplayUrl || cardDraft.avatar}}"></image>
+            <view class="avatar-edit-hint">{{avatarUploading ? "上传中" : "换头像"}}</view>
+          </button>
+          <view class="profile-edit-main">
+            <view class="field compact-field">
+              <view class="field-label">圈内昵称</view>
+              <input class="field-input" type="nickname" adjust-position="{{true}}" cursor-spacing="96" placeholder="例如：你的昵称" value="{{cardDraft.name}}" data-field="name" bindinput="onCardInput" bindblur="onCardInput" />
+            </view>
+            <view class="profile-edit-tip">头像和昵称会同步到你的圈内身份卡。</view>
+          </view>
+        </view>
+
+        <view class="field">
+          <view class="field-label">圈内称号</view>
+          <input class="field-input" adjust-position="{{true}}" cursor-spacing="96" placeholder="例如：饭局发动机" value="{{cardDraft.title}}" data-field="title" bindinput="onCardInput" />
+        </view>
+
+        <view class="field">
+          <view class="field-label">可约时间</view>
+          <input class="field-input" adjust-position="{{true}}" cursor-spacing="96" placeholder="例如：工作日晚 / 周末下午" value="{{cardDraft.availability}}" data-field="availability" bindinput="onCardInput" />
+        </view>
+
+        <view class="field">
+          <view class="field-label">个人备注</view>
+          <textarea class="field-textarea" fixed="{{true}}" show-confirm-bar="{{false}}" adjust-position="{{true}}" adjust-keyboard-to="bottom" cursor-spacing="96" placeholder="忌口、雷点、组织偏好都可以写" value="{{cardDraft.note}}" data-field="note" bindinput="onCardInput"></textarea>
+        </view>
+
+        <view class="field-row">
+          <view class="field">
+            <view class="field-label">兴趣标签</view>
+            <textarea class="field-textarea small-textarea" fixed="{{true}}" show-confirm-bar="{{false}}" adjust-position="{{true}}" adjust-keyboard-to="bottom" cursor-spacing="96" value="{{cardDraft.tagsText}}" data-field="tagsText" bindinput="onCardInput"></textarea>
+          </view>
+          <view class="field">
+            <view class="field-label">擅长技能</view>
+            <textarea class="field-textarea small-textarea" fixed="{{true}}" show-confirm-bar="{{false}}" adjust-position="{{true}}" adjust-keyboard-to="bottom" cursor-spacing="96" value="{{cardDraft.skillsText}}" data-field="skillsText" bindinput="onCardInput"></textarea>
+          </view>
+        </view>
+
+        <view class="field-row">
+          <view class="field">
+            <view class="field-label">偏好</view>
+            <textarea class="field-textarea small-textarea" fixed="{{true}}" show-confirm-bar="{{false}}" adjust-position="{{true}}" adjust-keyboard-to="bottom" cursor-spacing="96" value="{{cardDraft.interestsText}}" data-field="interestsText" bindinput="onCardInput"></textarea>
+          </view>
+          <view class="field">
+            <view class="field-label">雷点 / 忌口</view>
+            <textarea class="field-textarea small-textarea" fixed="{{true}}" show-confirm-bar="{{false}}" adjust-position="{{true}}" adjust-keyboard-to="bottom" cursor-spacing="96" value="{{cardDraft.taboosText}}" data-field="taboosText" bindinput="onCardInput"></textarea>
+          </view>
+        </view>
+
+        <view class="sheet-tip">标签默认娱乐向展示，不合适时可在成员详情里删除或申诉。</view>
+        <view class="sheet-actions">
+          <view class="primary-btn sheet-submit {{avatarUploading || cardSaving ? 'disabled' : ''}}" bindtap="submitCard">
+            {{cardSaving ? '保存中...' : '保存身份卡'}}
+          </view>
+        </view>
+      </scroll-view>
+    </view>
+  </view>
+</view>
+
+<view class="page members-page loading-page {{themeClass}}" style="{{tabBarInsetStyle}}" wx:else>
+  <view class="loading-panel">
+    <view class="loading-illustration">
+      <view class="loading-card-line first"></view>
+      <view class="loading-card-line second"></view>
+      <view class="loading-card-line third"></view>
+      <view class="loading-card-mark"></view>
+    </view>
+    <view class="loading-text">正在翻成员图鉴...</view>
+    <view class="loading-dots"><view></view><view></view><view></view></view>
+  </view>
+</view>
+<ai-fab />
+<theme-dialog id="incircle-theme-dialog" />
