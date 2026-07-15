@@ -193,7 +193,7 @@ Page({
     dialog.show({
       title: "更换邀请码",
       content: "更换后，当前邀请码、已保存的入圈码图片和之前分享的邀请入口都会立即失效，旧邀请码无法恢复。",
-      tone: "warning",
+      tone: "primary",
       cancelText: "暂不更换",
       confirmText: "确认更换",
     }).then((result) => {
@@ -352,7 +352,7 @@ Page({
       title: "退出圈子",
       content: "退出后不再看到这个圈子的新活动、AA 和资料，历史记录仍会保留。",
       confirmText: "退出",
-      confirmColor: "#B34A34",
+      tone: "danger",
       success: (res) => {
         if (!res.confirm) return;
         this.setData({ destructiveBusy: "exit" });

@@ -476,7 +476,7 @@ Page({
             title: "绑定当前微信",
             content: `账号 ${((err.details || {}).accountMasked) || payload.account} 已解除原微信绑定。确认后将绑定到当前微信，旧微信不再可用。`,
             confirmText: "确认绑定",
-            tone: "warning",
+            tone: "danger",
             success: (res) => {
               if (res.confirm) this.confirmWechatRebind(payload);
             },

@@ -26,7 +26,7 @@ Page({
   },
   unbindWechat() {
     const user = this.data.user || {}; if (!user.canManage || !user.wechatBound || this.data.busyAction) return;
-    dialog.show({ title: "解绑微信", content: "解绑会立即撤销旧微信的登录状态。账号密码和圈子数据保留，用户可在新微信中使用原账号密码重新绑定。", confirmText: "确认解绑", tone: "warning", success: (res) => {
+    dialog.show({ title: "解绑微信", content: "解绑会立即撤销旧微信的登录状态。账号密码和圈子数据保留，用户可在新微信中使用原账号密码重新绑定。", confirmText: "确认解绑", tone: "danger", success: (res) => {
       if (!res.confirm) return; this.setData({ busyAction: "unbind" }); api.adminUnbindUserWechat(this.userId).then((data) => { this.setData(decorate(data)); wx.showToast({ title: "微信已解绑", icon: "success" }); }).catch((error) => wx.showToast({ title: (error && error.message) || "解绑失败", icon: "none" })).finally(() => this.setData({ busyAction: "" }));
     } });
   },

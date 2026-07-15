@@ -72,8 +72,8 @@ test("member editor follows the shared form layout and hides the custom tabbar",
   assert.match(template, /class="primary-btn sheet-submit/);
   assert.match(template, /class="field avatar-field-wrap"/);
   assert.match(template, /class="avatar-card [^"]*"/);
-  assert.match(template, /class="avatar-card-action"[\s\S]*?images\/ui-icons\/photo\.svg/);
-  assert.match(template, /<button[\s\S]*?class="avatar-picker-hitbox"[\s\S]*?open-type="chooseAvatar"/);
+  assert.match(template, /<button[\s\S]*?class="avatar-card-action"[\s\S]*?open-type="chooseAvatar"[\s\S]*?bindchooseavatar="onChooseCardAvatar"[\s\S]*?images\/ui-icons\/camera\.svg/);
+  assert.doesNotMatch(template, /avatar-picker-hitbox/);
   assert.doesNotMatch(template, /avatar-camera-badge|avatar-change-action|chevron-right\.svg/);
   assert.doesNotMatch(template, /class="edit-avatar-button/);
 
@@ -86,11 +86,15 @@ test("member editor follows the shared form layout and hides the custom tabbar",
   assert.match(styles, /\.form-grid\s*\{[^}]*display:\s*grid;[^}]*gap:\s*18rpx/s);
   assert.match(styles, /\.form-grid\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\)/s);
   assert.match(styles, /\.avatar-card\s*\{[^}]*width:\s*100%;[^}]*border-radius:\s*12rpx/s);
-  assert.match(styles, /\.avatar-picker-hitbox\s*\{[^}]*position:\s*absolute;[^}]*right:\s*0;[^}]*left:\s*0;/s);
+  assert.match(styles, /\.avatar-card-action\s*\{[^}]*width:\s*62rpx;[^}]*max-width:\s*62rpx;[^}]*border-radius:\s*50%;[^}]*background:\s*var\(--theme-primary/s);
+  assert.match(styles, /\.avatar-card-action::after\s*\{[^}]*border:\s*0;/s);
+  assert.match(styles, /\.avatar-card-action image\s*\{[^}]*filter:\s*brightness\(0\) invert\(1\)/s);
+  assert.doesNotMatch(styles, /\.avatar-picker-hitbox\s*\{/);
   assert.match(styles, /\.field-row\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\) minmax\(0, 1fr\)/s);
   assert.ok(Number(maskRule.match(/z-index:\s*(\d+)/)[1]) > Number(tabbarStyles.match(/z-index:\s*(\d+)/)[1]));
   assert.match(script, /function listToText\(list\)[\s\S]*join\("、"\)/);
   assert.match(script, /closeEditSheet\(\)\s*\{\s*if \(this\.data\.avatarUploading \|\| this\.data\.cardSaving\) return;/);
+  assert.match(script, /onChooseCardAvatar\(e\)\s*\{\s*if \(this\.data\.avatarUploading \|\| this\.data\.cardSaving\) return;/);
   assert.match(script, /editCard\(\)\s*\{\s*this\.setTabBarHidden\(true\)/);
   assert.match(script, /setTabBarHidden\(false\)/);
   assert.match(tabbarScript, /hidden:\s*false/);

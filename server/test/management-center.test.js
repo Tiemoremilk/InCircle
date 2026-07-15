@@ -125,6 +125,28 @@ test("shared dialog uses a real spacer and typed destructive confirmation", () =
   assert.match(css, /\.tone-danger \.confirm-button\[disabled\]\s*\{[^}]*background:\s*#fae9e7;[^}]*color:\s*#984541\s*!important;/s);
 });
 
+test("shared dialog renders only danger and primary tones", () => {
+  const css = read("inCircleClient/components/theme-dialog/index.wxss");
+  const js = read("inCircleClient/components/theme-dialog/index.js");
+  const circleSettings = read("inCircleClient/pages/circle-settings/index.js");
+  const adminUser = read("inCircleClient/pages/admin-user-detail/index.js");
+
+  assert.match(js, /primary:\s*"default"/);
+  assert.match(js, /error:\s*"danger"/);
+  assert.match(js, /warning:\s*"danger"/);
+  assert.match(js, /info:\s*"default"/);
+  assert.match(js, /const DANGER_WORDS = \/[^/]*删除[^/]*失败[^/]*停用[^/]*归档[^/]*封禁[^/]*解绑[^/]*\//);
+  assert.doesNotMatch(js, /WARNING_WORDS|return "warning"/);
+
+  assert.match(css, /\.confirm-button\s*\{[^}]*var\(--dialog-primary[^}]*var\(--dialog-primary-dark/s);
+  assert.match(css, /\.tone-danger \.confirm-button\s*\{[^}]*background:\s*#c94747;/s);
+  assert.doesNotMatch(css, /\.tone-warning|\.symbol-info/);
+
+  assert.match(circleSettings, /title:\s*"更换邀请码"[\s\S]*?tone:\s*"primary"/);
+  assert.match(circleSettings, /title:\s*"退出圈子"[\s\S]*?tone:\s*"danger"/);
+  assert.match(adminUser, /tone:\s*blocking \? "danger" : "default"/);
+});
+
 test("management center uses one theme-aware monochrome icon", () => {
   const icon = read("inCircleClient/images/ui-icons/admin.svg");
   const switchPage = read("inCircleClient/pages/circle-switch/index.wxml");

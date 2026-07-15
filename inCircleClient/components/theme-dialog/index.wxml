@@ -14,13 +14,9 @@
     <view class="theme-dialog-accent"></view>
     <view class="theme-dialog-head">
       <view class="theme-dialog-symbol">
-        <view wx:if="{{tone === 'danger' || tone === 'warning'}}" class="symbol-alert">
+        <view wx:if="{{tone === 'danger'}}" class="symbol-alert">
           <view class="symbol-alert-line"></view>
           <view class="symbol-alert-dot"></view>
-        </view>
-        <view wx:elif="{{tone === 'info'}}" class="symbol-info">
-          <view class="symbol-info-dot"></view>
-          <view class="symbol-info-line"></view>
         </view>
         <view wx:else class="symbol-check"></view>
       </view>

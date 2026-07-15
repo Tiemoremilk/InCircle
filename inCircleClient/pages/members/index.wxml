@@ -218,17 +218,16 @@
               <view class="avatar-card-title">{{cardDraft.name || "我的圈内头像"}}</view>
               <view class="avatar-card-note">{{avatarUploading ? "正在上传，请稍候" : "仅当前圈子可见"}}</view>
             </view>
-            <view class="avatar-card-action">
-              <image src="/images/ui-icons/photo.svg" mode="aspectFit"></image>
-              <text>{{avatarUploading ? "上传中" : "更换"}}</text>
-            </view>
             <button
-              class="avatar-picker-hitbox"
+              class="avatar-card-action"
               aria-label="更换圈内头像"
               disabled="{{avatarUploading || cardSaving}}"
               open-type="chooseAvatar"
               bindchooseavatar="onChooseCardAvatar"
-            ></button>
+              hover-class="avatar-action-pressed"
+            >
+              <image src="/images/ui-icons/camera.svg" mode="aspectFit"></image>
+            </button>
           </view>
         </view>
 

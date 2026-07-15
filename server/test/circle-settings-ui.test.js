@@ -34,8 +34,25 @@ test("circle invitation uses a compact themed code bar with semantic actions", (
   assert.match(script, /handleInviteQrAction\(\)\s*\{[\s\S]*this\.previewInviteQrCode\(\)/);
   assert.match(script, /inviteQrButtonText:\s*"查看入圈码"/);
   assert.match(script, /title:\s*"更换邀请码"/);
-  assert.match(script, /tone:\s*"warning"/);
+  assert.match(script, /tone:\s*"primary"/);
   assert.match(script, /\.rotateInviteCode\(this\.data\.circle\.id\)/);
+});
+
+test("all QR actions share one clean icon and a stable display size", () => {
+  const settingsTemplate = read("index.wxml");
+  const settingsStyles = read("index.wxss");
+  const switchTemplate = fs.readFileSync(path.resolve(pageRoot, "../circle-switch/index.wxml"), "utf8");
+  const switchStyles = fs.readFileSync(path.resolve(pageRoot, "../circle-switch/index.wxss"), "utf8");
+  const qrIcon = fs.readFileSync(path.resolve(pageRoot, "../../images/ui-icons/qr-code.svg"), "utf8");
+
+  assert.match(settingsTemplate, /src="\/images\/ui-icons\/qr-code\.svg"/);
+  assert.match(switchTemplate, /src="\/images\/ui-icons\/qr-code\.svg"/);
+  assert.match(settingsStyles, /\.invite-action-icon\s*\{[^}]*width:\s*28rpx;[^}]*height:\s*28rpx/s);
+  assert.match(switchStyles, /\.circle-action-icon image\s*\{[^}]*width:\s*28rpx;[^}]*height:\s*28rpx/s);
+
+  assert.equal((qrIcon.match(/<rect\b/g) || []).length, 3);
+  assert.match(qrIcon, /stroke-linecap="round"/);
+  assert.doesNotMatch(qrIcon, /M16 16h2v2h-2z/);
 });
 
 test("member permissions use a separated themed heading and member list", () => {

@@ -15,22 +15,30 @@
 
   <view class="section">
     <view class="join-card card">
-      <view class="section-title with-icon">
-        <image class="section-icon" src="/images/ui-icons/share.png"></image>
-        <text>输入邀请码</text>
+      <view class="join-card-head">
+        <view class="join-heading-icon">
+          <image src="/images/ui-icons/key-round.svg" mode="aspectFit"></image>
+        </view>
+        <view class="join-heading-copy">
+          <view class="join-heading-title">输入邀请码</view>
+          <view class="join-heading-note">8 位邀请码，区分大小写</view>
+        </view>
       </view>
-      <view class="field">
-        <view class="field-label">8 位邀请码，区分大小写</view>
+      <view class="field invite-input-field">
         <input class="field-input" adjust-position="{{true}}" cursor-spacing="24" value="{{joinCode}}" maxlength="8" placeholder="例如 Ab1#￥%&amp;2" bindinput="onCodeInput" />
       </view>
 
       <view class="invite-code" wx:if="{{hasPreview}}">
         <view class="invite-text">{{joinCode}}</view>
-        <view class="invite-meta">{{circle.name}} · {{circle.ownerName}}邀请</view>
+        <view class="invite-meta invite-meta-found">
+          <text class="invite-circle-name">{{circle.name}}</text>
+          <view class="invite-meta-dot"></view>
+          <text>圈子已确认</text>
+        </view>
       </view>
       <view class="invite-code empty" wx:else>
         <view class="invite-text">--------</view>
-        <view class="invite-meta">输入邀请码后预览圈子</view>
+        <view class="invite-meta">输入后会显示匹配到的圈子</view>
       </view>
 
       <view class="join-actions">
@@ -47,23 +55,39 @@
 
   <view class="section" wx:if="{{hasPreview}}">
     <view class="preview-card card motion-section">
-      <view class="section-head">
-        <view class="section-title with-icon">
-          <image class="section-icon" src="/images/ui-icons/docs.png"></image>
-          <text>加入前可见</text>
+      <view class="preview-card-head">
+        <view class="preview-heading">
+          <view class="preview-heading-icon">
+            <image src="/images/ui-icons/eye.svg" mode="aspectFit"></image>
+          </view>
+          <view class="preview-heading-copy">
+            <view class="preview-heading-title">加入前可见</view>
+            <view class="preview-heading-note">确认圈子的公开信息</view>
+          </view>
         </view>
-        <view class="pill {{circle.statusClass}}">{{circle.statusText}}</view>
-      </view>
-      <view class="preview-row">
-        <view>
-          <view class="preview-title">圈子公告</view>
-          <view class="muted">{{circle.notice}}</view>
+        <view class="preview-status {{circle.disabledClass}}">
+          <view class="preview-status-dot"></view>
+          <text>{{circle.statusText}}</text>
         </view>
       </view>
-      <view class="preview-row">
-        <view>
-          <view class="preview-title">基础规模</view>
-          <view class="muted">{{circle.memberText}} · {{circle.activityText}} · {{circle.debtText}}</view>
+      <view class="preview-card-body">
+        <view class="preview-notice">
+          <view class="preview-label">圈子公告</view>
+          <view class="preview-notice-copy">{{circle.notice || "圈主暂未发布公告"}}</view>
+        </view>
+        <view class="preview-metrics">
+          <view class="preview-metric">
+            <view class="preview-metric-value">{{circle.memberCount}}</view>
+            <view class="preview-metric-label">圈内成员</view>
+          </view>
+          <view class="preview-metric">
+            <view class="preview-metric-value">{{circle.monthlyActivityCount}}</view>
+            <view class="preview-metric-label">本月约局</view>
+          </view>
+          <view class="preview-metric">
+            <view class="preview-metric-value">{{circle.unsettledCount}}</view>
+            <view class="preview-metric-label">待结清</view>
+          </view>
         </view>
       </view>
     </view>

@@ -300,6 +300,7 @@ Page({
   },
 
   onChooseCardAvatar(e) {
+    if (this.data.avatarUploading || this.data.cardSaving) return;
     const avatarUrl = e.detail && e.detail.avatarUrl ? e.detail.avatarUrl : "";
     if (!avatarUrl) {
       wx.showToast({ title: "未选择头像", icon: "none" });

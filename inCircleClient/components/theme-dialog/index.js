@@ -1,8 +1,14 @@
 const theme = require("../../utils/theme");
 
-const TONES = ["default", "danger", "warning", "info"];
-const DANGER_WORDS = /删除|注销|解散|移除|清空|清理|停用|归档|退出|永久|不可恢复|不能恢复/;
-const WARNING_WORDS = /警告|风险|异常|失败|缺少|权限/;
+const TONE_ALIASES = Object.freeze({
+  default: "default",
+  primary: "default",
+  info: "default",
+  warning: "danger",
+  danger: "danger",
+  error: "danger",
+});
+const DANGER_WORDS = /删除|注销|解散|清空|清理|永久|不可恢复|不能恢复|无法恢复|失败|异常|警告|风险|失效|停用|归档|冻结|封禁|解绑|撤销|缺少|权限|上限/;
 
 function normalizeText(value, fallback) {
   if (value === undefined || value === null) return fallback;
@@ -20,11 +26,11 @@ function hexToRgba(value, alpha) {
 
 function inferTone(options) {
   const source = options || {};
-  if (TONES.indexOf(source.tone) !== -1) return source.tone;
+  const explicitTone = TONE_ALIASES[String(source.tone || "").trim().toLowerCase()];
+  if (explicitTone) return explicitTone;
   const signal = `${source.title || ""} ${source.content || ""} ${source.confirmText || ""}`;
   const confirmColor = String(source.confirmColor || "").toLowerCase();
   if (DANGER_WORDS.test(signal) || /b34a34|c14343|c14646|a93232/i.test(confirmColor)) return "danger";
-  if (WARNING_WORDS.test(signal)) return "warning";
   return "default";
 }
 
