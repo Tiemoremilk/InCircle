@@ -2,7 +2,7 @@
 <view class="page vote-detail-page {{themeClass}}" wx:if="{{ready}}">
   <view class="vote-hero motion-hero">
     <view class="hero-row">
-      <view class="pill {{vote.statusClass}}">{{vote.statusText}}</view>
+      <view class="pill hero-pill {{vote.statusClass}}">{{vote.statusText}}</view>
       <view class="hero-inline-actions">
         <view class="vote-type">{{vote.type}}</view>
         <view wx:if="{{vote.canEdit}}" class="detail-edit-action" bindtap="editVote">编辑</view>

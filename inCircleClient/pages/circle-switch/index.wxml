@@ -159,45 +159,91 @@
 
   <view class="custom-theme-mask" wx:if="{{customThemeOpen}}" bindtap="closeCustomTheme" catchtouchmove="stopEvent">
     <view class="custom-theme-sheet" catchtap="stopEvent">
+      <view class="custom-theme-grabber"></view>
       <view class="custom-theme-head">
-        <view>
-          <view class="custom-theme-title">自定义主题</view>
-          <view class="custom-theme-value">{{customThemePreviewText}}</view>
+        <view class="custom-theme-heading">
+          <view class="custom-theme-heading-icon">
+            <image src="/images/ui-icons/palette.svg" mode="aspectFit"></image>
+          </view>
+          <view class="custom-theme-heading-copy">
+            <view class="custom-theme-title">自定义主题</view>
+            <view class="custom-theme-subtitle">RGB 与透明度</view>
+          </view>
         </view>
-        <view class="custom-theme-close" bindtap="closeCustomTheme">×</view>
-      </view>
-      <view class="custom-theme-preview-grid">
-        <view class="custom-theme-preview" style="{{customThemePreviewStyle}}"></view>
-        <view class="custom-theme-preview-copy">
-          <view>主题预览</view>
-          <text>透明度会影响浅底、边框与阴影浓度</text>
-        </view>
-      </view>
-      <view class="custom-channel-list">
-        <view class="custom-channel-row">
-          <view class="custom-channel-label red-channel">R</view>
-          <slider class="custom-channel-slider" min="0" max="255" value="{{customThemeDraft.r}}" activeColor="{{customThemePreviewHex}}" block-color="{{customThemePreviewHex}}" block-size="18" data-channel="r" bindchanging="onCustomThemeChannelChange" bindchange="onCustomThemeChannelChange" />
-          <view class="custom-channel-value">{{customThemeDraft.r}}</view>
-        </view>
-        <view class="custom-channel-row">
-          <view class="custom-channel-label green-channel">G</view>
-          <slider class="custom-channel-slider" min="0" max="255" value="{{customThemeDraft.g}}" activeColor="{{customThemePreviewHex}}" block-color="{{customThemePreviewHex}}" block-size="18" data-channel="g" bindchanging="onCustomThemeChannelChange" bindchange="onCustomThemeChannelChange" />
-          <view class="custom-channel-value">{{customThemeDraft.g}}</view>
-        </view>
-        <view class="custom-channel-row">
-          <view class="custom-channel-label blue-channel">B</view>
-          <slider class="custom-channel-slider" min="0" max="255" value="{{customThemeDraft.b}}" activeColor="{{customThemePreviewHex}}" block-color="{{customThemePreviewHex}}" block-size="18" data-channel="b" bindchanging="onCustomThemeChannelChange" bindchange="onCustomThemeChannelChange" />
-          <view class="custom-channel-value">{{customThemeDraft.b}}</view>
-        </view>
-        <view class="custom-channel-row">
-          <view class="custom-channel-label alpha-channel">A</view>
-          <slider class="custom-channel-slider" min="0" max="100" value="{{customThemeDraft.a}}" activeColor="{{customThemePreviewHex}}" block-color="{{customThemePreviewHex}}" block-size="18" data-channel="a" bindchanging="onCustomThemeChannelChange" bindchange="onCustomThemeChannelChange" />
-          <view class="custom-channel-value">{{customThemeDraft.a}}%</view>
+        <view class="custom-theme-close {{themeSaving ? 'disabled' : ''}}" bindtap="closeCustomTheme">
+          <image src="/images/ui-icons/close.svg" mode="aspectFit"></image>
         </view>
       </view>
+
+      <view class="custom-theme-body">
+        <view class="custom-theme-body-inner">
+          <view class="custom-theme-stage" style="{{customThemeHeroStyle}}">
+            <view class="custom-theme-stage-top">
+              <view class="custom-theme-stage-mark">
+                <image src="/images/ui-icons/palette.svg" mode="aspectFit"></image>
+              </view>
+              <view class="pill hero-pill custom-theme-stage-pill">预览</view>
+            </view>
+            <view class="custom-theme-stage-title">InCircle</view>
+            <view class="custom-theme-stage-copy">你的专属主题</view>
+            <view class="custom-theme-stage-samples">
+              <view class="custom-theme-stage-button" style="{{customThemeStageButtonStyle}}">进入圈子</view>
+              <view class="pill hero-pill custom-theme-stage-tag">进行中</view>
+            </view>
+          </view>
+
+          <view class="custom-theme-preview-meta">
+            <view class="custom-theme-preview-surface">
+              <view class="custom-theme-preview" style="{{customThemePreviewStyle}}"></view>
+            </view>
+            <view class="custom-theme-preview-copy">
+              <view class="custom-theme-preview-heading">
+                <text>{{customThemePreviewHex}}</text>
+                <text class="custom-theme-alpha-chip" style="{{customThemeAlphaStyle}}">透明度 {{customThemeDraft.a}}%</text>
+              </view>
+              <text>{{customThemeRgbText}}</text>
+            </view>
+            <view class="custom-theme-palette-strip">
+              <view style="{{customThemeDarkStyle}}"></view>
+              <view style="{{customThemePrimaryStyle}}"></view>
+              <view style="{{customThemeAccentStyle}}"></view>
+            </view>
+          </view>
+
+          <view class="custom-channel-panel">
+            <view class="custom-channel-head">
+              <view class="custom-channel-title">颜色通道</view>
+              <view class="custom-channel-hint">RGBA</view>
+            </view>
+            <view class="custom-channel-list">
+              <view class="custom-channel-row">
+                <view class="custom-channel-label red-channel">R</view>
+                <slider class="custom-channel-slider" min="0" max="255" value="{{customThemeDraft.r}}" activeColor="#d85b57" backgroundColor="#edf0ef" block-color="#d85b57" block-size="18" data-channel="r" bindchanging="onCustomThemeChannelChange" bindchange="onCustomThemeChannelChange" />
+                <view class="custom-channel-value">{{customThemeDraft.r}}</view>
+              </view>
+              <view class="custom-channel-row">
+                <view class="custom-channel-label green-channel">G</view>
+                <slider class="custom-channel-slider" min="0" max="255" value="{{customThemeDraft.g}}" activeColor="#32936f" backgroundColor="#edf0ef" block-color="#32936f" block-size="18" data-channel="g" bindchanging="onCustomThemeChannelChange" bindchange="onCustomThemeChannelChange" />
+                <view class="custom-channel-value">{{customThemeDraft.g}}</view>
+              </view>
+              <view class="custom-channel-row">
+                <view class="custom-channel-label blue-channel">B</view>
+                <slider class="custom-channel-slider" min="0" max="255" value="{{customThemeDraft.b}}" activeColor="#477fbd" backgroundColor="#edf0ef" block-color="#477fbd" block-size="18" data-channel="b" bindchanging="onCustomThemeChannelChange" bindchange="onCustomThemeChannelChange" />
+                <view class="custom-channel-value">{{customThemeDraft.b}}</view>
+              </view>
+              <view class="custom-channel-row">
+                <view class="custom-channel-label alpha-channel">A</view>
+                <slider class="custom-channel-slider" min="0" max="100" value="{{customThemeDraft.a}}" activeColor="{{customThemePreviewHex}}" backgroundColor="#edf0ef" block-color="{{customThemePreviewHex}}" block-size="18" data-channel="a" bindchanging="onCustomThemeChannelChange" bindchange="onCustomThemeChannelChange" />
+                <view class="custom-channel-value">{{customThemeDraft.a}}%</view>
+              </view>
+            </view>
+          </view>
+        </view>
+      </view>
+
       <view class="custom-theme-actions">
-        <view class="custom-theme-button cancel" bindtap="closeCustomTheme">取消</view>
-        <view class="custom-theme-button confirm" bindtap="applyCustomTheme">{{themeSaving ? '保存中...' : '应用主题'}}</view>
+        <view class="custom-theme-button cancel {{themeSaving ? 'disabled' : ''}}" bindtap="closeCustomTheme">取消</view>
+        <view class="custom-theme-button confirm {{themeSaving ? 'disabled' : ''}}" style="{{customThemeActionStyle}}" bindtap="applyCustomTheme">{{themeSaving ? '应用中...' : '应用主题'}}</view>
       </view>
     </view>
   </view>

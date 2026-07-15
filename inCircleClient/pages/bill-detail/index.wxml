@@ -2,7 +2,7 @@
 <view class="page bill-detail-page {{themeClass}}" wx:if="{{ready}}">
   <view class="bill-hero motion-hero">
     <view class="hero-row">
-      <view class="pill {{bill.statusClass}}">{{bill.status}}</view>
+      <view class="pill hero-pill {{bill.statusClass}}">{{bill.status}}</view>
       <view class="hero-inline-actions">
         <view class="split-mode">{{bill.splitMode}}</view>
         <view wx:if="{{bill.canEdit}}" class="detail-edit-action" bindtap="editBill">编辑</view>

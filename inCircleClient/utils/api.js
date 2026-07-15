@@ -24,7 +24,7 @@ const READ_TTL = {
   // This is the shared policy for cache, in-flight merging, and safe transient retries.
   incircleSession: 300000,
   incircleListMyCircles: 20000,
-  incircleJoinPreview: 30000,
+  incircleJoinPreview: 0,
   incircleCircleSettings: 20000,
   incircleCircleMemberDetail: 20000,
   incircleAdminOverview: 10000,
@@ -44,7 +44,7 @@ const READ_TTL = {
   incircleMembers: 20000,
   incircleScoreLogs: 10000,
   incircleMemberDetail: 20000,
-  incircleGetInviteQrCode: 1800000,
+  incircleGetInviteQrCode: 0,
   incircleAiStatus: 60000,
   incircleAiSettings: 10000,
   incircleAiListProviders: 10000,
@@ -57,7 +57,6 @@ const READ_TTL = {
 
 const PERSISTED_READ_TYPES = {
   incircleSession: true,
-  incircleGetInviteQrCode: true,
 };
 
 const WRITE_INVALIDATION = {
@@ -75,6 +74,7 @@ const WRITE_INVALIDATION = {
   incircleAiReportMessage: ["incircleAiReports"],
   incircleAiUpdateReport: ["incircleAiReports"],
   incircleUpdateTheme: ["incircleSession", "incircleListMyCircles"],
+  incircleRotateInviteCode: ["incircleCircleSettings", "incircleGetInviteQrCode", "incircleJoinPreview"],
 };
 
 const httpReadCache = {};
@@ -536,8 +536,21 @@ function switchCircle(circleId) {
   return requestAction("incircleSwitchCircle", { circleId }).then(afterSession);
 }
 
-function joinCircle(joinCode) {
-  return requestAction("incircleJoinCircle", { joinCode }).then(afterSession);
+function inviteCredentialPayload(joinCode, inviteToken) {
+  if (joinCode && typeof joinCode === "object") {
+    return {
+      joinCode: String(joinCode.joinCode || ""),
+      inviteToken: String(joinCode.inviteToken || ""),
+    };
+  }
+  return {
+    joinCode: String(joinCode || ""),
+    inviteToken: String(inviteToken || ""),
+  };
+}
+
+function joinCircle(joinCode, inviteToken) {
+  return requestAction("incircleJoinCircle", inviteCredentialPayload(joinCode, inviteToken)).then(afterSession);
 }
 
 function createCircle(circle) {
@@ -556,8 +569,8 @@ function removeCircleMember(circleId, membershipId, reason) {
   return requestAction("incircleRemoveCircleMember", { circleId, membershipId, reason });
 }
 
-function getJoinPreview(joinCode) {
-  return requestAction("incircleJoinPreview", { joinCode });
+function getJoinPreview(joinCode, inviteToken) {
+  return requestAction("incircleJoinPreview", inviteCredentialPayload(joinCode, inviteToken));
 }
 
 function getCircleSettings(circleId) {
@@ -570,6 +583,10 @@ function getCircleMember(circleId, membershipId) {
 
 function updateCircleInfo(circleId, patch) {
   return requestAction("incircleUpdateCircleInfo", { circleId, patch });
+}
+
+function rotateInviteCode(circleId) {
+  return requestAction("incircleRotateInviteCode", { circleId });
 }
 
 function getInviteQrCode(circleId) {
@@ -1331,6 +1348,7 @@ module.exports = {
   getCircleSettings,
   getCircleMember,
   updateCircleInfo,
+  rotateInviteCode,
   getInviteQrCode,
   adminOverview,
   adminListCircles,

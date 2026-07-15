@@ -8,6 +8,7 @@ const { InCircleService, __test } = require("../src/services/incircle");
 
 const ROOT = path.join(__dirname, "..", "..");
 const CIRCLE_ID = "22222222-2222-4222-8222-222222222222";
+const INVITE_TOKEN = "0123456789abcdef0123456789abcdef";
 
 function read(relativePath) {
   return fs.readFileSync(path.join(ROOT, relativePath), "utf8");
@@ -33,8 +34,8 @@ function createQrHarness(t) {
     },
     async query(sql, params) {
       const normalized = String(sql).replace(/\s+/g, " ").trim();
-      if (normalized === "SELECT id, join_code FROM incircle_circles WHERE id = $1 FOR UPDATE") {
-        return { rows: [{ id: CIRCLE_ID, join_code: "ABCDEFGH" }] };
+      if (normalized === "SELECT id, join_code, invite_token FROM incircle_circles WHERE id = $1 FOR UPDATE") {
+        return { rows: [{ id: CIRCLE_ID, join_code: "ABCDEFGH", invite_token: INVITE_TOKEN }] };
       }
       if (normalized === "SELECT * FROM incircle_circle_qr_codes WHERE circle_id = $1 LIMIT 1") {
         return { rows: qrRow ? [Object.assign({}, qrRow)] : [] };
@@ -43,9 +44,10 @@ function createQrHarness(t) {
         qrRow = {
           circle_id: params[0],
           join_code: params[1],
-          page: params[2],
-          env_version: params[3],
-          relative_path: params[4],
+          invite_token: params[2],
+          page: params[3],
+          env_version: params[4],
+          relative_path: params[5],
           created_at: qrRow ? qrRow.created_at : "2026-07-14T00:00:00.000Z",
           updated_at: "2026-07-14T00:00:00.000Z",
         };
@@ -70,6 +72,7 @@ function createQrHarness(t) {
   service.circleSettings = async () => ({
     circle: { id: CIRCLE_ID, name: "测试圈子" },
     inviteCode: "ABCDEFGH",
+    inviteToken: INVITE_TOKEN,
   });
   return {
     service,
@@ -94,6 +97,9 @@ test("one circle generates one persisted QR code and concurrent requests reuse i
   assert.equal(first.imageUrl, second.imageUrl);
   assert.deepEqual([first.reused, second.reused].sort(), [false, true]);
   assert.equal(first.envVersion, "release", "the server environment controls the stored QR code");
+  assert.equal(first.scene, INVITE_TOKEN);
+  assert.equal(first.path, `/pages/circle-join/index?token=${INVITE_TOKEN}`);
+  assert.match(harness.qrRow().relative_path, new RegExp(`invite-${INVITE_TOKEN.slice(0, 12)}-wxacode\\.png$`));
   assert.equal(fs.readdirSync(oldFolder).length, 1, "legacy duplicate files are removed");
   assert.equal(__test.usableQrCodeFile({ uploadDir: harness.uploadDir }, harness.qrRow().relative_path), true);
 });

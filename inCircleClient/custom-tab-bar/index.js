@@ -11,6 +11,7 @@ const TAB_BAR_ITEMS = [
 Component({
   data: {
     list: TAB_BAR_ITEMS,
+    hidden: false,
     themeClass: theme.getCurrentTheme().className,
     tabBarStyle: theme.getTabBarStyle(),
     currentPath: "",

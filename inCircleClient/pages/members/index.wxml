@@ -195,75 +195,91 @@
     />
   </view>
 
-  <view class="sheet-mask" wx:if="{{showEditSheet}}" bindtap="closeEditSheet" catchtouchmove="noop">
+  <view class="sheet-mask" style="bottom: 0;" wx:if="{{showEditSheet}}" bindtap="closeEditSheet" catchtouchmove="noop">
     <view class="edit-sheet" catchtap="noop">
-      <scroll-view class="edit-sheet-scroll" scroll-y enhanced show-scrollbar="{{false}}">
-        <view class="sheet-head">
-          <view>
-            <view class="sheet-kicker">编辑身份卡</view>
-            <view class="sheet-title">让圈友更快知道怎么约你</view>
-          </view>
-          <view class="sheet-close" bindtap="closeEditSheet">×</view>
+      <view class="sheet-head">
+        <view>
+          <view class="sheet-kicker">身份卡</view>
+          <view class="sheet-title">编辑圈内资料</view>
         </view>
+        <view class="sheet-close {{avatarUploading || cardSaving ? 'disabled' : ''}}" bindtap="closeEditSheet">
+          <image src="/images/ui-icons/close.svg" mode="aspectFit"></image>
+        </view>
+      </view>
 
-        <view class="profile-edit-card">
-          <button class="edit-avatar-button" open-type="chooseAvatar" bindchooseavatar="onChooseCardAvatar">
-            <image class="edit-avatar" src="{{cardDraft.avatarDisplayUrl || cardDraft.avatar}}"></image>
-            <view class="avatar-edit-hint">{{avatarUploading ? "上传中" : "换头像"}}</view>
-          </button>
-          <view class="profile-edit-main">
-            <view class="field compact-field">
-              <view class="field-label">圈内昵称</view>
-              <input class="field-input" type="nickname" adjust-position="{{true}}" cursor-spacing="96" placeholder="例如：你的昵称" value="{{cardDraft.name}}" data-field="name" bindinput="onCardInput" bindblur="onCardInput" />
+      <view class="form-grid">
+        <view class="field avatar-field-wrap">
+          <view class="field-label">圈内头像</view>
+          <view class="avatar-card {{avatarUploading || cardSaving ? 'disabled' : ''}}">
+            <view class="avatar-visual">
+              <image class="edit-avatar" src="{{cardDraft.avatarDisplayUrl || cardDraft.avatar}}"></image>
             </view>
-            <view class="profile-edit-tip">头像和昵称会同步到你的圈内身份卡。</view>
+            <view class="avatar-card-copy">
+              <view class="avatar-card-title">{{cardDraft.name || "我的圈内头像"}}</view>
+              <view class="avatar-card-note">{{avatarUploading ? "正在上传，请稍候" : "仅当前圈子可见"}}</view>
+            </view>
+            <view class="avatar-card-action">
+              <image src="/images/ui-icons/photo.svg" mode="aspectFit"></image>
+              <text>{{avatarUploading ? "上传中" : "更换"}}</text>
+            </view>
+            <button
+              class="avatar-picker-hitbox"
+              aria-label="更换圈内头像"
+              disabled="{{avatarUploading || cardSaving}}"
+              open-type="chooseAvatar"
+              bindchooseavatar="onChooseCardAvatar"
+            ></button>
           </view>
         </view>
 
         <view class="field">
-          <view class="field-label">圈内称号</view>
-          <input class="field-input" adjust-position="{{true}}" cursor-spacing="96" placeholder="例如：饭局发动机" value="{{cardDraft.title}}" data-field="title" bindinput="onCardInput" />
+          <view class="field-label">圈内昵称</view>
+          <input class="field-input" type="nickname" adjust-position="{{true}}" cursor-spacing="96" placeholder="例如：你的昵称" value="{{cardDraft.name}}" data-field="name" bindinput="onCardInput" bindblur="onCardInput" />
         </view>
 
-        <view class="field">
-          <view class="field-label">可约时间</view>
-          <input class="field-input" adjust-position="{{true}}" cursor-spacing="96" placeholder="例如：工作日晚 / 周末下午" value="{{cardDraft.availability}}" data-field="availability" bindinput="onCardInput" />
+        <view class="field-row">
+          <view class="field">
+            <view class="field-label">圈内称号</view>
+            <input class="field-input" adjust-position="{{true}}" cursor-spacing="96" placeholder="饭局发动机" value="{{cardDraft.title}}" data-field="title" bindinput="onCardInput" />
+          </view>
+          <view class="field">
+            <view class="field-label">可约时间</view>
+            <input class="field-input" adjust-position="{{true}}" cursor-spacing="96" placeholder="周末下午" value="{{cardDraft.availability}}" data-field="availability" bindinput="onCardInput" />
+          </view>
         </view>
 
         <view class="field">
           <view class="field-label">个人备注</view>
-          <textarea class="field-textarea" fixed="{{true}}" show-confirm-bar="{{false}}" adjust-position="{{true}}" adjust-keyboard-to="bottom" cursor-spacing="96" placeholder="忌口、雷点、组织偏好都可以写" value="{{cardDraft.note}}" data-field="note" bindinput="onCardInput"></textarea>
+          <textarea class="field-textarea" fixed="{{true}}" show-confirm-bar="{{false}}" adjust-position="{{true}}" adjust-keyboard-to="bottom" cursor-spacing="96" placeholder="写下忌口、组织偏好或想让圈友知道的事" value="{{cardDraft.note}}" data-field="note" bindinput="onCardInput"></textarea>
         </view>
 
         <view class="field-row">
           <view class="field">
             <view class="field-label">兴趣标签</view>
-            <textarea class="field-textarea small-textarea" fixed="{{true}}" show-confirm-bar="{{false}}" adjust-position="{{true}}" adjust-keyboard-to="bottom" cursor-spacing="96" value="{{cardDraft.tagsText}}" data-field="tagsText" bindinput="onCardInput"></textarea>
+            <input class="field-input" adjust-position="{{true}}" cursor-spacing="96" placeholder="电影、徒步" value="{{cardDraft.tagsText}}" data-field="tagsText" bindinput="onCardInput" />
           </view>
           <view class="field">
             <view class="field-label">擅长技能</view>
-            <textarea class="field-textarea small-textarea" fixed="{{true}}" show-confirm-bar="{{false}}" adjust-position="{{true}}" adjust-keyboard-to="bottom" cursor-spacing="96" value="{{cardDraft.skillsText}}" data-field="skillsText" bindinput="onCardInput"></textarea>
+            <input class="field-input" adjust-position="{{true}}" cursor-spacing="96" placeholder="摄影、组织" value="{{cardDraft.skillsText}}" data-field="skillsText" bindinput="onCardInput" />
           </view>
         </view>
 
         <view class="field-row">
           <view class="field">
             <view class="field-label">偏好</view>
-            <textarea class="field-textarea small-textarea" fixed="{{true}}" show-confirm-bar="{{false}}" adjust-position="{{true}}" adjust-keyboard-to="bottom" cursor-spacing="96" value="{{cardDraft.interestsText}}" data-field="interestsText" bindinput="onCardInput"></textarea>
+            <input class="field-input" adjust-position="{{true}}" cursor-spacing="96" placeholder="清淡、户外" value="{{cardDraft.interestsText}}" data-field="interestsText" bindinput="onCardInput" />
           </view>
           <view class="field">
             <view class="field-label">雷点 / 忌口</view>
-            <textarea class="field-textarea small-textarea" fixed="{{true}}" show-confirm-bar="{{false}}" adjust-position="{{true}}" adjust-keyboard-to="bottom" cursor-spacing="96" value="{{cardDraft.taboosText}}" data-field="taboosText" bindinput="onCardInput"></textarea>
+            <input class="field-input" adjust-position="{{true}}" cursor-spacing="96" placeholder="香菜、迟到" value="{{cardDraft.taboosText}}" data-field="taboosText" bindinput="onCardInput" />
           </view>
         </view>
+      </view>
 
-        <view class="sheet-tip">标签默认娱乐向展示，不合适时可在成员详情里删除或申诉。</view>
-        <view class="sheet-actions">
-          <view class="primary-btn sheet-submit {{avatarUploading || cardSaving ? 'disabled' : ''}}" bindtap="submitCard">
-            {{cardSaving ? '保存中...' : '保存身份卡'}}
-          </view>
-        </view>
-      </scroll-view>
+      <view class="sheet-tip">多个标签可用顿号或逗号分隔；不合适的标签可在成员详情中删除或申诉。</view>
+      <view class="primary-btn sheet-submit {{avatarUploading || cardSaving ? 'disabled' : ''}}" bindtap="submitCard">
+        {{cardSaving ? '保存中...' : avatarUploading ? '头像上传中...' : '保存身份卡'}}
+      </view>
     </view>
   </view>
 </view>

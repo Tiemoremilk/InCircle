@@ -58,6 +58,17 @@
   word-break: break-word;
 }
 
+.invite-stat-value {
+  display: block;
+  width: 100%;
+  overflow: hidden;
+  font-size: 25rpx;
+  letter-spacing: 1rpx;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  word-break: normal;
+}
+
 .stat-label {
   margin-top: 6rpx;
   color: rgba(255, 255, 255, 0.72);
@@ -135,10 +146,12 @@
 }
 
 .invite-panel-head {
+  justify-content: space-between;
   gap: 14rpx;
 }
 
 .invite-heading {
+  flex: 1;
   min-width: 0;
   gap: 14rpx;
 }
@@ -177,6 +190,36 @@
   font-size: 22rpx;
   line-height: 1.35;
   font-weight: 600;
+}
+
+.invite-rotate-action {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7rpx;
+  min-width: 108rpx;
+  height: 54rpx;
+  flex: 0 0 auto;
+  padding: 0 14rpx;
+  border: 1rpx solid var(--theme-card-active-border, rgba(47, 125, 80, 0.18));
+  border-radius: 10rpx;
+  background: var(--theme-soft, #eaf5ed);
+  color: var(--theme-primary-dark, #205f42);
+  font-size: 22rpx;
+  line-height: 1;
+  font-weight: 900;
+  box-sizing: border-box;
+}
+
+.invite-rotate-action image {
+  width: 25rpx;
+  height: 25rpx;
+  filter: var(--theme-icon-filter, none);
+}
+
+.invite-rotate-action.disabled,
+.invite-code-row.disabled {
+  opacity: 0.56;
 }
 
 .invite-code-row {

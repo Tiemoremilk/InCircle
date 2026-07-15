@@ -36,6 +36,26 @@ function rgbaText(value) {
   return `rgba(${rgba.r}, ${rgba.g}, ${rgba.b}, ${rgba.a})`;
 }
 
+function customThemePreview(value) {
+  const rgba = theme.normalizeCustomThemeRgba(value, theme.DEFAULT_CUSTOM_THEME_RGBA);
+  const generated = theme.buildCustomTheme(rgba);
+  const hex = `#${[rgba.r, rgba.g, rgba.b].map((channel) => channel.toString(16).padStart(2, "0")).join("")}`.toUpperCase();
+  return {
+    customThemePreviewHex: hex,
+    customThemeRgbText: `RGB ${rgba.r} · ${rgba.g} · ${rgba.b}`,
+    customThemePreviewStyle: `background: rgba(${rgba.r}, ${rgba.g}, ${rgba.b}, ${rgba.a});`,
+    customThemeHeroStyle: `background: linear-gradient(135deg, ${generated.primaryDark} 0%, ${generated.primary} 68%, ${generated.accent} 160%);`,
+    customThemePrimaryStyle: `background: ${generated.primary};`,
+    customThemeDarkStyle: `background: ${generated.primaryDark};`,
+    customThemeAccentStyle: `background: ${generated.accent};`,
+    customThemeStageButtonStyle: `color: ${generated.primaryDark};`,
+    customThemeAlphaStyle: `background: ${generated.pageBg}; color: ${generated.primaryDark};`,
+    customThemeActionStyle: `background: linear-gradient(135deg, ${generated.primary}, ${generated.primaryDark});`,
+  };
+}
+
+const DEFAULT_CUSTOM_THEME_PREVIEW = customThemePreview(theme.DEFAULT_CUSTOM_THEME_RGBA);
+
 function decorateCircle(circle) {
   return Object.assign({}, circle, {
     lastEnteredText: circle.lastEnteredAt ? `最近进入 ${time.displayDateTime(circle.lastEnteredAt)}` : "尚未进入",
@@ -69,9 +89,7 @@ Page({
     themeSaving: false,
     customThemeOpen: false,
     customThemeDraft: customThemeDraft(theme.DEFAULT_CUSTOM_THEME_RGBA),
-    customThemePreviewHex: "#2f8259",
-    customThemePreviewText: "rgba(47, 130, 89, 1)",
-    customThemePreviewStyle: "background: rgba(47, 130, 89, 1);",
+    ...DEFAULT_CUSTOM_THEME_PREVIEW,
     showPasswordForm: false,
     currentPassword: "",
     newPassword: "",
@@ -284,23 +302,21 @@ Page({
 
   updateCustomThemeDraft(draft, options) {
     const rgba = customThemeRgba(draft);
-    const previewText = rgbaText(draft);
+    const previewRgba = rgbaText(draft);
     const currentOptions = Array.isArray(this.data.themeOptions) ? this.data.themeOptions : [];
     const customIndex = currentOptions.findIndex((item) => item.key === theme.CUSTOM_THEME_KEY);
     const nextData = {
       customThemeOpen: options && options.open ? true : this.data.customThemeOpen,
       customThemeDraft: customThemeDraft(rgba),
-      customThemePreviewHex: rgbHex(draft),
-      customThemePreviewText: previewText,
-      customThemePreviewStyle: `background: ${previewText};`,
+      ...customThemePreview(rgba),
     };
     if (customIndex >= 0) {
-      nextData[`themeOptions[${customIndex}].swatch`] = previewText;
+      nextData[`themeOptions[${customIndex}].swatch`] = previewRgba;
     } else {
       nextData.themeOptions = theme
         .getThemeOptions(theme.getCurrentTheme().key, { includeCustom: true })
         .map((item) => item.key === theme.CUSTOM_THEME_KEY
-          ? Object.assign({}, item, { swatch: previewText })
+          ? Object.assign({}, item, { swatch: previewRgba })
           : item);
     }
     this.setData(nextData);
@@ -332,7 +348,7 @@ Page({
     const previousCustomTheme = theme.getCustomThemeRgba();
     theme.setTheme(theme.CUSTOM_THEME_KEY, rgba);
     theme.applyPageTheme(this);
-    this.setData({ customThemeOpen: false, themeSaving: true });
+    this.setData({ themeSaving: true });
     api
       .updateTheme(theme.CUSTOM_THEME_KEY, rgba)
       .then((result) => {
@@ -341,6 +357,7 @@ Page({
         theme.applyPageTheme(this);
         this.setData({
           user: Object.assign({}, this.data.user || {}, { themeKey: theme.CUSTOM_THEME_KEY, customTheme: saved }),
+          customThemeOpen: false,
         });
         wx.showToast({ title: "自定义主题已应用", icon: "none" });
       })

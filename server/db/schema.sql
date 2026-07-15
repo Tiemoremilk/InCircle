@@ -53,7 +53,8 @@ CREATE TABLE IF NOT EXISTS incircle_users (
 CREATE TABLE IF NOT EXISTS incircle_circles (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   owner_user_id uuid REFERENCES incircle_users(id) ON DELETE SET NULL,
-  join_code text UNIQUE,
+  join_code text,
+  invite_token text NOT NULL,
   name text NOT NULL,
   notice text NOT NULL DEFAULT '',
   slogan text NOT NULL DEFAULT '',
@@ -71,6 +72,7 @@ CREATE TABLE IF NOT EXISTS incircle_circles (
 CREATE TABLE IF NOT EXISTS incircle_circle_qr_codes (
   circle_id uuid PRIMARY KEY REFERENCES incircle_circles(id) ON DELETE CASCADE,
   join_code text NOT NULL,
+  invite_token text,
   page text NOT NULL,
   env_version text NOT NULL,
   relative_path text NOT NULL UNIQUE,
@@ -273,6 +275,7 @@ ALTER TABLE incircle_users
 
 ALTER TABLE incircle_circles ADD COLUMN IF NOT EXISTS owner_user_id uuid REFERENCES incircle_users(id) ON DELETE SET NULL;
 ALTER TABLE incircle_circles ADD COLUMN IF NOT EXISTS join_code text;
+ALTER TABLE incircle_circles ADD COLUMN IF NOT EXISTS invite_token text;
 ALTER TABLE incircle_circles ADD COLUMN IF NOT EXISTS name text NOT NULL DEFAULT '新的熟人圈';
 ALTER TABLE incircle_circles ADD COLUMN IF NOT EXISTS notice text NOT NULL DEFAULT '';
 ALTER TABLE incircle_circles ADD COLUMN IF NOT EXISTS slogan text NOT NULL DEFAULT '';
@@ -482,13 +485,77 @@ UPDATE incircle_users SET openid = NULL WHERE openid = '';
 UPDATE incircle_users SET account_key = NULL WHERE account_key = '';
 UPDATE incircle_circles SET join_code = NULL WHERE join_code = '';
 
+DO $$
+DECLARE
+  target record;
+  candidate text;
+BEGIN
+  FOR target IN
+    SELECT id
+    FROM incircle_circles
+    WHERE join_code IS NULL
+       OR char_length(join_code) <> 8
+       OR join_code !~ '^[A-Za-z0-9@#￥%&]{8}$'
+  LOOP
+    LOOP
+      candidate := upper(substr(replace(gen_random_uuid()::text, '-', ''), 1, 8));
+      EXIT WHEN NOT EXISTS (
+        SELECT 1
+        FROM incircle_circles
+        WHERE (join_code COLLATE "C") = (candidate COLLATE "C")
+      );
+    END LOOP;
+    UPDATE incircle_circles SET join_code = candidate WHERE id = target.id;
+  END LOOP;
+
+  FOR target IN
+    SELECT id
+    FROM incircle_circles
+    WHERE invite_token IS NULL
+       OR invite_token !~ '^[a-f0-9]{32}$'
+  LOOP
+    LOOP
+      candidate := replace(gen_random_uuid()::text, '-', '');
+      EXIT WHEN NOT EXISTS (
+        SELECT 1 FROM incircle_circles WHERE invite_token = candidate
+      );
+    END LOOP;
+    UPDATE incircle_circles SET invite_token = candidate WHERE id = target.id;
+  END LOOP;
+END $$;
+
+ALTER TABLE incircle_circles
+  ALTER COLUMN join_code SET NOT NULL,
+  ALTER COLUMN invite_token SET NOT NULL;
+
+ALTER TABLE incircle_circles DROP CONSTRAINT IF EXISTS chk_incircle_circle_join_code;
+ALTER TABLE incircle_circles
+  ADD CONSTRAINT chk_incircle_circle_join_code
+  CHECK (char_length(join_code) = 8 AND join_code ~ '^[A-Za-z0-9@#￥%&]{8}$');
+
+ALTER TABLE incircle_circles DROP CONSTRAINT IF EXISTS chk_incircle_circle_invite_token;
+ALTER TABLE incircle_circles
+  ADD CONSTRAINT chk_incircle_circle_invite_token
+  CHECK (invite_token ~ '^[a-f0-9]{32}$');
+
+ALTER TABLE incircle_circle_qr_codes ADD COLUMN IF NOT EXISTS invite_token text;
+ALTER TABLE incircle_circle_qr_codes DROP CONSTRAINT IF EXISTS chk_incircle_circle_qr_invite_token;
+DELETE FROM incircle_circle_qr_codes WHERE invite_token IS NULL;
+ALTER TABLE incircle_circle_qr_codes ALTER COLUMN invite_token SET NOT NULL;
+ALTER TABLE incircle_circle_qr_codes
+  ADD CONSTRAINT chk_incircle_circle_qr_invite_token
+  CHECK (invite_token ~ '^[a-f0-9]{32}$');
+
 CREATE INDEX IF NOT EXISTS idx_incircle_users_openid ON incircle_users(openid);
 CREATE INDEX IF NOT EXISTS idx_incircle_users_account_key ON incircle_users(account_key);
 CREATE INDEX IF NOT EXISTS idx_incircle_circles_join_code ON incircle_circles(join_code);
 CREATE INDEX IF NOT EXISTS idx_incircle_circles_owner_user_id ON incircle_circles(owner_user_id);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_incircle_users_openid ON incircle_users(openid);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_incircle_users_account_key ON incircle_users(account_key);
-CREATE UNIQUE INDEX IF NOT EXISTS uq_incircle_circles_join_code ON incircle_circles(join_code);
+ALTER TABLE incircle_circles DROP CONSTRAINT IF EXISTS incircle_circles_join_code_key;
+DROP INDEX IF EXISTS uq_incircle_circles_join_code;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_incircle_circles_join_code_case ON incircle_circles ((join_code COLLATE "C"));
+CREATE UNIQUE INDEX IF NOT EXISTS uq_incircle_circles_invite_token ON incircle_circles(invite_token);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_incircle_members_circle_user ON incircle_circle_members(circle_id, user_id);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_incircle_member_cards_circle_user ON incircle_member_cards(circle_id, user_id);
 CREATE INDEX IF NOT EXISTS idx_incircle_members_circle_status ON incircle_circle_members(circle_id, status);

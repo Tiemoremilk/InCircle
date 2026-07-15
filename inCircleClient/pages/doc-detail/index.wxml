@@ -2,7 +2,7 @@
 <view class="page doc-detail-page {{themeClass}}" wx:if="{{ready}}">
   <view class="doc-hero motion-hero">
     <view class="doc-hero-top">
-      <view class="pill {{doc.pillClass}}">{{doc.pillText}}</view>
+      <view class="pill hero-pill {{doc.pillClass}}">{{doc.pillText}}</view>
       <view class="hero-inline-actions">
         <view class="read-time">{{doc.readTime}}</view>
         <view wx:if="{{doc.canEdit}}" class="detail-edit-action" bindtap="editDoc">编辑</view>

@@ -1854,11 +1854,6 @@ button.disabled,
   box-shadow: 0 10rpx 24rpx var(--theme-button-shadow, rgba(47, 125, 80, 0.12));
 }
 
-.page .edit-avatar-button {
-  background: var(--theme-soft, #eaf5ed);
-  color: var(--theme-primary, #2f7d50);
-}
-
 .page .invite-code,
 .page .invite-row,
 .page .qr-panel,
@@ -1883,4 +1878,22 @@ button.disabled,
 .page .sticky-actions {
   background: rgba(252, 253, 250, 0.94);
   border-top-color: rgba(47, 125, 80, 0.1);
+}
+
+/* Pills on themed hero surfaces need a stable contrast treatment. */
+.page .hero-pill,
+.page .hero-pill.pill-green,
+.page .hero-pill.pill-blue,
+.page .hero-pill.pill-amber,
+.page .hero-pill.pill-red {
+  min-height: 44rpx;
+  padding: 0 17rpx;
+  border: 1rpx solid rgba(255, 255, 255, 0.5);
+  background: rgba(255, 255, 255, 0.17);
+  color: #ffffff;
+  box-shadow: inset 0 1rpx 0 rgba(255, 255, 255, 0.2);
+  font-size: 22rpx;
+  line-height: 42rpx;
+  font-weight: 800;
+  text-shadow: 0 1rpx 2rpx rgba(18, 30, 25, 0.16);
 }

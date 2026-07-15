@@ -2,7 +2,7 @@
 <view class="page checkin-detail-page {{themeClass}}" wx:if="{{ready}}">
   <view class="checkin-hero motion-hero">
     <view class="hero-row">
-      <view class="pill pill-green">{{checkin.type}}</view>
+      <view class="pill hero-pill pill-green">{{checkin.type}}</view>
       <view class="hero-inline-actions">
         <view class="checkin-hero-state {{checkin.statusClass}}">
           <view class="checkin-hero-state-dot"></view>

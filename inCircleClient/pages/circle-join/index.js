@@ -1,9 +1,11 @@
 const api = require("../../utils/api");
+const invite = require("../../utils/invite");
 
 Page({
   data: {
     loading: true,
     joinCode: "",
+    inviteToken: "",
     circle: null,
     hasPreview: false,
     joining: false,
@@ -12,21 +14,34 @@ Page({
   },
 
   onLoad(options) {
-    const scene = options && options.scene ? decodeURIComponent(options.scene) : "";
-    const code = (options && options.code) || scene || "";
-    this.setData({ joinCode: this.normalizeCode(code) });
+    const credential = invite.parseInviteOptions(options);
+    this.setData({
+      joinCode: credential.joinCode,
+      inviteToken: credential.inviteToken,
+    });
     this.loadPreview();
   },
 
   normalizeCode(value) {
-    return String(value || "")
-      .toUpperCase()
-      .replace(/[^A-Z0-9]/g, "")
-      .slice(0, 8);
+    return invite.normalizeJoinCode(value);
+  },
+
+  hasInviteCredential() {
+    return !!(this.data.inviteToken || this.data.joinCode);
+  },
+
+  invitePayload() {
+    return this.data.inviteToken
+      ? { joinCode: "", inviteToken: this.data.inviteToken }
+      : { joinCode: this.data.joinCode, inviteToken: "" };
+  },
+
+  loginInviteQuery() {
+    return invite.inviteQuery(this.data.joinCode, this.data.inviteToken);
   },
 
   loadPreview() {
-    if (!this.data.joinCode) {
+    if (!this.hasInviteCredential()) {
       this.setData({
         circle: null,
         hasPreview: false,
@@ -36,9 +51,10 @@ Page({
     }
     this.setData({ previewing: true });
     api
-      .getJoinPreview(this.data.joinCode)
+      .getJoinPreview(this.invitePayload())
       .then((preview) => {
         this.setData({
+          joinCode: preview.joinCode || this.data.joinCode,
           circle: preview.circle,
           hasPreview: !!preview.circle,
           loading: false,
@@ -63,12 +79,13 @@ Page({
   onCodeInput(e) {
     this.setData({
       joinCode: this.normalizeCode(e.detail.value),
+      inviteToken: "",
     });
   },
 
   previewCode() {
     if (this.data.previewing || this.data.joining) return;
-    if (!this.data.joinCode) {
+    if (!this.hasInviteCredential()) {
       wx.showToast({
         title: "请输入邀请码",
         icon: "none",
@@ -80,7 +97,7 @@ Page({
 
   joinCircle() {
     if (this.data.joining || this.data.previewing) return;
-    if (!this.data.joinCode) {
+    if (!this.hasInviteCredential()) {
       wx.showToast({
         title: "请输入邀请码",
         icon: "none",
@@ -92,7 +109,7 @@ Page({
       joinButtonText: "加入中...",
     });
     api
-      .joinCircle(this.data.joinCode)
+      .joinCircle(this.invitePayload())
       .then(() => {
         wx.showToast({
           title: "已加入圈子",
@@ -105,8 +122,7 @@ Page({
       .catch((error) => {
         const message = error.message || "加入失败";
         if (/登录|绑定/.test(message)) {
-          const codeQuery = this.data.joinCode ? `?code=${this.data.joinCode}` : "";
-          wx.redirectTo({ url: `/pages/login/index${codeQuery}` });
+          wx.redirectTo({ url: `/pages/login/index${this.loginInviteQuery()}` });
           return;
         }
         wx.showToast({

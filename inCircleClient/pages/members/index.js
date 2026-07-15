@@ -122,7 +122,7 @@ function decorateScoreLogs(logs) {
 }
 
 function listToText(list) {
-  return (list || []).join("\n");
+  return (list || []).join("、");
 }
 
 function textToList(text) {
@@ -209,7 +209,22 @@ Page({
   },
 
   onShow() {
+    this.setTabBarHidden(!!this.data.showEditSheet);
     this.loadMembers();
+  },
+
+  onHide() {
+    this.setTabBarHidden(false);
+  },
+
+  onUnload() {
+    this.setTabBarHidden(false);
+  },
+
+  setTabBarHidden(hidden) {
+    const tabBar = typeof this.getTabBar === "function" ? this.getTabBar() : null;
+    if (!tabBar || typeof tabBar.setData !== "function" || tabBar.data.hidden === !!hidden) return;
+    tabBar.setData({ hidden: !!hidden });
   },
 
   loadMembers() {
@@ -261,6 +276,7 @@ Page({
   },
 
   editCard() {
+    this.setTabBarHidden(true);
     this.setData({
       showEditSheet: true,
       cardDraft: draftFromCard(this.data.myCard),
@@ -268,9 +284,10 @@ Page({
   },
 
   closeEditSheet() {
+    if (this.data.avatarUploading || this.data.cardSaving) return;
     this.setData({
       showEditSheet: false,
-    });
+    }, () => this.setTabBarHidden(false));
   },
 
   noop() {},
@@ -367,7 +384,7 @@ Page({
         cardDraft: draftFromCard(data.myCard),
         showEditSheet: false,
         cardSaving: false,
-      });
+      }, () => this.setTabBarHidden(false));
       wx.showToast({
         title: "身份卡已更新",
         icon: "success",

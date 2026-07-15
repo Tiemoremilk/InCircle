@@ -6,7 +6,7 @@
         <view class="eyebrow">圈子设置</view>
         <view class="hero-title">{{circle.name}}</view>
       </view>
-      <view class="pill {{circle.roleClass}}">{{circle.role}}</view>
+      <view class="pill hero-pill {{circle.roleClass}}">{{circle.role}}</view>
     </view>
     <view class="hero-copy">{{circle.slogan}}</view>
     <view class="stats">
@@ -15,7 +15,7 @@
         <view class="stat-label">成员</view>
       </view>
       <view class="stat">
-        <view class="stat-value">{{inviteCode}}</view>
+        <view class="stat-value invite-stat-value">{{inviteCode}}</view>
         <view class="stat-label">邀请码</view>
       </view>
       <view class="stat">
@@ -59,9 +59,17 @@
               <view class="invite-subtitle">把入口发给认识的人</view>
             </view>
           </view>
+          <view
+            wx:if="{{canManage}}"
+            class="invite-rotate-action {{inviteCodeRotating || inviteQrLoading || inviteQrSaving ? 'disabled' : ''}}"
+            catchtap="rotateInviteCode"
+          >
+            <image src="/images/ui-icons/switch.png" mode="aspectFit"></image>
+            <text>{{inviteCodeRotating ? "更换中" : "更换"}}</text>
+          </view>
         </view>
 
-        <view class="invite-code-row" bindtap="copyInviteCode">
+        <view class="invite-code-row {{inviteCodeRotating ? 'disabled' : ''}}" bindtap="copyInviteCode">
           <view class="invite-code-main">
             <view class="invite-code-label">邀请码</view>
             <view class="invite-code">{{inviteCode}}</view>
@@ -73,11 +81,11 @@
         </view>
 
         <view class="invite-actions">
-          <button class="invite-action invite-action-primary share-button" open-type="share" hover-class="none">
+          <button class="invite-action invite-action-primary share-button {{inviteCodeRotating ? 'disabled' : ''}}" disabled="{{inviteCodeRotating}}" open-type="share" hover-class="none">
             <image class="invite-action-icon" src="/images/ui-icons/share.svg" mode="aspectFit"></image>
             <text class="invite-action-label">分享卡片</text>
           </button>
-          <view class="invite-action invite-action-secondary {{inviteQrLoading ? 'disabled' : ''}}" bindtap="handleInviteQrAction">
+          <view class="invite-action invite-action-secondary {{inviteQrLoading || inviteCodeRotating ? 'disabled' : ''}}" bindtap="handleInviteQrAction">
             <image class="invite-action-icon" src="/images/ui-icons/qr-code.svg" mode="aspectFit"></image>
             <text class="invite-action-label">{{inviteQrButtonText}}</text>
           </view>

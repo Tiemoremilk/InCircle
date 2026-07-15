@@ -2,6 +2,7 @@ const api = require("../../utils/api");
 const theme = require("../../utils/theme");
 const avatar = require("../../utils/avatar");
 const dialog = require("../../utils/dialog");
+const invite = require("../../utils/invite");
 
 function normalizePhone(value) {
   return String(value || "").replace(/[^\d]/g, "").slice(0, 11);
@@ -102,14 +103,16 @@ Page({
     themePreferenceExplicit: false,
     themeClass: "",
     themeOptions: [],
+    nextInviteToken: "",
   },
 
   onLoad(options) {
     theme.applyPageTheme(this);
     const meta = modeMeta("login");
-    const scene = options && options.scene ? decodeURIComponent(options.scene) : "";
+    const credential = invite.parseInviteOptions(options);
     this.setData({
-      nextCode: (options && options.code) || scene || "",
+      nextCode: credential.joinCode,
+      nextInviteToken: credential.inviteToken,
       modeCopy: meta.copy,
       heroCopy: meta.hero,
     });
@@ -523,9 +526,15 @@ Page({
   },
 
   goNext(session) {
+    if (this.data.nextInviteToken) {
+      wx.redirectTo({
+        url: `/pages/circle-join/index${invite.inviteQuery("", this.data.nextInviteToken)}`,
+      });
+      return;
+    }
     if (this.data.nextCode) {
       wx.redirectTo({
-        url: `/pages/circle-join/index?code=${this.data.nextCode}`,
+        url: `/pages/circle-join/index${invite.inviteQuery(this.data.nextCode, "")}`,
       });
       return;
     }

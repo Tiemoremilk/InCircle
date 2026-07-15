@@ -4,7 +4,7 @@
     <image class="hero-avatar" src="{{member.avatar}}"></image>
     <view class="identity-main">
       <view class="hero-top">
-        <view class="pill {{member.roleClass}}">{{member.role}}</view>
+        <view class="pill hero-pill {{member.roleClass}}">{{member.role}}</view>
         <view class="safe-chip">娱乐标签可删除</view>
       </view>
       <view class="identity-title">{{member.name}} · {{member.title}}</view>

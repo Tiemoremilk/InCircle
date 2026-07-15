@@ -4,7 +4,7 @@
     <view class="hero-topline">
       <view class="activity-type">{{activity.type}}</view>
       <view class="hero-inline-actions">
-        <view class="pill {{activity.statusClass}}">{{activity.status}}</view>
+        <view class="pill hero-pill {{activity.statusClass}}">{{activity.status}}</view>
         <view wx:if="{{activity.canEdit}}" class="detail-edit-action" bindtap="editActivity">编辑</view>
       </view>
     </view>

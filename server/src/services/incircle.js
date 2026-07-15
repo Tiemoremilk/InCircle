@@ -20,8 +20,10 @@ const { createMiniProgramCode, exchangeWechatLoginCode } = require("./wechat");
 const PASSWORD_ITERATIONS = 310000;
 const PASSWORD_KEY_LENGTH = 32;
 const PASSWORD_DIGEST = "sha256";
-const JOIN_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+const JOIN_CODE_ALPHABET = Array.from("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789@#￥%&");
 const JOIN_CODE_LENGTH = 8;
+const JOIN_CODE_PATTERN = /^[A-Za-z0-9@#￥%&]{8}$/;
+const INVITE_TOKEN_PATTERN = /^[a-f0-9]{32}$/;
 const MAX_OWNED_CIRCLES_PER_USER = 10;
 const FRIENDLY_TAG_THRESHOLD = 2;
 const FRIENDLY_TAG_SCORE = 1;
@@ -343,17 +345,35 @@ function publicAdminUser(row, options) {
 function createJoinCode() {
   let code = "";
   for (let i = 0; i < JOIN_CODE_LENGTH; i++) {
-    code += JOIN_CODE_ALPHABET[Math.floor(Math.random() * JOIN_CODE_ALPHABET.length)];
+    code += JOIN_CODE_ALPHABET[crypto.randomInt(0, JOIN_CODE_ALPHABET.length)];
   }
   return code;
 }
 
 function normalizeJoinCode(value) {
-  return String(value || "")
-    .trim()
-    .toUpperCase()
-    .replace(/[^A-Z0-9]/g, "")
-    .slice(0, JOIN_CODE_LENGTH);
+  return String(value || "").trim();
+}
+
+function isValidJoinCode(value) {
+  return JOIN_CODE_PATTERN.test(normalizeJoinCode(value));
+}
+
+function createInviteToken() {
+  return crypto.randomBytes(16).toString("hex");
+}
+
+function normalizeInviteToken(value) {
+  return String(value || "").trim();
+}
+
+function isValidInviteToken(value) {
+  return INVITE_TOKEN_PATTERN.test(normalizeInviteToken(value));
+}
+
+function invitePagePath(inviteToken, pageValue) {
+  const page = `/${String(pageValue || "pages/circle-join/index").replace(/^\/+/, "")}`;
+  if (isValidInviteToken(inviteToken)) return `${page}?token=${encodeURIComponent(inviteToken)}`;
+  return page;
 }
 
 function safeFilePart(value, fallback) {
@@ -472,14 +492,15 @@ function publicInviteQrCode(config, request, circle, row, reused) {
   const imageUrl = publicUrl(config, path.posix.join("uploads", relativePath), request);
   const page = row.page || "pages/circle-join/index";
   const joinCode = row.join_code || circle.join_code || "";
+  const inviteToken = row.invite_token || circle.invite_token || "";
   return {
     joinCode,
     page,
-    path: `/${page}?code=${joinCode}`,
+    path: invitePagePath(inviteToken, page),
     fileID: "",
     imageUrl,
     url: imageUrl,
-    scene: joinCode,
+    scene: inviteToken,
     envVersion: row.env_version || "release",
     kind: "wechat-miniprogram-code",
     reused: !!reused,
@@ -2340,8 +2361,51 @@ class InCircleService {
   async createUniqueJoinCode() {
     for (let i = 0; i < 20; i++) {
       const code = createJoinCode();
-      const existed = await this.db.query("SELECT id FROM incircle_circles WHERE join_code = $1 LIMIT 1", [code]);
+      const existed = await this.db.query(
+        'SELECT id FROM incircle_circles WHERE (join_code COLLATE "C") = ($1::text COLLATE "C") LIMIT 1',
+        [code]
+      );
       if (!existed.rows.length) return code;
+    }
+    throw new AppError("邀请码生成失败，请重试", { statusCode: 500, errCode: "JOIN_CODE_FAILED" });
+  }
+
+  async createUniqueInviteToken() {
+    for (let i = 0; i < 20; i++) {
+      const token = createInviteToken();
+      const existed = await this.db.query("SELECT id FROM incircle_circles WHERE invite_token = $1 LIMIT 1", [token]);
+      if (!existed.rows.length) return token;
+    }
+    throw new AppError("邀请入口生成失败，请重试", { statusCode: 500, errCode: "INVITE_TOKEN_FAILED" });
+  }
+
+  async updateCircleInviteCredentials(circleId) {
+    const savepoint = "incircle_invite_rotation_attempt";
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      const joinCode = await this.createUniqueJoinCode();
+      const inviteToken = await this.createUniqueInviteToken();
+      await this.db.query(`SAVEPOINT ${savepoint}`);
+      try {
+        const result = await this.db.query(
+          `
+          UPDATE incircle_circles
+          SET join_code = $2, invite_token = $3, updated_at = now()
+          WHERE id = $1
+          RETURNING join_code, invite_token
+          `,
+          [circleId, joinCode, inviteToken]
+        );
+        await this.db.query(`RELEASE SAVEPOINT ${savepoint}`);
+        if (!result.rows.length) {
+          throw new AppError("圈子不存在", { statusCode: 404, errCode: "CIRCLE_NOT_FOUND" });
+        }
+        return result.rows[0];
+      } catch (error) {
+        await this.db.query(`ROLLBACK TO SAVEPOINT ${savepoint}`).catch(() => {});
+        await this.db.query(`RELEASE SAVEPOINT ${savepoint}`).catch(() => {});
+        if (error && error.code === "23505") continue;
+        throw error;
+      }
     }
     throw new AppError("邀请码生成失败，请重试", { statusCode: 500, errCode: "JOIN_CODE_FAILED" });
   }
@@ -2498,25 +2562,33 @@ class InCircleService {
         }
       }
 
-      const joinCode = await this.createUniqueJoinCode();
-      const circleResult = await this.db.query(
-        `
-        INSERT INTO incircle_circles (
-          owner_user_id, join_code, name, notice, slogan, status, member_count, raw_data
-        )
-        VALUES ($1, $2, $3, $4, $5, 'active', 1, $6::jsonb)
-        RETURNING *
-        `,
-        [
-          auth.user.id,
-          joinCode,
-          String(incoming.name || "新的熟人圈").trim() || "新的熟人圈",
-          String(incoming.notice || "欢迎加入新圈子。").trim(),
-          String(incoming.slogan || "把活动、AA、投票和资料放回一个有秩序的地方。").trim(),
-          JSON.stringify({ ownerOpenid: auth.identity.openid, ownerName: auth.user.nickname || "微信用户" }),
-        ]
-      );
-      const circle = circleResult.rows[0];
+      const circleName = String(incoming.name || "新的熟人圈").trim() || "新的熟人圈";
+      const circleNotice = String(incoming.notice || "欢迎加入新圈子。").trim();
+      const circleSlogan = String(incoming.slogan || "把活动、AA、投票和资料放回一个有秩序的地方。").trim();
+      const circleMetadata = JSON.stringify({
+        ownerOpenid: auth.identity.openid,
+        ownerName: auth.user.nickname || "微信用户",
+      });
+      let circle = null;
+      for (let attempt = 0; attempt < 20 && !circle; attempt += 1) {
+        const joinCode = await this.createUniqueJoinCode();
+        const inviteToken = await this.createUniqueInviteToken();
+        const circleResult = await this.db.query(
+          `
+          INSERT INTO incircle_circles (
+            owner_user_id, join_code, invite_token, name, notice, slogan, status, member_count, raw_data
+          )
+          VALUES ($1, $2, $3, $4, $5, $6, 'active', 1, $7::jsonb)
+          ON CONFLICT DO NOTHING
+          RETURNING *
+          `,
+          [auth.user.id, joinCode, inviteToken, circleName, circleNotice, circleSlogan, circleMetadata]
+        );
+        circle = circleResult.rows[0] || null;
+      }
+      if (!circle) {
+        throw new AppError("邀请码生成失败，请重试", { statusCode: 500, errCode: "JOIN_CODE_FAILED" });
+      }
       const memberIdText = await reserveCircleMemberNumber(this.db, circle.id);
       const membership = await this.db.query(
         `
@@ -2597,23 +2669,49 @@ class InCircleService {
     });
   }
 
+  async findCircleByInvite(body, options) {
+    const inviteToken = normalizeInviteToken(body && body.inviteToken);
+    const joinCode = normalizeJoinCode(body && body.joinCode);
+    const required = !!(options && options.required);
+    if (inviteToken) {
+      if (!isValidInviteToken(inviteToken)) {
+        throw new AppError("邀请入口格式无效", { statusCode: 400, errCode: "INVALID_INVITE_TOKEN" });
+      }
+      const result = await this.db.query("SELECT * FROM incircle_circles WHERE invite_token = $1 LIMIT 1", [inviteToken]);
+      return { inviteToken, joinCode: result.rows[0] ? result.rows[0].join_code || "" : "", circle: result.rows[0] || null };
+    }
+    if (!joinCode) {
+      if (required) throw new AppError("请输入邀请码", { statusCode: 400, errCode: "JOIN_CODE_REQUIRED" });
+      return { inviteToken: "", joinCode: "", circle: null };
+    }
+    if (!isValidJoinCode(joinCode)) {
+      throw new AppError("邀请码应为 8 位，并严格区分大小写", { statusCode: 400, errCode: "INVALID_JOIN_CODE" });
+    }
+    const result = await this.db.query(
+      'SELECT * FROM incircle_circles WHERE (join_code COLLATE "C") = ($1::text COLLATE "C") LIMIT 1',
+      [joinCode]
+    );
+    return { inviteToken: "", joinCode, circle: result.rows[0] || null };
+  }
+
   async joinPreview(body) {
-    const joinCode = normalizeJoinCode(body.joinCode);
-    if (!joinCode) return { joinCode, circle: null };
-    const result = await this.db.query("SELECT * FROM incircle_circles WHERE join_code = $1 LIMIT 1", [joinCode]);
+    const invite = await this.findCircleByInvite(body, { required: false });
     return {
-      joinCode,
-      circle: result.rows[0] ? publicCircle(result.rows[0], null, "") : null,
+      joinCode: invite.circle ? invite.circle.join_code || invite.joinCode : invite.joinCode,
+      circle: invite.circle ? publicCircle(invite.circle, null, "") : null,
     };
   }
 
   async joinCircle(body) {
     const auth = await this.requireUser(body);
-    const joinCode = normalizeJoinCode(body.joinCode);
-    if (!joinCode) throw new AppError("请输入邀请码", { statusCode: 400, errCode: "JOIN_CODE_REQUIRED" });
-    const circleResult = await this.db.query("SELECT * FROM incircle_circles WHERE join_code = $1 LIMIT 1", [joinCode]);
-    const circle = circleResult.rows[0];
-    if (!circle) throw new AppError("没有找到这个圈子", { statusCode: 404, errCode: "CIRCLE_NOT_FOUND" });
+    const invite = await this.findCircleByInvite(body, { required: true });
+    const circle = invite.circle;
+    if (!circle) {
+      throw new AppError(invite.inviteToken ? "邀请入口已失效" : "没有找到这个圈子", {
+        statusCode: 404,
+        errCode: "CIRCLE_NOT_FOUND",
+      });
+    }
     if (circle.status !== "active") throw new AppError("这个圈子暂时不能加入", { statusCode: 403, errCode: "CIRCLE_DISABLED" });
     return this.db.withTransaction(async () => {
       const existingMembership = await this.db.query(
@@ -2715,6 +2813,8 @@ class InCircleService {
       canExit: !!(membership && !isOwnerRole(membership.role)),
       canDissolve: !!(membership && isOwnerRole(membership.role)),
       inviteCode: circle.join_code || "",
+      inviteToken: circle.invite_token || "",
+      invitePath: invitePagePath(circle.invite_token),
     };
   }
 
@@ -2800,6 +2900,55 @@ class InCircleService {
     );
     await this.logOperation(circleId, auth, "更新圈子资料", "circle", circleId, patch);
     return this.circleSettings(Object.assign({}, body, { circleId }));
+  }
+
+  async rotateInviteCode(body) {
+    const auth = await this.requireUser(body);
+    const circleId = String(body.circleId || "");
+    if (!isUuid(circleId)) {
+      throw new AppError("圈子参数无效", { statusCode: 400, errCode: "INVALID_CIRCLE_ID" });
+    }
+    const rotated = await this.db.withTransaction(async () => {
+      const circleResult = await this.db.query(
+        "SELECT id, name, join_code, invite_token FROM incircle_circles WHERE id = $1 FOR UPDATE",
+        [circleId]
+      );
+      const circle = circleResult.rows[0];
+      if (!circle) throw new AppError("圈子不存在", { statusCode: 404, errCode: "CIRCLE_NOT_FOUND" });
+      const membershipResult = await this.db.query(
+        "SELECT role FROM incircle_circle_members WHERE circle_id = $1 AND user_id = $2 AND status = 'active' LIMIT 1",
+        [circleId, auth.user.id]
+      );
+      const membership = membershipResult.rows[0];
+      const platformSuperAdmin = this.isSuperAdmin(auth.identity.openid, auth.user);
+      if (!platformSuperAdmin && !(membership && canManageRole(membership.role))) {
+        throw new AppError("只有圈主或超管可以更换邀请码", { statusCode: 403, errCode: "FORBIDDEN" });
+      }
+
+      const qrResult = await this.db.query(
+        "SELECT relative_path FROM incircle_circle_qr_codes WHERE circle_id = $1 LIMIT 1",
+        [circleId]
+      );
+      await this.updateCircleInviteCredentials(circleId);
+      await this.db.query("DELETE FROM incircle_circle_qr_codes WHERE circle_id = $1", [circleId]);
+      await this.logOperation(circleId, auth, "更换圈子邀请码", "circle", circleId, {
+        hadQrCode: !!qrResult.rows[0],
+      });
+      return {
+        oldQrPath: qrResult.rows[0] ? managedUploadRelativePath(qrResult.rows[0].relative_path) : "",
+      };
+    });
+
+    const cleanup = bestEffortCleanupManagedUploads(this.config, {
+      relativePaths: rotated.oldQrPath ? [rotated.oldQrPath] : [],
+    });
+    if (cleanup.failed.length) {
+      await this.logOperation(circleId, auth, "邀请码二维码清理待处理", "circle", circleId, {
+        failedCount: cleanup.failed.length,
+      }).catch(() => {});
+    }
+    const settings = await this.circleSettings(Object.assign({}, body, { circleId }));
+    return Object.assign({}, settings, { mediaCleanupFailedCount: cleanup.failed.length });
   }
 
   async exitCircle(body) {
@@ -6192,11 +6341,14 @@ class InCircleService {
     const envVersion = normalizeQrEnvVersion(this.config.wechatQrEnvVersion);
     const generated = await this.db.withTransaction(async () => {
       const circleResult = await this.db.query(
-        "SELECT id, join_code FROM incircle_circles WHERE id = $1 FOR UPDATE",
+        "SELECT id, join_code, invite_token FROM incircle_circles WHERE id = $1 FOR UPDATE",
         [circleId]
       );
       const circle = circleResult.rows[0];
       if (!circle) throw new AppError("圈子不存在", { statusCode: 404, errCode: "CIRCLE_NOT_FOUND" });
+      if (!isValidInviteToken(circle.invite_token)) {
+        throw new AppError("圈子邀请入口尚未初始化", { statusCode: 500, errCode: "INVITE_TOKEN_MISSING" });
+      }
 
       const existingResult = await this.db.query(
         "SELECT * FROM incircle_circle_qr_codes WHERE circle_id = $1 LIMIT 1",
@@ -6205,38 +6357,43 @@ class InCircleService {
       const existing = existingResult.rows[0];
       const reusable = existing
         && existing.join_code === circle.join_code
+        && existing.invite_token === circle.invite_token
         && existing.page === page
         && existing.env_version === envVersion
         && usableQrCodeFile(this.config, existing.relative_path);
-      if (reusable) return { circle, row: existing, reused: true };
+      if (reusable) {
+        cleanupOtherCircleQrFiles(this.config, circleId, existing.relative_path);
+        return { circle, row: existing, reused: true };
+      }
 
       const miniCode = await this.createMiniProgramCode(this.config, {
-        scene: circle.join_code,
+        scene: circle.invite_token,
         page,
         envVersion,
       });
       const extension = miniCode.extension === "jpg" ? "jpg" : "png";
-      const filename = `${safeFilePart(circle.id, "circle")}-invite-wxacode.${extension}`;
+      const filename = `${safeFilePart(circle.id, "circle")}-invite-${circle.invite_token.slice(0, 12)}-wxacode.${extension}`;
       const relativePath = path.posix.join("qrcodes", filename);
       writeQrCodeFile(this.config, relativePath, miniCode.buffer);
       const stored = await this.db.query(
         `
         INSERT INTO incircle_circle_qr_codes (
-          circle_id, join_code, page, env_version, relative_path
-        ) VALUES ($1, $2, $3, $4, $5)
+          circle_id, join_code, invite_token, page, env_version, relative_path
+        ) VALUES ($1, $2, $3, $4, $5, $6)
         ON CONFLICT (circle_id) DO UPDATE SET
           join_code = EXCLUDED.join_code,
+          invite_token = EXCLUDED.invite_token,
           page = EXCLUDED.page,
           env_version = EXCLUDED.env_version,
           relative_path = EXCLUDED.relative_path,
           updated_at = now()
         RETURNING *
         `,
-        [circle.id, circle.join_code, page, miniCode.envVersion || envVersion, relativePath]
+        [circle.id, circle.join_code, circle.invite_token, page, miniCode.envVersion || envVersion, relativePath]
       );
+      cleanupOtherCircleQrFiles(this.config, circleId, stored.rows[0].relative_path);
       return { circle, row: stored.rows[0], reused: false };
     });
-    cleanupOtherCircleQrFiles(this.config, circleId, generated.row.relative_path);
     return publicInviteQrCode(this.config, this.request, generated.circle, generated.row, generated.reused);
   }
 }
@@ -6245,7 +6402,12 @@ module.exports = {
   InCircleService,
   __test: {
     checkinRuntimeMetrics,
+    createInviteToken,
+    createJoinCode,
     friendlyTagWallState,
+    invitePagePath,
+    isValidInviteToken,
+    isValidJoinCode,
     memberCardFromRow,
     normalizeCheckinMedia,
     scoreLeaderboard,

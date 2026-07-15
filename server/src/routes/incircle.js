@@ -97,6 +97,8 @@ async function dispatchInCircleType(fastify, body, request) {
       return service.circleMemberDetail(body);
     case "incircleUpdateCircleInfo":
       return service.updateCircleInfo(body);
+    case "incircleRotateInviteCode":
+      return service.rotateInviteCode(body);
     case "incircleExitCircle":
       return service.exitCircle(body);
     case "incircleDissolveCircle":

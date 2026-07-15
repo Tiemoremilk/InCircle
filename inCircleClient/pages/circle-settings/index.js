@@ -18,6 +18,9 @@ Page({
     canExit: false,
     canDissolve: false,
     inviteCode: "",
+    inviteToken: "",
+    invitePath: "/pages/circle-join/index",
+    inviteCodeRotating: false,
     inviteQrCode: null,
     inviteQrFileID: "",
     inviteQrImageUrl: "",
@@ -66,6 +69,9 @@ Page({
         canExit: !!data.canExit,
         canDissolve: !!data.canDissolve,
         inviteCode: data.inviteCode || "",
+        inviteToken: data.inviteToken || "",
+        invitePath: data.invitePath || "/pages/circle-join/index",
+        inviteCodeRotating: false,
         inviteQrCode: null,
         inviteQrFileID: "",
         inviteQrImageUrl: "",
@@ -156,6 +162,7 @@ Page({
   },
 
   copyInviteCode() {
+    if (this.data.inviteCodeRotating) return;
     wx.setClipboardData({
       data: this.data.inviteCode,
       success: () => {
@@ -168,7 +175,55 @@ Page({
   },
 
   inviteSharePath() {
-    return this.data.inviteCode ? `/pages/circle-join/index?code=${this.data.inviteCode}` : "/pages/circle-join/index";
+    if (this.data.invitePath) return this.data.invitePath;
+    if (this.data.inviteToken) {
+      return `/pages/circle-join/index?token=${encodeURIComponent(this.data.inviteToken)}`;
+    }
+    return "/pages/circle-join/index";
+  },
+
+  rotateInviteCode() {
+    if (
+      !this.data.canManage
+      || this.data.inviteCodeRotating
+      || this.data.inviteQrLoading
+      || this.data.inviteQrSaving
+      || this.data.destructiveBusy
+    ) return;
+    dialog.show({
+      title: "更换邀请码",
+      content: "更换后，当前邀请码、已保存的入圈码图片和之前分享的邀请入口都会立即失效，旧邀请码无法恢复。",
+      tone: "warning",
+      cancelText: "暂不更换",
+      confirmText: "确认更换",
+    }).then((result) => {
+      if (!result.confirm) return;
+      this.setData({ inviteCodeRotating: true });
+      api
+        .rotateInviteCode(this.data.circle.id)
+        .then((data) => {
+          const circle = data.circle || this.data.circle;
+          this.setData({
+            circle,
+            members: decorateMembers(data.members || this.data.members),
+            canManage: !!data.canManage,
+            canExit: !!data.canExit,
+            canDissolve: !!data.canDissolve,
+            inviteCode: data.inviteCode || "",
+            inviteToken: data.inviteToken || "",
+            invitePath: data.invitePath || "/pages/circle-join/index",
+            inviteQrCode: null,
+            inviteQrFileID: "",
+            inviteQrImageUrl: "",
+            inviteQrButtonText: "生成入圈码",
+          });
+          wx.showToast({ title: "邀请码已更换", icon: "success" });
+        })
+        .catch((error) => {
+          wx.showToast({ title: error.message || "更换失败，请稍后重试", icon: "none" });
+        })
+        .finally(() => this.setData({ inviteCodeRotating: false }));
+    });
   },
 
   resolveInviteQrUrl(qrCode) {
@@ -176,6 +231,7 @@ Page({
   },
 
   loadInviteQrCode() {
+    if (this.data.inviteCodeRotating) return Promise.reject(new Error("邀请码正在更换"));
     if (this.data.inviteQrLoading) return Promise.resolve(this.data.inviteQrCode);
     if (this.data.inviteQrCode && this.data.inviteQrImageUrl) return Promise.resolve(this.data.inviteQrCode);
     const circleId = this.data.circle && this.data.circle.id;
@@ -223,7 +279,7 @@ Page({
   },
 
   handleInviteQrAction() {
-    if (this.data.inviteQrLoading) return;
+    if (this.data.inviteQrLoading || this.data.inviteCodeRotating) return;
     if (this.data.inviteQrImageUrl) {
       this.previewInviteQrCode();
       return;
@@ -245,7 +301,7 @@ Page({
   },
 
   saveInviteQrCode() {
-    if (this.data.inviteQrSaving) return;
+    if (this.data.inviteQrSaving || this.data.inviteCodeRotating) return;
     const finishSave = () => {
       this.setData({ inviteQrSaving: false });
     };

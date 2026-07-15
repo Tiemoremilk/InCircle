@@ -19,6 +19,9 @@ function createCircleHarness(options) {
   const queries = [];
   let transactionOpen = false;
   let joinCodeRequested = false;
+  let insertConflictsRemaining = Number(source.insertConflictCount || 0);
+  let joinCodeGenerationCount = 0;
+  let inviteTokenGenerationCount = 0;
   const db = {
     async withTransaction(callback) {
       assert.equal(transactionOpen, false);
@@ -40,6 +43,10 @@ function createCircleHarness(options) {
         return { rows: [{ total: Number(source.ownedCount || 0) }] };
       }
       if (normalized.startsWith("INSERT INTO incircle_circles")) {
+        if (insertConflictsRemaining > 0) {
+          insertConflictsRemaining -= 1;
+          return { rows: [] };
+        }
         return { rows: [{ id: CIRCLE_ID, name: "新的熟人圈", status: "active" }] };
       }
       if (normalized.startsWith("UPDATE incircle_circles SET next_member_no")) {
@@ -68,7 +75,12 @@ function createCircleHarness(options) {
   service.createUniqueJoinCode = async () => {
     assert.equal(transactionOpen, true, "join code must be allocated after the quota check enters the transaction");
     joinCodeRequested = true;
+    joinCodeGenerationCount += 1;
     return "ABCDEFGH";
+  };
+  service.createUniqueInviteToken = async () => {
+    inviteTokenGenerationCount += 1;
+    return "0123456789abcdef0123456789abcdef";
   };
   service.ensureDefaultDocsForCircle = async () => {};
   service.ensureDefaultScoreRulesForCircle = async () => {};
@@ -78,6 +90,8 @@ function createCircleHarness(options) {
     service,
     queries,
     joinCodeRequested: () => joinCodeRequested,
+    joinCodeGenerationCount: () => joinCodeGenerationCount,
+    inviteTokenGenerationCount: () => inviteTokenGenerationCount,
   };
 }
 
@@ -109,6 +123,19 @@ test("ordinary account at or above the limit is rejected without partial circle 
     assert.equal(harness.joinCodeRequested(), false);
     assert.equal(harness.queries.some((query) => query.sql.startsWith("INSERT INTO")), false);
   }
+});
+
+test("circle creation regenerates credentials after a uniqueness conflict", async () => {
+  const harness = createCircleHarness({ ownedCount: 9, insertConflictCount: 1 });
+  const result = await harness.service.createCircle({ circle: { name: "碰撞后创建" } });
+
+  assert.equal(result.circleCreated, true);
+  assert.equal(harness.joinCodeGenerationCount(), 2);
+  assert.equal(harness.inviteTokenGenerationCount(), 2);
+  assert.equal(
+    harness.queries.filter((query) => query.sql.startsWith("INSERT INTO incircle_circles")).length,
+    2
+  );
 });
 
 test("only a platform superadmin bypasses the ownership limit", async () => {

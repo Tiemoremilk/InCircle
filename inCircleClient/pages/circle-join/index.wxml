@@ -20,8 +20,8 @@
         <text>输入邀请码</text>
       </view>
       <view class="field">
-        <view class="field-label">6-8 位圈子口令</view>
-        <input class="field-input" adjust-position="{{true}}" cursor-spacing="24" value="{{joinCode}}" maxlength="8" placeholder="例如 A7K9P2Q4" bindinput="onCodeInput" />
+        <view class="field-label">8 位邀请码，区分大小写</view>
+        <input class="field-input" adjust-position="{{true}}" cursor-spacing="24" value="{{joinCode}}" maxlength="8" placeholder="例如 Ab1#￥%&amp;2" bindinput="onCodeInput" />
       </view>
 
       <view class="invite-code" wx:if="{{hasPreview}}">
@@ -29,7 +29,7 @@
         <view class="invite-meta">{{circle.name}} · {{circle.ownerName}}邀请</view>
       </view>
       <view class="invite-code empty" wx:else>
-        <view class="invite-text">------</view>
+        <view class="invite-text">--------</view>
         <view class="invite-meta">输入邀请码后预览圈子</view>
       </view>
 
