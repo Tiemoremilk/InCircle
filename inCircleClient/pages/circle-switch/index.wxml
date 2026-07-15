@@ -123,6 +123,11 @@
           <text>账号管理</text>
         </view>
         <view class="account-copy">当前账号：{{user.accountName || "未绑定"}}。退出只结束当前登录；注销会退出所有圈子并清空账号资料。</view>
+        <view class="account-legal-links">
+          <view data-type="terms" bindtap="openLegal">用户服务协议</view>
+          <view class="account-legal-divider"></view>
+          <view data-type="privacy" bindtap="openLegal">隐私政策</view>
+        </view>
       </view>
       <view class="security-row">
         <view class="ghost-btn security-btn {{passwordBusy || switchingCircle || creatingCircle ? 'disabled' : ''}}" bindtap="togglePasswordForm">

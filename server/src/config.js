@@ -55,6 +55,11 @@ function loadConfig() {
     aiCredentialsEncryptionKey: process.env.AI_CREDENTIALS_ENCRYPTION_KEY || "",
     aiProviderTimeoutMs: numberFromEnv("AI_PROVIDER_TIMEOUT_MS", 300000),
     aiContentSecurityEnabled: booleanFromEnv("AI_CONTENT_SECURITY_ENABLED", nodeEnv === "production"),
+    legalOperatorName: String(process.env.LEGAL_OPERATOR_NAME || "").trim(),
+    legalContactEmail: String(process.env.LEGAL_CONTACT_EMAIL || "").trim(),
+    legalTermsVersion: String(process.env.LEGAL_TERMS_VERSION || "").trim(),
+    legalPrivacyVersion: String(process.env.LEGAL_PRIVACY_VERSION || "").trim(),
+    legalEffectiveDate: String(process.env.LEGAL_EFFECTIVE_DATE || "").trim(),
     uploadDir,
     publicBaseUrl: (process.env.PUBLIC_BASE_URL || "").replace(/\/+$/, ""),
   };

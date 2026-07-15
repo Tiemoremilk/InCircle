@@ -58,6 +58,8 @@ async function dispatchInCircleType(fastify, body, request) {
   switch (type) {
     case "incircleHealth":
       return handleHealth(fastify);
+    case "incirclePublicLegalProfile":
+      return service.publicLegalProfile();
     case "incircleSession":
       return service.session(body);
     case "incircleLogin":
@@ -73,6 +75,8 @@ async function dispatchInCircleType(fastify, body, request) {
       return service.bindAccount(body);
     case "incircleResetPassword":
       return service.resetPassword(body);
+    case "incircleAcceptAgreements":
+      return service.acceptAgreements(body);
     case "incircleChangePassword":
       return service.changePassword(body);
     case "incircleUpdateTheme":

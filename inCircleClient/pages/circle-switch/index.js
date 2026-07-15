@@ -457,6 +457,11 @@ Page({
     });
   },
 
+  openLegal(e) {
+    const type = e.currentTarget.dataset.type === "privacy" ? "privacy" : "terms";
+    wx.navigateTo({ url: `/pages/legal/index?type=${type}` });
+  },
+
   deleteAccount() {
     if (this.data.accountBusy || this.data.switchingCircle || this.data.creatingCircle) return;
     dialog.show({

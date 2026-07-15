@@ -16,6 +16,16 @@ param(
 
   [string]$PublicBaseUrl = "",
 
+  [string]$LegalOperatorName = "",
+
+  [string]$LegalContactEmail = "",
+
+  [string]$LegalTermsVersion = "",
+
+  [string]$LegalPrivacyVersion = "",
+
+  [string]$LegalEffectiveDate = "",
+
   [string]$SuperAdminOpenids = "",
 
   [switch]$UseSudo,
@@ -179,6 +189,11 @@ PACKAGE_PATH="${1:-incircle-server-release.tar.gz}"
 WECHAT_APP_ID_VALUE="${WECHAT_APP_ID_VALUE:-your-wechat-app-id}"
 WECHAT_APP_SECRET_VALUE="${WECHAT_APP_SECRET_VALUE:-}"
 PUBLIC_BASE_URL_VALUE="${PUBLIC_BASE_URL_VALUE:-https://your-api.example.com}"
+LEGAL_OPERATOR_NAME_VALUE="${LEGAL_OPERATOR_NAME_VALUE:-}"
+LEGAL_CONTACT_EMAIL_VALUE="${LEGAL_CONTACT_EMAIL_VALUE:-}"
+LEGAL_TERMS_VERSION_VALUE="${LEGAL_TERMS_VERSION_VALUE:-}"
+LEGAL_PRIVACY_VERSION_VALUE="${LEGAL_PRIVACY_VERSION_VALUE:-}"
+LEGAL_EFFECTIVE_DATE_VALUE="${LEGAL_EFFECTIVE_DATE_VALUE:-}"
 SUPER_ADMIN_OPENIDS_VALUE="${SUPER_ADMIN_OPENIDS_VALUE:-}"
 SKIP_BACKUP="${SKIP_BACKUP:-0}"
 USE_SUDO="${USE_SUDO:-0}"
@@ -274,6 +289,24 @@ fill_empty_line() {
   fi
 }
 
+set_line() {
+  local key="$1"
+  local value="$2"
+  case "$value" in
+    *$'\r'*|*$'\n'*)
+      echo "Invalid line break in ${key}." >&2
+      exit 1
+      ;;
+  esac
+  local escaped
+  escaped="$(printf '%s' "$value" | sed 's/[\\&#]/\\&/g')"
+  if [ -f .env ] && grep -qE "^${key}=" .env; then
+    sed -i "s#^${key}=.*#${key}=${escaped}#" .env
+  else
+    printf '%s=%s\n' "$key" "$value" >> .env
+  fi
+}
+
 password_from_database_url() {
   if [ ! -f .env ]; then
     return 0
@@ -302,6 +335,11 @@ DATABASE_URL=postgres://incircle:${db_password}@postgres:5432/incircle
 CORS_ORIGINS=${PUBLIC_BASE_URL_VALUE}
 PUBLIC_BASE_URL=${PUBLIC_BASE_URL_VALUE}
 UPLOAD_DIR=/app/uploads
+LEGAL_OPERATOR_NAME=${LEGAL_OPERATOR_NAME_VALUE}
+LEGAL_CONTACT_EMAIL=${LEGAL_CONTACT_EMAIL_VALUE}
+LEGAL_TERMS_VERSION=${LEGAL_TERMS_VERSION_VALUE}
+LEGAL_PRIVACY_VERSION=${LEGAL_PRIVACY_VERSION_VALUE}
+LEGAL_EFFECTIVE_DATE=${LEGAL_EFFECTIVE_DATE_VALUE}
 WECHAT_APP_ID=${WECHAT_APP_ID_VALUE}
 WECHAT_APP_SECRET=${WECHAT_APP_SECRET_VALUE}
 WECHAT_QRCODE_ENV_VERSION=release
@@ -333,6 +371,11 @@ EOF
   ensure_line CORS_ORIGINS "$PUBLIC_BASE_URL_VALUE"
   ensure_line PUBLIC_BASE_URL "$PUBLIC_BASE_URL_VALUE"
   ensure_line UPLOAD_DIR '/app/uploads'
+  ensure_line LEGAL_OPERATOR_NAME "$LEGAL_OPERATOR_NAME_VALUE"
+  ensure_line LEGAL_CONTACT_EMAIL "$LEGAL_CONTACT_EMAIL_VALUE"
+  ensure_line LEGAL_TERMS_VERSION "$LEGAL_TERMS_VERSION_VALUE"
+  ensure_line LEGAL_PRIVACY_VERSION "$LEGAL_PRIVACY_VERSION_VALUE"
+  ensure_line LEGAL_EFFECTIVE_DATE "$LEGAL_EFFECTIVE_DATE_VALUE"
   ensure_line WECHAT_APP_ID "$WECHAT_APP_ID_VALUE"
   ensure_line WECHAT_APP_SECRET "$WECHAT_APP_SECRET_VALUE"
   ensure_line WECHAT_QRCODE_ENV_VERSION 'release'
@@ -352,6 +395,21 @@ EOF
     fill_empty_line WECHAT_APP_SECRET "$WECHAT_APP_SECRET_VALUE"
   fi
   fill_empty_line PUBLIC_BASE_URL "$PUBLIC_BASE_URL_VALUE"
+  if [ -n "$LEGAL_OPERATOR_NAME_VALUE" ]; then
+    set_line LEGAL_OPERATOR_NAME "$LEGAL_OPERATOR_NAME_VALUE"
+  fi
+  if [ -n "$LEGAL_CONTACT_EMAIL_VALUE" ]; then
+    set_line LEGAL_CONTACT_EMAIL "$LEGAL_CONTACT_EMAIL_VALUE"
+  fi
+  if [ -n "$LEGAL_TERMS_VERSION_VALUE" ]; then
+    set_line LEGAL_TERMS_VERSION "$LEGAL_TERMS_VERSION_VALUE"
+  fi
+  if [ -n "$LEGAL_PRIVACY_VERSION_VALUE" ]; then
+    set_line LEGAL_PRIVACY_VERSION "$LEGAL_PRIVACY_VERSION_VALUE"
+  fi
+  if [ -n "$LEGAL_EFFECTIVE_DATE_VALUE" ]; then
+    set_line LEGAL_EFFECTIVE_DATE "$LEGAL_EFFECTIVE_DATE_VALUE"
+  fi
   if [ -n "$SUPER_ADMIN_OPENIDS_VALUE" ]; then
     fill_empty_line INCIRCLE_SUPER_ADMIN_OPENIDS "$SUPER_ADMIN_OPENIDS_VALUE"
   fi
@@ -459,6 +517,11 @@ try {
   $quotedWechatAppId = Quote-RemoteValue $WechatAppId
   $quotedWechatAppSecret = Quote-RemoteValue $WechatAppSecret
   $quotedPublicBaseUrl = Quote-RemoteValue $PublicBaseUrl
+  $quotedLegalOperatorName = Quote-RemoteValue $LegalOperatorName
+  $quotedLegalContactEmail = Quote-RemoteValue $LegalContactEmail
+  $quotedLegalTermsVersion = Quote-RemoteValue $LegalTermsVersion
+  $quotedLegalPrivacyVersion = Quote-RemoteValue $LegalPrivacyVersion
+  $quotedLegalEffectiveDate = Quote-RemoteValue $LegalEffectiveDate
   $quotedSuperAdminOpenids = Quote-RemoteValue $SuperAdminOpenids
   $skipBackupValue = if ($SkipBackup) { "1" } else { "0" }
   $useSudoValue = if ($UseSudo) { "1" } else { "0" }
@@ -482,7 +545,7 @@ try {
     )) -ErrorMessage "Failed to upload remote deploy script"
 
     Write-Host "Running remote deploy..."
-    $remoteCommand = "cd $quotedRemoteDir && chmod +x $quotedRemoteScript && WECHAT_APP_ID_VALUE=$quotedWechatAppId WECHAT_APP_SECRET_VALUE=$quotedWechatAppSecret PUBLIC_BASE_URL_VALUE=$quotedPublicBaseUrl SUPER_ADMIN_OPENIDS_VALUE=$quotedSuperAdminOpenids SKIP_BACKUP=$skipBackupValue USE_SUDO=$useSudoValue bash $quotedRemoteScript $quotedRemotePackage"
+    $remoteCommand = "cd $quotedRemoteDir && chmod +x $quotedRemoteScript && WECHAT_APP_ID_VALUE=$quotedWechatAppId WECHAT_APP_SECRET_VALUE=$quotedWechatAppSecret PUBLIC_BASE_URL_VALUE=$quotedPublicBaseUrl LEGAL_OPERATOR_NAME_VALUE=$quotedLegalOperatorName LEGAL_CONTACT_EMAIL_VALUE=$quotedLegalContactEmail LEGAL_TERMS_VERSION_VALUE=$quotedLegalTermsVersion LEGAL_PRIVACY_VERSION_VALUE=$quotedLegalPrivacyVersion LEGAL_EFFECTIVE_DATE_VALUE=$quotedLegalEffectiveDate SUPER_ADMIN_OPENIDS_VALUE=$quotedSuperAdminOpenids SKIP_BACKUP=$skipBackupValue USE_SUDO=$useSudoValue bash $quotedRemoteScript $quotedRemotePackage"
     Invoke-CheckedCommand -FilePath "ssh" -Arguments ($sshOptions + @(
       $sshTarget,
       $remoteCommand
@@ -522,7 +585,7 @@ fi
 
 cd "`$REMOTE_DIR"
 chmod +x "`$REMOTE_SCRIPT"
-WECHAT_APP_ID_VALUE=$quotedWechatAppId WECHAT_APP_SECRET_VALUE=$quotedWechatAppSecret PUBLIC_BASE_URL_VALUE=$quotedPublicBaseUrl SUPER_ADMIN_OPENIDS_VALUE=$quotedSuperAdminOpenids SKIP_BACKUP=$skipBackupValue USE_SUDO=$useSudoValue bash "`$REMOTE_SCRIPT" "`$REMOTE_PACKAGE"
+WECHAT_APP_ID_VALUE=$quotedWechatAppId WECHAT_APP_SECRET_VALUE=$quotedWechatAppSecret PUBLIC_BASE_URL_VALUE=$quotedPublicBaseUrl LEGAL_OPERATOR_NAME_VALUE=$quotedLegalOperatorName LEGAL_CONTACT_EMAIL_VALUE=$quotedLegalContactEmail LEGAL_TERMS_VERSION_VALUE=$quotedLegalTermsVersion LEGAL_PRIVACY_VERSION_VALUE=$quotedLegalPrivacyVersion LEGAL_EFFECTIVE_DATE_VALUE=$quotedLegalEffectiveDate SUPER_ADMIN_OPENIDS_VALUE=$quotedSuperAdminOpenids SKIP_BACKUP=$skipBackupValue USE_SUDO=$useSudoValue bash "`$REMOTE_SCRIPT" "`$REMOTE_PACKAGE"
 "@.Replace("`r`n", "`n")
 
     Invoke-CheckedCommandWithInput -FilePath "ssh" -Arguments ($sshOptions + @(

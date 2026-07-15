@@ -474,6 +474,11 @@ node -e "console.log(require('crypto').randomBytes(48).toString('base64url'))"
 | <code>CORS_ORIGINS</code> | 生产限制为真实域名 | 多个来源逗号分隔 |
 | <code>PUBLIC_BASE_URL</code> | 必须是 HTTPS | 生成图片和头像公开 URL |
 | <code>UPLOAD_DIR</code> | 可选 | <code>/app/uploads</code> |
+| <code>LEGAL_OPERATOR_NAME</code> | 首次部署必填 | 迁移时同步到协议公开信息表，不写入小程序源码 |
+| <code>LEGAL_CONTACT_EMAIL</code> | 首次部署必填 | 迁移时同步到协议公开信息表，不写入小程序源码 |
+| <code>LEGAL_TERMS_VERSION</code> | 必填 | 当前用户服务协议版本，变化后要求重新同意 |
+| <code>LEGAL_PRIVACY_VERSION</code> | 必填 | 当前隐私政策版本，变化后要求重新同意 |
+| <code>LEGAL_EFFECTIVE_DATE</code> | 必填 | 协议生效日期，格式 <code>YYYY-MM-DD</code> |
 | <code>WECHAT_APP_ID</code> | 必填 | 小程序 AppID |
 | <code>WECHAT_APP_SECRET</code> | 必填，严禁提交 | 登录、小程序码和内容安全 |
 | <code>INCIRCLE_SUPER_ADMIN_OPENIDS</code> | 可选 | 多个 OpenID 逗号分隔 |
@@ -785,6 +790,11 @@ powershell -ExecutionPolicy Bypass -File .\scripts\deploy-server.ps1 -HostName "
 | <code>-WechatAppId</code> | 空 | 首次填充，或在本机脚本中配置 |
 | <code>-WechatAppSecret</code> | 空 | 服务端为空时填充 |
 | <code>-PublicBaseUrl</code> | 空 | HTTPS 公开 API 地址，或在本机脚本中配置 |
+| <code>-LegalOperatorName</code> | 空 | 协议展示的运营主体，仅配置在本机私有脚本和服务器 |
+| <code>-LegalContactEmail</code> | 空 | 协议展示的联系邮箱，仅配置在本机私有脚本和服务器 |
+| <code>-LegalTermsVersion</code> | 空 | 用户服务协议当前版本 |
+| <code>-LegalPrivacyVersion</code> | 空 | 隐私政策当前版本 |
+| <code>-LegalEffectiveDate</code> | 空 | 协议生效日期，格式 <code>YYYY-MM-DD</code> |
 | <code>-SuperAdminOpenids</code> | 空 | 平台超管 OpenID |
 | <code>-UseSudo</code> | false | Docker 使用 sudo |
 | <code>-SkipBackup</code> | false | 跳过部署前备份 |
@@ -802,7 +812,8 @@ powershell -ExecutionPolicy Bypass -File .\scripts\deploy-server.ps1 -HostName "
 5. PostgreSQL 已运行且健康时执行 <code>pg_dump</code>。
 6. 解压新版本并重建 API 容器。
 7. 自动运行数据库迁移。
-8. 最多等待约 60 秒检查 <code>/health</code>。
+8. 将服务器私有的协议运营主体和联系邮箱同步到 PostgreSQL。
+9. 最多等待约 60 秒检查 <code>/health</code>。
 9. 失败时输出容器状态。
 
 脚本不会删除 PostgreSQL volume，也不会覆盖服务器 uploads。部署压缩包可在发布后删除，下次会重新生成。
@@ -980,6 +991,7 @@ npm audit --omit=dev
 ### 隐私
 
 - OpenID、手机号、密码哈希、用户导出和聊天正文属于敏感数据。
+- 协议运营主体、联系邮箱、两个版本号和生效日期存放在生产数据库，通过匿名只读接口展示；它们会向小程序用户公开，但不写入 Git 仓库。
 - 不提交数据库备份、历史导出、头像包或生产日志。
 - 分享链接不能替代服务端成员校验。
 - 避免在身份卡、账单、打卡图片、资料和 AI 输入中填写高敏信息。
@@ -991,9 +1003,12 @@ npm audit --omit=dev
 - <code>node_modules/</code>
 - <code>.idea/</code>
 - <code>project.private.config.json</code>
+- <code>project.config.json</code>
+- <code>inCircleClient/config/backend.js</code>
 - 精确文件名 <code>.env</code>
 - <code>server/uploads/</code>
 - <code>incircle-server.tar.gz</code>
+- <code>scripts/deploy-server.ps1</code>
 - Windows 系统元数据
 
 提交前：

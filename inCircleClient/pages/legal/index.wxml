@@ -1,0 +1,57 @@
+<page-meta page-style="{{themeStyle}} {{incircleKeyboardPageStyle}}"></page-meta>
+<view class="page legal-page {{themeClass}}">
+  <view class="legal-load-state" wx:if="{{legalLoading}}">
+    <view class="legal-load-mark"><view></view><view></view><view></view></view>
+    <view class="legal-load-title">正在加载协议信息</view>
+    <view class="legal-load-copy">从服务端读取最新运营主体与联系方式</view>
+  </view>
+
+  <view class="legal-load-state error" wx:elif="{{legalError}}">
+    <view class="legal-load-symbol">!</view>
+    <view class="legal-load-title">暂时无法查看协议</view>
+    <view class="legal-load-copy">{{legalError}}</view>
+    <view class="legal-retry" bindtap="retryLegalProfile">重新加载</view>
+  </view>
+
+  <block wx:else>
+  <view class="legal-hero motion-hero">
+    <view class="legal-brand">InCircle</view>
+    <view class="legal-title">{{document.shortTitle}}</view>
+    <view class="legal-intro">{{document.intro}}</view>
+    <view class="legal-meta">
+      <text>版本 {{document.version}}</text>
+      <view class="legal-meta-dot"></view>
+      <text>生效于 {{document.effectiveDate}}</text>
+    </view>
+  </view>
+
+  <view class="legal-reading-note">
+    <view class="reading-mark">i</view>
+    <text>请完整阅读。重要内容已按 InCircle 的实际功能和数据处理方式说明。</text>
+  </view>
+
+  <view class="legal-article">
+    <view class="legal-section" wx:for="{{document.sections}}" wx:key="title">
+      <view class="legal-section-title">{{item.title}}</view>
+      <view wx:if="{{item.paragraphs && item.paragraphs.length}}">
+        <view class="legal-paragraph" wx:for="{{item.paragraphs}}" wx:key="*this" wx:for-item="paragraph">{{paragraph}}</view>
+      </view>
+      <view class="legal-list" wx:if="{{item.bullets && item.bullets.length}}">
+        <view class="legal-list-row" wx:for="{{item.bullets}}" wx:key="*this" wx:for-item="bullet">
+          <view class="legal-list-dot"></view>
+          <text>{{bullet}}</text>
+        </view>
+      </view>
+    </view>
+  </view>
+
+  <view class="legal-contact" bindtap="copyContactEmail">
+    <view>
+      <view class="legal-contact-label">联系邮箱</view>
+      <view class="legal-contact-value">{{contactEmail}}</view>
+    </view>
+    <view class="legal-contact-action">复制</view>
+  </view>
+  <view class="legal-footer">InCircle · 熟人圈协作工具</view>
+  </block>
+</view>

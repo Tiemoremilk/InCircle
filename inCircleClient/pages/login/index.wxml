@@ -1,6 +1,7 @@
 <page-meta page-style="{{themeStyle}} {{incircleKeyboardPageStyle}}"></page-meta>
 <view class="page login-page {{themeClass}}" wx:if="{{!loading}}">
   <view class="inline-notice {{feedbackType}}" wx:if="{{feedbackText}}">{{feedbackText}}</view>
+
   <view class="login-shell">
     <view class="brand-panel motion-hero">
       <view class="brand-main">
@@ -13,121 +14,211 @@
       <view class="hero-copy">{{heroCopy}}</view>
     </view>
 
-    <view class="error-card card" wx:if="{{hasBackendError}}">
-      <view class="error-title">操作未完成</view>
-      <view class="error-copy">{{backendError}}</view>
-      <view class="error-hint">请确认当前后端域名可访问，账号密码接口已部署，且当前微信就是这个账号绑定的微信。</view>
-      <button class="ghost-btn retry-btn" bindtap="retrySession">重新检查</button>
-    </view>
-
     <view class="login-panel card motion-section">
-      <view class="panel-head">
-        <view>
+      <view class="auth-head">
+        <view
+          class="auth-back"
+          wx:if="{{(mode === 'register' || mode === 'forgot') || ((mode === 'bind') && registerStep === 2)}}"
+          bindtap="backAuthFlow"
+        >
+          <image src="/images/ui-icons/arrow-left.svg" mode="aspectFit"></image>
+        </view>
+        <view class="auth-head-icon">
+          <image src="{{modeIcon}}" mode="aspectFit"></image>
+        </view>
+        <view class="auth-head-copy">
           <view class="panel-title">{{modeTitle}}</view>
           <view class="panel-copy">{{modeCopy}}</view>
         </view>
       </view>
 
-      <view class="mode-tabs" wx:if="{{mode !== 'bind'}}">
-        <view class="mode-tab motion-state {{mode === 'login' ? 'active' : ''}}" data-mode="login" bindtap="switchMode">登录</view>
-        <view class="mode-tab motion-state {{mode === 'register' ? 'active' : ''}}" data-mode="register" bindtap="switchMode">注册</view>
-        <view class="mode-tab motion-state {{mode === 'forgot' ? 'active' : ''}}" data-mode="forgot" bindtap="switchMode">忘记密码</view>
-      </view>
-
-      <view class="bind-alert" wx:if="{{mode === 'bind'}}">
-        <view class="bind-title">当前微信待绑定</view>
-        <view class="bind-copy">绑定账号密码后，原有圈子、成员卡和业务数据会继续沿用。</view>
-      </view>
-
-      <view class="form-grid auth-grid">
-        <view class="field">
-          <view class="field-label">账号</view>
-          <input class="field-input" adjust-position="{{true}}" cursor-spacing="24" value="{{account}}" placeholder="手机号、邮箱或英文数字账号" bindinput="onAccountInput" />
+      <view class="step-rail" wx:if="{{mode === 'register' || mode === 'bind'}}">
+        <view class="step-item {{registerStep >= 1 ? 'active' : ''}}">
+          <view class="step-index">1</view>
+          <text>账号安全</text>
         </view>
-        <view class="field">
-          <view class="field-label">{{mode === 'login' ? '密码' : '设置密码'}}</view>
-          <input class="field-input" password="{{true}}" adjust-position="{{true}}" cursor-spacing="24" value="{{password}}" placeholder="{{mode === 'login' ? '请输入密码' : '8-64 位，包含字母和数字'}}" bindinput="onPasswordInput" />
-        </view>
-        <view class="field" wx:if="{{mode !== 'login'}}">
-          <view class="field-label">确认密码</view>
-          <input class="field-input" password="{{true}}" adjust-position="{{true}}" cursor-spacing="24" value="{{confirmPassword}}" placeholder="再次输入密码" bindinput="onConfirmPasswordInput" />
+        <view class="step-line {{registerStep === 2 ? 'active' : ''}}"></view>
+        <view class="step-item {{registerStep === 2 ? 'active' : ''}}">
+          <view class="step-index">2</view>
+          <text>圈内资料</text>
         </view>
       </view>
 
-      <view wx:if="{{mode === 'register' || mode === 'bind'}}">
-        <view class="profile-row">
-          <button class="avatar-button" open-type="chooseAvatar" bindchooseavatar="onChooseAvatar">
-            <image class="avatar" src="{{avatarUrlDisplay || avatarUrl}}"></image>
-          </button>
-          <view class="profile-main">
-            <view class="preview-name-row">
-              <view class="preview-name">{{displayName}}</view>
+      <view class="bind-alert" wx:if="{{mode === 'bind' && registerStep === 1}}">
+        <view class="bind-title">原有数据会完整保留</view>
+        <view class="bind-copy">这里只补充账号密码，不会创建新用户或改变你的圈子身份。</view>
+      </view>
+
+      <view
+        class="auth-form"
+        wx:if="{{mode === 'login' || mode === 'forgot' || ((mode === 'register' || mode === 'bind') && registerStep === 1)}}"
+      >
+        <view class="auth-field">
+          <view class="auth-label">账号</view>
+          <view class="input-shell">
+            <image class="input-icon" src="/images/ui-icons/account.svg" mode="aspectFit"></image>
+            <input
+              class="auth-input"
+              adjust-position="{{true}}"
+              cursor-spacing="24"
+              value="{{account}}"
+              placeholder="手机号、邮箱或英文数字账号"
+              bindinput="onAccountInput"
+            />
+          </view>
+        </view>
+
+        <view class="auth-field">
+          <view class="auth-label-row">
+            <view class="auth-label">{{mode === 'login' ? '密码' : mode === 'forgot' ? '新密码' : '设置密码'}}</view>
+            <view class="forgot-link" wx:if="{{mode === 'login'}}" data-mode="forgot" bindtap="switchMode">忘记密码</view>
+          </view>
+          <view class="input-shell">
+            <image class="input-icon" src="/images/ui-icons/lock-keyhole.svg" mode="aspectFit"></image>
+            <input
+              class="auth-input"
+              password="{{!passwordVisible}}"
+              adjust-position="{{true}}"
+              cursor-spacing="24"
+              value="{{password}}"
+              placeholder="{{mode === 'login' ? '请输入密码' : '8-64 位，包含字母和数字'}}"
+              bindinput="onPasswordInput"
+            />
+            <view class="password-toggle" bindtap="togglePasswordVisibility">
+              <image src="{{passwordVisible ? '/images/ui-icons/eye-off.svg' : '/images/ui-icons/eye.svg'}}" mode="aspectFit"></image>
             </view>
-            <view class="preview-meta">微信昵称：{{wechatNameText}}</view>
-            <view class="profile-link {{syncingWechat ? 'is-disabled' : ''}}" bindtap="syncWechatProfile">{{syncingWechat ? "正在同步" : "同步微信资料"}}</view>
           </view>
         </view>
 
-        <view class="form-grid">
-          <view class="field">
-            <view class="field-label">圈内昵称</view>
-            <input class="field-input" type="nickname" adjust-position="{{true}}" cursor-spacing="24" value="{{nickName}}" placeholder="选择微信昵称，或手动填写" bindinput="onNickInput" bindblur="onNickInput" />
-          </view>
-          <view class="field">
-            <view class="field-label">手机号</view>
-            <input class="field-input" type="number" maxlength="11" adjust-position="{{true}}" cursor-spacing="24" value="{{phone}}" placeholder="仅用于熟人圈结款和必要联系" bindinput="onPhoneInput" />
-          </view>
-          <view class="field">
-            <view class="field-label">圈内称呼</view>
-            <input class="field-input" adjust-position="{{true}}" cursor-spacing="24" value="{{title}}" placeholder="例如：组织者、羽毛球搭子" bindinput="onTitleInput" />
-          </view>
-          <view class="field">
-            <view class="field-label">备注</view>
-            <textarea class="field-textarea" show-confirm-bar="{{false}}" adjust-position="{{true}}" cursor-spacing="24" value="{{profileNote}}" placeholder="可约时间、忌口、偏好等，选填" bindinput="onNoteInput"></textarea>
+        <view class="auth-field" wx:if="{{mode !== 'login'}}">
+          <view class="auth-label">确认密码</view>
+          <view class="input-shell">
+            <image class="input-icon" src="/images/ui-icons/shield-check.svg" mode="aspectFit"></image>
+            <input
+              class="auth-input"
+              password="{{!confirmPasswordVisible}}"
+              adjust-position="{{true}}"
+              cursor-spacing="24"
+              value="{{confirmPassword}}"
+              placeholder="再次输入新密码"
+              bindinput="onConfirmPasswordInput"
+            />
+            <view class="password-toggle" bindtap="toggleConfirmPasswordVisibility">
+              <image src="{{confirmPasswordVisible ? '/images/ui-icons/eye-off.svg' : '/images/ui-icons/eye.svg'}}" mode="aspectFit"></image>
+            </view>
           </view>
         </view>
       </view>
 
+      <view
+        class="agreement-row {{agreementAccepted ? 'accepted' : ''}} {{agreementAttention ? 'needs-attention' : ''}}"
+        wx:if="{{mode !== 'consent' && mode !== 'agreement'}}"
+        bindtap="toggleAgreement"
+      >
+        <view class="agreement-check"><image src="/images/ui-icons/check.svg" mode="aspectFit"></image></view>
+        <view class="agreement-copy">
+          <text>我已阅读并同意</text>
+          <text class="agreement-link" data-type="terms" catchtap="openLegal">《用户服务协议》</text>
+          <text>和</text>
+          <text class="agreement-link" data-type="privacy" catchtap="openLegal">《隐私政策》</text>
+        </view>
+      </view>
+
+      <view class="profile-form" wx:if="{{(mode === 'register' || mode === 'bind') && registerStep === 2}}">
+        <view class="profile-intro">
+          <button
+            class="avatar-button"
+            open-type="chooseAvatar"
+            bindchooseavatar="onChooseAvatar"
+            disabled="{{avatarUploading || submitting || !agreementAccepted}}"
+          >
+            <image class="avatar" src="{{avatarUrlDisplay || avatarUrl}}"></image>
+            <view class="avatar-camera"><image src="/images/ui-icons/camera.svg" mode="aspectFit"></image></view>
+          </button>
+          <view class="profile-intro-copy">
+            <view class="profile-intro-title">{{displayName}}</view>
+            <view class="profile-intro-note">{{avatarUploading ? '头像上传中...' : '头像和昵称仅按圈内权限展示'}}</view>
+          </view>
+        </view>
+
+        <view class="auth-field">
+          <view class="auth-label-row"><view class="auth-label">圈内昵称</view><text class="required-mark">必填</text></view>
+          <view class="input-shell">
+            <image class="input-icon" src="/images/ui-icons/profile.svg" mode="aspectFit"></image>
+            <input class="auth-input" type="nickname" adjust-position="{{true}}" cursor-spacing="24" value="{{nickName}}" placeholder="选择微信昵称，或手动填写" bindinput="onNickInput" bindblur="onNickInput" />
+          </view>
+        </view>
+
+        <view class="auth-field">
+          <view class="auth-label-row"><view class="auth-label">手机号</view><text class="required-mark">必填</text></view>
+          <view class="input-shell">
+            <image class="input-icon" src="/images/ui-icons/phone.svg" mode="aspectFit"></image>
+            <input class="auth-input" type="number" maxlength="11" adjust-position="{{true}}" cursor-spacing="24" value="{{phone}}" placeholder="用于圈内结款和必要联系" bindinput="onPhoneInput" />
+          </view>
+        </view>
+
+        <view class="profile-optional-grid">
+          <view class="auth-field">
+            <view class="auth-label">圈内称呼 <text class="optional-mark">选填</text></view>
+            <input class="plain-input" adjust-position="{{true}}" cursor-spacing="24" value="{{title}}" placeholder="例如：羽毛球搭子" bindinput="onTitleInput" />
+          </view>
+          <view class="auth-field">
+            <view class="auth-label">个人备注 <text class="optional-mark">选填</text></view>
+            <input class="plain-input" adjust-position="{{true}}" cursor-spacing="24" value="{{profileNote}}" placeholder="可约时间、忌口等" bindinput="onNoteInput" />
+          </view>
+        </view>
+      </view>
+
+      <view class="consent-overview" wx:if="{{mode === 'consent' || mode === 'agreement'}}">
+        <view class="consent-shield"><image src="/images/ui-icons/shield-check.svg" mode="aspectFit"></image></view>
+        <view class="consent-title">{{mode === 'agreement' ? '先授权，再连接' : '你的数据仍在原处'}}</view>
+        <view class="consent-copy">{{mode === 'agreement' ? '同意前不会向后端校验微信身份，也不会提交账号或个人资料。' : '本次只补充协议确认，不会修改账号、圈子、身份卡或历史业务数据。'}}</view>
+      </view>
+
+      <view
+        class="agreement-row {{agreementAccepted ? 'accepted' : ''}} {{agreementAttention ? 'needs-attention' : ''}}"
+        wx:if="{{mode === 'consent' || mode === 'agreement'}}"
+        bindtap="toggleAgreement"
+      >
+        <view class="agreement-check"><image src="/images/ui-icons/check.svg" mode="aspectFit"></image></view>
+        <view class="agreement-copy">
+          <text>我已阅读并同意</text>
+          <text class="agreement-link" data-type="terms" catchtap="openLegal">《用户服务协议》</text>
+          <text>和</text>
+          <text class="agreement-link" data-type="privacy" catchtap="openLegal">《隐私政策》</text>
+        </view>
+      </view>
+
+      <view class="auth-error" wx:if="{{hasBackendError}}">
+        <view class="auth-error-title">操作未完成</view>
+        <view class="auth-error-copy">{{backendError}}</view>
+        <view class="auth-error-action" bindtap="retrySession">重新加载</view>
+      </view>
       <view class="setup-error" wx:if="{{setupError}}">{{setupError}}</view>
 
-      <view class="theme-block">
-        <view class="theme-head">
-          <view class="theme-title">主题色</view>
-          <view class="theme-count">{{themeOptions.length}} 套</view>
-        </view>
-        <view class="theme-picker login-theme-picker">
-          <view
-            class="theme-swatch motion-state {{item.activeClass}}"
-            wx:for="{{themeOptions}}"
-            wx:key="key"
-            data-key="{{item.key}}"
-            bindtap="onThemeSelect"
-          >
-            <view class="swatch-dot" style="background: {{item.swatch}};"></view>
-            <view class="swatch-name">{{item.name}}</view>
-          </view>
-        </view>
-      </view>
-
       <view class="login-actions">
-        <button class="primary-btn" bindtap="submitAuth" disabled="{{loginDisabled}}">{{primaryButtonText}}</button>
+        <button
+          wx:if="{{(mode === 'register' || mode === 'bind') && registerStep === 1}}"
+          class="primary-btn"
+          bindtap="nextRegistrationStep"
+          disabled="{{loginDisabled}}"
+        >下一步</button>
+        <button
+          wx:else
+          class="primary-btn"
+          bindtap="submitAuth"
+          disabled="{{loginDisabled}}"
+        >{{primaryButtonText}}</button>
       </view>
 
-      <view class="mode-links" wx:if="{{mode === 'login'}}">
-        <view data-mode="register" bindtap="switchMode">没有账号，注册并绑定微信</view>
-        <view data-mode="forgot" bindtap="switchMode">忘记密码</view>
-      </view>
-      <view class="mode-links" wx:elif="{{mode === 'register' || mode === 'forgot'}}">
-        <view data-mode="login" bindtap="switchMode">返回账号密码登录</view>
-      </view>
-
-      <view class="status-row">
-        <view class="status-main">
-          <view class="status-title">微信绑定校验</view>
-          <view class="status-copy">账号密码正确后，还会确认当前微信是否为该账号绑定微信。</view>
+      <view class="auth-secondary" wx:if="{{mode === 'login'}}" data-mode="register" bindtap="switchMode">
+        <view class="auth-secondary-main">
+          <image src="/images/ui-icons/user-plus.svg" mode="aspectFit"></image>
+          <text>创建账号</text>
         </view>
-        <view class="pill pill-amber">{{mode === 'login' ? '未登录' : '绑定中'}}</view>
+        <image class="auth-secondary-arrow" src="/images/ui-icons/arrow-right.svg" mode="aspectFit"></image>
       </view>
+      <view class="return-login" wx:if="{{mode === 'register' || mode === 'forgot'}}" data-mode="login" bindtap="switchMode">已有账号，返回登录</view>
     </view>
   </view>
 </view>

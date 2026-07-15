@@ -3,6 +3,7 @@ const theme = require("../../utils/theme");
 const avatar = require("../../utils/avatar");
 const dialog = require("../../utils/dialog");
 const invite = require("../../utils/invite");
+const legal = require("../../utils/legal");
 
 function normalizePhone(value) {
   return String(value || "").replace(/[^\d]/g, "").slice(0, 11);
@@ -16,55 +17,58 @@ function normalizeAccount(value) {
   return String(value || "").trim().replace(/\s/g, "");
 }
 
-function isGenericWechatNickName(value) {
-  const nickName = normalizeText(value);
-  return !nickName || nickName === "微信用户" || nickName === "WeChat User";
-}
-
-function pickUsableWechatProfile(userInfo) {
-  const nickName = normalizeText(userInfo && userInfo.nickName);
-  const avatarUrl = normalizeText(userInfo && userInfo.avatarUrl);
-  const usableNickName = isGenericWechatNickName(nickName) ? "" : nickName;
-  return {
-    nickName: usableNickName,
-    avatarUrl: usableNickName ? avatarUrl : "",
-  };
-}
-
-function getWechatProfileGuide() {
-  return "微信新版不支持一键读取真实头像昵称。请点左侧头像选择微信头像，再点圈内昵称输入框选择微信昵称或手动填写。";
-}
-
 function modeMeta(mode) {
   if (mode === "register") {
     return {
-      title: "注册账号并绑定微信",
-      copy: "设置账号密码，并把当前微信绑定为这个账号的唯一登录微信。",
+      title: "创建 InCircle 账号",
+      copy: "先设置账号安全信息，再完成你的圈内资料。",
       button: "注册并登录",
-      hero: "注册后会绑定当前微信，之后账号密码登录也会校验这个微信身份。",
+      hero: "一个账号绑定一个微信身份，让你的圈子和成员资料始终属于你。",
+      icon: "/images/ui-icons/user-plus.svg",
     };
   }
   if (mode === "bind") {
     return {
-      title: "绑定账号密码",
-      copy: "检测到当前微信已有 InCircle 数据，请先补一个账号密码，之后再登录。",
+      title: "完善账号安全",
+      copy: "为当前微信设置账号密码，原有圈子和成员资料不会改变。",
       button: "绑定并登录",
-      hero: "这是一次老用户安全升级。绑定后，你的圈子和成员身份不会丢。",
+      hero: "完成安全升级后，你可以继续使用原来的圈子和成员身份。",
+      icon: "/images/ui-icons/shield-check.svg",
     };
   }
   if (mode === "forgot") {
     return {
-      title: "忘记密码",
-      copy: "输入已绑定账号，系统会校验当前微信是否为该账号绑定微信。",
-      button: "校验微信并重置",
+      title: "重置登录密码",
+      copy: "使用当前绑定微信校验身份，不发送短信验证码。",
+      button: "确认重置密码",
       hero: "忘记密码时，不发短信；用当前绑定微信校验身份后重置。",
+      icon: "/images/ui-icons/key-round.svg",
+    };
+  }
+  if (mode === "consent") {
+    return {
+      title: "继续使用 InCircle",
+      copy: "服务协议和隐私政策已补充，请阅读并确认后继续。",
+      button: "同意并继续",
+      hero: "你的圈子数据仍然保留，确认最新协议后即可继续进入。",
+      icon: "/images/ui-icons/shield-check.svg",
+    };
+  }
+  if (mode === "agreement") {
+    return {
+      title: "使用前请先确认",
+      copy: "阅读服务协议与隐私政策后，再连接账号服务。",
+      button: "同意并继续",
+      hero: "我们会先取得你的明确同意，再校验微信身份或处理账号信息。",
+      icon: "/images/ui-icons/shield-check.svg",
     };
   }
   return {
-    title: "账号密码登录",
-    copy: "输入账号和密码，系统会同时校验当前微信是否与账号绑定。",
+    title: "欢迎回来",
+    copy: "登录你的账号，回到熟悉的圈子。",
     button: "登录",
     hero: "先用账号密码确认身份，再用当前微信确认这是本人。",
+    icon: "/images/ui-icons/log-in.svg",
   };
 }
 
@@ -72,12 +76,12 @@ Page({
   data: {
     loading: true,
     submitting: false,
-    syncingWechat: false,
     loginDisabled: false,
     avatarUploading: false,
     mode: "login",
     modeTitle: "账号密码登录",
     modeCopy: "",
+    modeIcon: "/images/ui-icons/log-in.svg",
     heroCopy: "",
     primaryButtonText: "登录",
     account: "",
@@ -85,7 +89,6 @@ Page({
     confirmPassword: "",
     nickName: "",
     wechatNickName: "",
-    wechatNameText: "待同步",
     phone: "",
     title: "",
     profileNote: "",
@@ -93,7 +96,6 @@ Page({
     avatarUrl: "/images/avatar.png",
     avatarUrlDisplay: "/images/avatar.png",
     setupError: "",
-    hasSyncedWechat: false,
     nextCode: "",
     user: null,
     backendError: "",
@@ -102,8 +104,15 @@ Page({
     feedbackType: "",
     themePreferenceExplicit: false,
     themeClass: "",
-    themeOptions: [],
     nextInviteToken: "",
+    registerStep: 1,
+    passwordVisible: false,
+    confirmPasswordVisible: false,
+    agreementAccepted: false,
+    agreementAttention: false,
+    legalProfile: null,
+    legalProfileReady: false,
+    pendingAgreementSession: null,
   },
 
   onLoad(options) {
@@ -114,12 +123,59 @@ Page({
       nextCode: credential.joinCode,
       nextInviteToken: credential.inviteToken,
       modeCopy: meta.copy,
+      modeIcon: meta.icon,
       heroCopy: meta.hero,
     });
-    this.loadSession();
+    this.loadLegalProfile();
+  },
+
+  loadLegalProfile(options) {
+    this.setData({
+      loading: true,
+      loginDisabled: true,
+      backendError: "",
+      hasBackendError: false,
+      legalProfileReady: false,
+    });
+    return api.getPublicLegalProfile({ force: !!(options && options.force) })
+      .then((profile) => {
+        const normalized = legal.normalizePublicLegalProfile(profile);
+        if (!legal.isPublicLegalProfileComplete(normalized)) {
+          throw new Error("协议公开信息尚未配置");
+        }
+        const agreementAccepted = legal.isLocallyAccepted(normalized);
+        this.setData({
+          legalProfile: normalized,
+          legalProfileReady: true,
+          agreementAccepted,
+          loginDisabled: false,
+        });
+        if (!agreementAccepted) {
+          this.setAuthMode("agreement", { keepProfile: true });
+          this.setData({ loading: false });
+          return null;
+        }
+        return this.loadSession();
+      })
+      .catch((error) => {
+        const message = (error && error.message) || "协议信息加载失败，请稍后重试";
+        this.setAuthMode("agreement", { keepProfile: true });
+        this.setData({
+          loading: false,
+          loginDisabled: true,
+          legalProfile: null,
+          legalProfileReady: false,
+          agreementAccepted: false,
+          backendError: message,
+          hasBackendError: true,
+        });
+        this.showFeedback("协议信息加载失败", "error");
+        return null;
+      });
   },
 
   loadSession() {
+    if (!this.data.legalProfileReady) return this.loadLegalProfile({ force: true });
     this.setData({
       loading: true,
       backendError: "",
@@ -133,19 +189,57 @@ Page({
         12000
       );
     });
-    Promise.race([sessionCheck, sessionTimeout])
+    return Promise.race([sessionCheck, sessionTimeout])
       .then((session) => {
         if (this.sessionTimer) {
           clearTimeout(this.sessionTimer);
           this.sessionTimer = null;
         }
+        const sessionAgreements = (session && session.agreements) || {};
+        const legalProfile = this.data.legalProfile || {};
+        if (
+          sessionAgreements.termsVersion
+          && sessionAgreements.privacyVersion
+          && (
+            sessionAgreements.termsVersion !== legalProfile.termsVersion
+            || sessionAgreements.privacyVersion !== legalProfile.privacyVersion
+          )
+        ) {
+          return this.loadLegalProfile({ force: true });
+        }
         const user = session.user || {};
         this.applyUser(user);
         if (session.loggedIn && !session.needsAccountBinding) {
-          this.goNext(session);
+          if (session.agreementsAccepted) {
+            legal.markLocallyAccepted(this.data.legalProfile);
+            this.goNext(session);
+            return;
+          }
+          if (this.initialConsentJustGranted) {
+            this.initialConsentJustGranted = false;
+            return api
+              .acceptAgreements(legal.acceptancePayload(true, this.data.legalProfile))
+              .then((acceptedSession) => {
+                legal.markLocallyAccepted(this.data.legalProfile);
+                this.goNext(acceptedSession);
+              })
+              .catch((error) => {
+                const message = (error && error.message) || "协议确认失败，请重试";
+                if (error && error.errCode === "AGREEMENT_ACCEPTANCE_REQUIRED") {
+                  this.setData({ agreementAccepted: false, agreementAttention: true });
+                  return this.loadLegalProfile({ force: true });
+                }
+                this.setAuthMode("consent", { keepProfile: true });
+                this.setData({ pendingAgreementSession: session, loading: false, setupError: message });
+                this.showFeedback(message, "error");
+              });
+          }
+          this.setAuthMode("consent", { keepProfile: true });
+          this.setData({ pendingAgreementSession: session, loading: false });
           return;
         }
         if (session.needsAccountBinding) {
+          this.initialConsentJustGranted = false;
           this.setAuthMode("bind", { keepProfile: true });
           if (!this.hasShownBindModal) {
             this.hasShownBindModal = true;
@@ -156,6 +250,9 @@ Page({
               showCancel: false,
             });
           }
+        } else if (this.initialConsentJustGranted) {
+          this.initialConsentJustGranted = false;
+          this.setAuthMode("login");
         }
         this.setData({ loading: false });
       })
@@ -182,7 +279,6 @@ Page({
       account: user.accountName || this.data.account || "",
       nickName: user.nickName || "",
       wechatNickName: user.wechatNickName || user.nickName || "",
-      wechatNameText: user.wechatNickName || user.nickName || "待同步",
       phone: user.phone || "",
       title: user.title || "",
       profileNote: user.profileNote || "",
@@ -200,17 +296,23 @@ Page({
       modeCopy: meta.copy,
       heroCopy: meta.hero,
       primaryButtonText: meta.button,
+      modeIcon: meta.icon,
       setupError: "",
       backendError: "",
       hasBackendError: false,
       password: "",
       confirmPassword: "",
+      passwordVisible: false,
+      confirmPasswordVisible: false,
+      registerStep: 1,
+      agreementAccepted: false,
+      agreementAttention: false,
+      pendingAgreementSession: mode === "consent" ? this.data.pendingAgreementSession : null,
     };
     if (!(options && options.keepProfile)) {
       Object.assign(nextData, {
         nickName: "",
         wechatNickName: "",
-        wechatNameText: "待同步",
         phone: "",
         title: "",
         profileNote: "",
@@ -225,6 +327,65 @@ Page({
   switchMode(e) {
     const mode = e.currentTarget.dataset.mode;
     this.setAuthMode(mode || "login", { keepProfile: mode === "bind" });
+  },
+
+  backAuthFlow() {
+    if ((this.data.mode === "register" || this.data.mode === "bind") && this.data.registerStep === 2) {
+      this.setData({ registerStep: 1, setupError: "" });
+      return;
+    }
+    if (this.data.mode !== "bind" && this.data.mode !== "consent") this.setAuthMode("login");
+  },
+
+  nextRegistrationStep() {
+    if (this.data.submitting) return;
+    const error = this.validateAccountPassword(true);
+    if (error) {
+      this.setData({ setupError: error });
+      this.showFeedback(error, "warning");
+      return;
+    }
+    this.setData({ registerStep: 2, setupError: "" });
+  },
+
+  togglePasswordVisibility() {
+    this.setData({ passwordVisible: !this.data.passwordVisible });
+  },
+
+  toggleConfirmPasswordVisibility() {
+    this.setData({ confirmPasswordVisible: !this.data.confirmPasswordVisible });
+  },
+
+  toggleAgreement() {
+    if (this.data.submitting) return;
+    if (!this.data.legalProfileReady) {
+      this.setData({ setupError: "协议信息尚未加载，请重新加载" });
+      return;
+    }
+    this.setData({
+      agreementAccepted: !this.data.agreementAccepted,
+      agreementAttention: false,
+      setupError: "",
+    });
+  },
+
+  openLegal(e) {
+    const type = e.currentTarget.dataset.type === "privacy" ? "privacy" : "terms";
+    wx.navigateTo({ url: `/pages/legal/index?type=${type}` });
+  },
+
+  requireAgreement() {
+    if (!this.data.legalProfileReady) {
+      const message = "协议信息尚未加载，请重新加载";
+      this.setData({ agreementAttention: true, setupError: message });
+      this.showFeedback(message, "error");
+      return false;
+    }
+    if (this.data.agreementAccepted) return true;
+    const message = "请先阅读并同意用户服务协议和隐私政策";
+    this.setData({ agreementAttention: true, setupError: message });
+    this.showFeedback(message, "warning");
+    return false;
   },
 
   showFeedback(message, type) {
@@ -263,12 +424,15 @@ Page({
     this.setData({
       nickName: value,
       wechatNickName: value || this.data.wechatNickName,
-      wechatNameText: value || this.data.wechatNickName || "待同步",
       displayName: value || "微信用户",
     });
   },
 
   onChooseAvatar(e) {
+    if (!this.data.agreementAccepted) {
+      this.requireAgreement();
+      return;
+    }
     const avatarUrl = e.detail && e.detail.avatarUrl ? e.detail.avatarUrl : "";
     if (!avatarUrl) {
       this.showFeedback("未选择头像", "warning");
@@ -281,7 +445,6 @@ Page({
       avatarUrlDisplay: avatarUrl,
       avatarUploading: true,
       loginDisabled: true,
-      hasSyncedWechat: true,
       setupError: "",
     });
     avatar
@@ -321,76 +484,6 @@ Page({
     this.setData({ profileNote: e.detail.value });
   },
 
-  onThemeSelect(e) {
-    const selected = theme.setTheme(e.currentTarget.dataset.key);
-    theme.applyPageTheme(this);
-    this.setData({ themePreferenceExplicit: true });
-    this.showFeedback(`已切换为${selected.name}`, "success");
-  },
-
-  syncWechatProfile() {
-    if (this.data.syncingWechat) return Promise.resolve(null);
-    this.setData({ syncingWechat: true, loginDisabled: true, setupError: "" });
-    if (!wx.getUserProfile) {
-      this.setData({ syncingWechat: false, loginDisabled: !!this.data.submitting });
-      const message = getWechatProfileGuide();
-      this.setData({ setupError: message });
-      this.showFeedback("请点头像和昵称框选择", "warning");
-      return Promise.resolve(null);
-    }
-    return new Promise((resolve) => {
-      wx.getUserProfile({
-        desc: "用于默认填充你的圈内身份资料",
-        success: (res) => {
-          const userInfo = pickUsableWechatProfile(res.userInfo || {});
-          const nextData = {
-            hasSyncedWechat: !!(userInfo.nickName || userInfo.avatarUrl),
-            setupError: "",
-          };
-
-          if (userInfo.nickName) {
-            const nextNickName = this.data.nickName || userInfo.nickName;
-            Object.assign(nextData, {
-              nickName: nextNickName,
-              wechatNickName: userInfo.nickName,
-              wechatNameText: userInfo.nickName,
-              displayName: nextNickName,
-            });
-          }
-
-          if (userInfo.avatarUrl) {
-            nextData.avatarUrl = userInfo.avatarUrl;
-            nextData.avatarUrlDisplay = userInfo.avatarUrl;
-          }
-
-          if (!nextData.hasSyncedWechat) {
-            const message = getWechatProfileGuide();
-            this.setData({ setupError: message });
-            this.showFeedback("请点头像和昵称框选择", "warning");
-            resolve(null);
-            return;
-          }
-
-          this.setData(nextData);
-          this.showFeedback(userInfo.nickName ? "微信资料已同步" : "头像已同步", "success");
-          resolve(userInfo);
-        },
-        fail: (error) => {
-          const errMsg = error && error.errMsg ? error.errMsg : "";
-          const message = errMsg.indexOf("auth deny") !== -1 || errMsg.indexOf("deny") !== -1
-            ? "你取消了授权，可点头像选择微信头像，并在昵称框选择微信昵称。"
-            : getWechatProfileGuide();
-          this.setData({ setupError: message });
-          this.showFeedback("请点头像和昵称框选择", "warning");
-          resolve(null);
-        },
-        complete: () => {
-          this.setData({ syncingWechat: false, loginDisabled: !!this.data.submitting });
-        },
-      });
-    });
-  },
-
   buildProfile() {
     const nickName = normalizeText(this.data.nickName || this.data.wechatNickName);
     return {
@@ -424,14 +517,54 @@ Page({
   },
 
   submitAuth() {
-    if (this.data.submitting || this.data.syncingWechat) return;
+    if (this.data.submitting) return;
     const mode = this.data.mode;
+    if (!this.requireAgreement()) return;
+    const agreementAcceptance = legal.acceptancePayload(true, this.data.legalProfile);
+
+    if (mode === "consent") {
+      this.setData({
+        submitting: true,
+        loginDisabled: true,
+        primaryButtonText: "确认中...",
+        setupError: "",
+      });
+      api
+        .acceptAgreements(agreementAcceptance)
+        .then((session) => {
+          legal.markLocallyAccepted(this.data.legalProfile);
+          this.showFeedback("协议确认成功", "success");
+          this.goNext(session || this.data.pendingAgreementSession);
+        })
+        .catch((error) => {
+          const message = (error && error.message) || "协议确认失败，请重试";
+          if (error && error.errCode === "AGREEMENT_ACCEPTANCE_REQUIRED") {
+            this.setData({ agreementAccepted: false, agreementAttention: true });
+            return this.loadLegalProfile({ force: true });
+          }
+          this.setData({ setupError: message });
+          this.showFeedback(message, "error");
+        })
+        .finally(() => {
+          this.setData({ submitting: false, loginDisabled: false, primaryButtonText: modeMeta("consent").button });
+        });
+      return;
+    }
+
+    if (mode === "agreement") {
+      legal.markLocallyAccepted(this.data.legalProfile);
+      this.initialConsentJustGranted = true;
+      this.loadSession();
+      return;
+    }
+
     const requireConfirm = mode !== "login";
     let error = this.validateAccountPassword(requireConfirm);
     const payload = {
       account: normalizeAccount(this.data.account),
       password: String(this.data.password || ""),
       themePreferenceExplicit: this.data.themePreferenceExplicit,
+      agreementAcceptance,
     };
     if (!error && (mode === "register" || mode === "bind")) {
       const profile = this.buildProfile();
@@ -463,10 +596,12 @@ Page({
             ? api.resetPassword(payload)
             : api.accountLogin(payload.account, payload.password, {
                 themePreferenceExplicit: payload.themePreferenceExplicit,
+                agreementAcceptance,
               });
 
     action
       .then((session) => {
+        legal.markLocallyAccepted(this.data.legalProfile);
         this.showFeedback(mode === "forgot" ? "密码已重置" : "登录成功", "success");
         this.goNext(session);
       })
@@ -484,6 +619,10 @@ Page({
           return;
         }
         const message = err && err.message ? err.message : "操作失败";
+        if (err && err.errCode === "AGREEMENT_ACCEPTANCE_REQUIRED") {
+          this.setData({ agreementAccepted: false, agreementAttention: true });
+          return this.loadLegalProfile({ force: true });
+        }
         this.setData({
           backendError: message,
           hasBackendError: true,
@@ -506,8 +645,13 @@ Page({
       .accountLogin(payload.account, payload.password, {
         themePreferenceExplicit: payload.themePreferenceExplicit,
         confirmWechatRebind: true,
+        agreementAcceptance: payload.agreementAcceptance || legal.acceptancePayload(
+          this.data.agreementAccepted,
+          this.data.legalProfile
+        ),
       })
       .then((session) => {
+        legal.markLocallyAccepted(this.data.legalProfile);
         this.showFeedback("微信已重新绑定", "success");
         this.goNext(session);
       })
@@ -522,6 +666,10 @@ Page({
   },
 
   retrySession() {
+    if (!this.data.legalProfileReady) {
+      this.loadLegalProfile({ force: true });
+      return;
+    }
     this.loadSession();
   },
 

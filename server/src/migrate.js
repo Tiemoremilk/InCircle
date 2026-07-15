@@ -4,6 +4,7 @@ const crypto = require("crypto");
 
 const { loadConfig } = require("./config");
 const { createDatabase } = require("./db");
+const { reconcilePublicLegalProfile } = require("./legal-profile");
 const { reconcileDefaultSystemDocs } = require("./system-docs");
 
 function checksumOf(content) {
@@ -75,6 +76,8 @@ async function main() {
       }
       if (!appliedChecksum) await applyVersionedMigration(db, migration);
     }
+    const legalProfile = await db.withTransaction(() => reconcilePublicLegalProfile(db, config));
+    console.log(`Public legal profile ${legalProfile.configured ? "is configured" : "is not configured"}.`);
     const systemDocs = await db.withTransaction(() => reconcileDefaultSystemDocs(db));
     console.log(
       `System docs reconciled for ${systemDocs.circles} circles `

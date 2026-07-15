@@ -22,6 +22,11 @@ DATABASE_URL=postgres://incircle:your-db-password@postgres:5432/incircle
 CORS_ORIGINS=https://your-api.example.com
 PUBLIC_BASE_URL=https://your-api.example.com
 UPLOAD_DIR=/app/uploads
+LEGAL_OPERATOR_NAME=your-public-operator-name
+LEGAL_CONTACT_EMAIL=legal-contact@example.com
+LEGAL_TERMS_VERSION=your-terms-version
+LEGAL_PRIVACY_VERSION=your-privacy-version
+LEGAL_EFFECTIVE_DATE=YYYY-MM-DD
 WECHAT_APP_ID=your-wechat-app-id
 WECHAT_APP_SECRET=your-wechat-app-secret
 INCIRCLE_SUPER_ADMIN_OPENIDS=your-openid
@@ -33,6 +38,8 @@ AI_CONTENT_SECURITY_ENABLED=true
 
 `WECHAT_APP_SECRET` is required because the backend validates every login request with WeChat `jscode2session` and generates official WeChat Mini Program invite codes with `getwxacodeunlimit`.
 
+The five `LEGAL_*` values are synchronized into the singleton `incircle_public_legal_profile` table by `npm run db:migrate`. The Mini Program reads them through an anonymous, read-only endpoint so real production values do not need to be committed to Git. Changing either version makes prior acceptance stale and requires users to confirm the current agreements again.
+
 ## Deploy
 
 From the Windows project root, first create the local private deployment script from the committed template:
@@ -41,7 +48,7 @@ From the Windows project root, first create the local private deployment script 
 Copy-Item .\scripts\deploy-server.example.ps1 .\scripts\deploy-server.ps1
 ```
 
-Set the local AppID and public API URL in `scripts/deploy-server.ps1`, or pass them as command parameters. The copied script is excluded from Git. Then deploy with:
+Set the local AppID, public API URL, legal operator name, and legal contact email in `scripts/deploy-server.ps1`, or pass them as command parameters. The copied script is excluded from Git. Then deploy with:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\deploy-server.ps1 -HostName "your-server-host"

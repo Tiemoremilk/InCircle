@@ -10,6 +10,10 @@ const WECHAT_CODE_TYPES = {
   incircleResetPassword: true,
 };
 
+const ANONYMOUS_TYPES = {
+  incirclePublicLegalProfile: true,
+};
+
 const REQUEST_TIMEOUT_BY_TYPE = {
   incircleAiTestProvider: 30000,
   incircleAiSyncModels: 35000,
@@ -22,6 +26,7 @@ const AI_STREAM_RECOVERY_FRAME_CHARS = 32;
 
 const READ_TTL = {
   // This is the shared policy for cache, in-flight merging, and safe transient retries.
+  incirclePublicLegalProfile: 300000,
   incircleSession: 300000,
   incircleListMyCircles: 20000,
   incircleJoinPreview: 0,
@@ -56,10 +61,12 @@ const READ_TTL = {
 };
 
 const PERSISTED_READ_TYPES = {
+  incirclePublicLegalProfile: true,
   incircleSession: true,
 };
 
 const WRITE_INVALIDATION = {
+  incircleAcceptAgreements: ["incircleSession"],
   incircleAiUpdateSettings: ["incircleAiStatus", "incircleAiSettings"],
   incircleAiSaveProvider: ["incircleAiStatus", "incircleAiSettings", "incircleAiListProviders", "incircleAiListModels"],
   incircleAiArchiveProvider: ["incircleAiStatus", "incircleAiSettings", "incircleAiListProviders", "incircleAiListModels"],
@@ -202,8 +209,9 @@ function sendHttpRequest(type, data, options) {
   }
   const globalData = getGlobalData();
   const timeout = REQUEST_TIMEOUT_BY_TYPE[type] || globalData.httpBackendTimeout || DEFAULT_HTTP_REQUEST_TIMEOUT_MS;
+  const anonymous = !!ANONYMOUS_TYPES[type] || !!(options && options.anonymous);
   const forceWechatCode = !!WECHAT_CODE_TYPES[type] || !!(options && options.forceWechatCode);
-  const accessToken = forceWechatCode ? "" : auth.getAccessToken();
+  const accessToken = anonymous || forceWechatCode ? "" : auth.getAccessToken();
   const headers = Object.assign(
     {
       "content-type": "application/json",
@@ -212,7 +220,11 @@ function sendHttpRequest(type, data, options) {
     globalData.httpBackendHeaders || {},
     accessToken ? { Authorization: `Bearer ${accessToken}` } : {}
   );
-  const loginCodePromise = forceWechatCode || !accessToken ? auth.getWechatLoginCode() : Promise.resolve("");
+  const loginCodePromise = anonymous
+    ? Promise.resolve("")
+    : forceWechatCode || !accessToken
+      ? auth.getWechatLoginCode()
+      : Promise.resolve("");
   let requestTask = null;
   const request = loginCodePromise.then(
     (wechatLoginCode) =>
@@ -474,6 +486,11 @@ function getSession(options) {
   return requestAction("incircleSession", { clientThemeKey: currentThemeKey() }).then(afterSession);
 }
 
+function getPublicLegalProfile(options) {
+  if (options && options.force) clearCache(["incirclePublicLegalProfile"]);
+  return requestAction("incirclePublicLegalProfile", {});
+}
+
 function login(profile) {
   return requestAction("incircleLogin", { profile, clientThemeKey: currentThemeKey() }).then(afterSession);
 }
@@ -485,6 +502,7 @@ function accountLogin(account, password, options) {
     clientThemeKey: currentThemeKey(),
     themePreferenceExplicit: !!(options && options.themePreferenceExplicit),
     confirmWechatRebind: !!(options && options.confirmWechatRebind),
+    agreementAcceptance: options && options.agreementAcceptance,
   }).then(afterSession);
 }
 
@@ -507,6 +525,10 @@ function resetPassword(payload) {
     "incircleResetPassword",
     Object.assign({}, payload || {}, { clientThemeKey: currentThemeKey() })
   ).then(afterSession);
+}
+
+function acceptAgreements(agreementAcceptance) {
+  return requestAction("incircleAcceptAgreements", { agreementAcceptance }).then(afterSession);
 }
 
 function changePassword(payload) {
@@ -1327,12 +1349,14 @@ function streamAiChat(payload, handlers) {
 
 module.exports = {
   clearCache,
+  getPublicLegalProfile,
   getSession,
   login,
   accountLogin,
   registerAccount,
   bindAccount,
   resetPassword,
+  acceptAgreements,
   changePassword,
   updateTheme,
   logout,

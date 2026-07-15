@@ -1,6 +1,7 @@
 {
   "pages": [
     "pages/login/index",
+    "pages/legal/index",
     "pages/circle-switch/index",
     "pages/my-circles/index",
     "pages/circle-join/index",
