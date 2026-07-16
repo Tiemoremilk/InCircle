@@ -52,6 +52,7 @@ Component({
     docked: false,
     dockSide: "right",
     reduceMotion: false,
+    themeRevision: 0,
     visualStyle: "--theme-primary: #2f7d50; --theme-primary-dark: #1c5638; --theme-hero-shadow: rgba(47, 125, 80, 0.24);",
   },
 
@@ -71,12 +72,14 @@ Component({
       this.keyboardHandler = (event) => this.onKeyboardHeight(event);
       if (typeof wx.onKeyboardHeightChange === "function") wx.onKeyboardHeightChange(this.keyboardHandler);
       this.metrics = this.readMetrics();
+      theme.registerVisualConsumer(this);
       this.applyTheme();
       this.setData({ reduceMotion: this.metrics.reduceMotion });
       this.refresh();
     },
     detached() {
       this.componentAlive = false;
+      theme.unregisterVisualConsumer(this);
       this.refreshToken += 1;
       if (this.snapTimer) clearTimeout(this.snapTimer);
       if (this.transitionTimer) clearTimeout(this.transitionTimer);
@@ -106,11 +109,31 @@ Component({
   },
 
   methods: {
-    applyTheme() {
-      const current = theme.getCurrentTheme();
-      this.setData({
-        visualStyle: `--theme-primary: ${current.primary}; --theme-primary-dark: ${current.primaryDark}; --theme-hero-shadow: ${current.primary}3d;`,
-      });
+    refreshTheme(options) {
+      return this.applyTheme(options);
+    },
+
+    applyTheme(options) {
+      const settings = options || {};
+      const current = settings.theme || theme.getCurrentTheme();
+      const visualStyle = `--theme-primary: ${current.primary}; --theme-primary-dark: ${current.primaryDark}; --theme-hero-shadow: ${current.primary}3d;`;
+      const nextData = {};
+      if (this.data.visualStyle !== visualStyle) nextData.visualStyle = visualStyle;
+      if (typeof settings.revision === "number" && this.data.themeRevision !== settings.revision) {
+        nextData.themeRevision = settings.revision;
+      }
+      if (!Object.keys(nextData).length) return Promise.resolve(true);
+      if (settings.waitForRender) {
+        return new Promise((resolve) => {
+          if (!this.componentAlive) {
+            resolve(true);
+            return;
+          }
+          this.setData(nextData, () => resolve(true));
+        });
+      }
+      this.setData(nextData);
+      return Promise.resolve(true);
     },
 
     readMetrics() {

@@ -98,7 +98,7 @@ test("member editor follows the shared form layout and hides the custom tabbar",
   assert.match(script, /editCard\(\)\s*\{\s*this\.setTabBarHidden\(true\)/);
   assert.match(script, /setTabBarHidden\(false\)/);
   assert.match(tabbarScript, /hidden:\s*false/);
-  assert.match(tabbarTemplate, /wx:if="\{\{!hidden\}\}"/);
+  assert.match(tabbarTemplate, /wx:if="\{\{themeReady && !hidden\}\}"/);
 });
 
 test("custom theme picker uses real derived colors and fixed actions", () => {

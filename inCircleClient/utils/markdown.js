@@ -35,7 +35,10 @@ function createRenderer() {
     return `<h${safeLevel} class="md-heading md-h${safeLevel}" style="margin:.75em 0 .35em;color:inherit;font-size:${sizes[safeLevel - 1]};font-weight:700;line-height:1.35;letter-spacing:0;">${text}</h${safeLevel}>`;
   };
   renderer.paragraph = (text) => `<p class="md-paragraph" style="margin:0 0 .5em;color:inherit;line-height:inherit;">${text}</p>`;
-  renderer.blockquote = (quote) => `<blockquote class="md-quote" style="margin:.55em 0;padding:.45em .6em;border-left:2px solid currentColor;border-radius:0 4px 4px 0;background:rgba(40,70,55,.06);color:inherit;">${quote}</blockquote>`;
+  renderer.blockquote = (quote) => {
+    const content = normalizeTrailingParagraphSpacing(quote);
+    return `<blockquote class="md-quote" style="margin:.55em 0;padding:.45em .6em;border-left:2px solid currentColor;border-radius:0 4px 4px 0;background:rgba(40,70,55,.06);color:inherit;">${content}</blockquote>`;
+  };
   renderer.list = (body, ordered, start) => {
     const tag = ordered ? "ol" : "ul";
     const startValue = ordered && Number(start) > 1 ? ` start="${Math.floor(Number(start))}"` : "";
@@ -74,7 +77,7 @@ function createRenderer() {
 
 const renderer = createRenderer();
 
-function normalizeOuterBlockSpacing(value) {
+function normalizeTrailingParagraphSpacing(value) {
   const html = String(value || "").trim();
   if (!html.endsWith("</p>")) return html;
   const paragraphStyle = '<p class="md-paragraph" style="margin:0 0 .5em;';
@@ -104,7 +107,7 @@ function renderMarkdown(value) {
       renderer,
       silent: false,
     });
-    return typeof html === "string" ? normalizeOuterBlockSpacing(html) : fallbackHtml(renderSource);
+    return typeof html === "string" ? normalizeTrailingParagraphSpacing(html) : fallbackHtml(renderSource);
   } catch (error) {
     return fallbackHtml(renderSource);
   }

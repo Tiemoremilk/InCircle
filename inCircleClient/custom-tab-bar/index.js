@@ -12,7 +12,8 @@ Component({
   data: {
     list: TAB_BAR_ITEMS,
     hidden: false,
-    themeClass: theme.getCurrentTheme().className,
+    themeReady: false,
+    themeClass: "",
     tabBarStyle: theme.getTabBarStyle(),
     currentPath: "",
     selectedIndex: -1,
@@ -21,22 +22,52 @@ Component({
 
   lifetimes: {
     attached() {
-      this.refresh();
+      this.tabBarAlive = true;
+      theme.registerCustomTabBar(this);
+      this.refresh({ ready: true, waitForRender: true });
+    },
+    detached() {
+      this.tabBarAlive = false;
+      theme.unregisterCustomTabBar(this);
     },
   },
 
   methods: {
+    refreshTheme(options) {
+      return this.refresh(Object.assign({}, options || {}, { themeOnly: true }));
+    },
+
     refresh(options) {
-      const currentTheme = theme.getCurrentTheme();
-      const currentPath = options && options.currentPath ? options.currentPath : this.getCurrentPath();
-      const selectedIndex = TAB_BAR_ITEMS.findIndex((item) => item.pagePath === currentPath);
-      const tabBarStyle = theme.getTabBarStyle();
+      const settings = options || {};
+      const currentTheme = settings.theme || theme.getCurrentTheme();
+      const tabBarStyle = theme.getTabBarStyle(currentTheme);
       const nextData = {};
-      if (this.data.currentPath !== currentPath) nextData.currentPath = currentPath;
-      if (this.data.selectedIndex !== selectedIndex) nextData.selectedIndex = selectedIndex;
-      if (this.data.themeClass !== currentTheme.className) nextData.themeClass = currentTheme.className;
+      const themeOnly = !!settings.themeOnly;
+      if (!themeOnly) {
+        const currentPath = settings.currentPath ? settings.currentPath : this.getCurrentPath();
+        const selectedIndex = TAB_BAR_ITEMS.findIndex((item) => item.pagePath === currentPath);
+        if (this.data.currentPath !== currentPath) nextData.currentPath = currentPath;
+        if (this.data.selectedIndex !== selectedIndex) nextData.selectedIndex = selectedIndex;
+      }
+      const themeClass = `${currentTheme.className}${settings.suppressMotion ? " incircle-theme-sync" : ""}`;
+      if (this.data.themeClass !== themeClass) nextData.themeClass = themeClass;
       if (this.data.tabBarStyle !== tabBarStyle) nextData.tabBarStyle = tabBarStyle;
-      if (Object.keys(nextData).length) this.setData(nextData);
+      if (typeof settings.revision === "number" && this.data.themeRevision !== settings.revision) {
+        nextData.themeRevision = settings.revision;
+      }
+      if ((settings.ready || settings.waitForRender) && !this.data.themeReady) nextData.themeReady = true;
+      if (!Object.keys(nextData).length) return Promise.resolve(true);
+      if (settings.waitForRender) {
+        return new Promise((resolve) => {
+          if (!this.tabBarAlive) {
+            resolve(true);
+            return;
+          }
+          this.setData(nextData, () => resolve(true));
+        });
+      }
+      this.setData(nextData);
+      return Promise.resolve(true);
     },
 
     getCurrentPath() {
@@ -49,19 +80,27 @@ Component({
       const path = event.currentTarget.dataset.path;
       const index = Number(event.currentTarget.dataset.index);
       if (!path || path === this.data.currentPath || path === this.data.switchingPath) return;
-      this.setData({
-        selectedIndex: Number.isNaN(index) ? this.data.selectedIndex : index,
-        currentPath: path,
-        switchingPath: path,
-      });
-      wx.switchTab({
-        url: path,
-        complete: () => {
-          if (this.data.switchingPath === path) {
-            this.setData({ switchingPath: "" });
-          }
-        },
-      });
+      const performSwitch = () => {
+        if (!this.tabBarAlive || path === this.data.switchingPath) return;
+        this.setData({
+          selectedIndex: Number.isNaN(index) ? this.data.selectedIndex : index,
+          currentPath: path,
+          switchingPath: path,
+        });
+        wx.switchTab({
+          url: path,
+          complete: () => {
+            if (this.tabBarAlive && this.data.switchingPath === path) {
+              this.setData({ switchingPath: "" });
+            }
+          },
+        });
+      };
+      if (theme.isThemeTransitioning()) {
+        theme.whenThemeReady().then(performSwitch);
+        return;
+      }
+      performSwitch();
     },
   },
 });

@@ -27,7 +27,7 @@ if (typeof Page === "function" && !Page.__incircleThemePatched) {
     const originalOnShow = config.onShow;
     const originalOnHide = config.onHide;
     const originalOnUnload = config.onUnload;
-    config.data = Object.assign(
+    const initialData = Object.assign(
       {
         incircleKeyboardHeight: 0,
         incircleKeyboardInset: 0,
@@ -36,6 +36,8 @@ if (typeof Page === "function" && !Page.__incircleThemePatched) {
       },
       config.data || {}
     );
+    config.data = initialData;
+    theme.registerPageDefinition(config.data);
     const attachKeyboard = function (page) {
       keyboard.attach(page, (metrics) => {
         if (typeof page.onIncircleKeyboardChange === "function") {
@@ -52,6 +54,7 @@ if (typeof Page === "function" && !Page.__incircleThemePatched) {
     };
     config.onShow = function () {
       theme.applyPageTheme(this);
+      theme.acknowledgePageShown(this);
       theme.syncCustomTabBar(this);
       attachKeyboard(this);
       const page = this;
@@ -83,6 +86,7 @@ if (typeof Page === "function" && !Page.__incircleThemePatched) {
         }
       } finally {
         keyboard.detach(this);
+        theme.unregisterPage(this);
       }
     };
     return nativePage(config);
@@ -117,6 +121,7 @@ App({
         settlementReminderTemplateId: "",
       },
     };
+    theme.installRouteThemeSync();
     try {
       const backendSignature = `${currentBackend.mode}:${currentBackend.baseUrl || ""}`;
       const previousSignature = wx.getStorageSync("incircleBackendSignature");

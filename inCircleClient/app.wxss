@@ -33,6 +33,31 @@ button::after {
   padding: 28rpx 28rpx calc(52rpx + env(safe-area-inset-bottom));
 }
 
+.incircle-theme-sync,
+.incircle-theme-sync button,
+.incircle-theme-sync .hero-action,
+.incircle-theme-sync .quick-card,
+.incircle-theme-sync .category-chip,
+.incircle-theme-sync .segment,
+.incircle-theme-sync .status-btn,
+.incircle-theme-sync .recap-action,
+.incircle-theme-sync .theme-swatch,
+.incircle-theme-sync .location-picker-action,
+.incircle-theme-sync .section-action,
+.incircle-theme-sync .view-more-row,
+.incircle-theme-sync .rank-tab,
+.incircle-theme-sync .member-chip,
+.incircle-theme-sync .empty-action,
+.incircle-theme-sync .insight-cta,
+.incircle-theme-sync .doc-link,
+.incircle-theme-sync .doc-delete,
+.incircle-theme-sync .edit-btn,
+.incircle-theme-sync .create-btn,
+.incircle-theme-sync .detail-edit-action {
+  transition-duration: 0ms !important;
+  transition-delay: 0ms !important;
+}
+
 .home-page,
 .activities-page,
 .tools-page,

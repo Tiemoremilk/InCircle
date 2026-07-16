@@ -96,8 +96,17 @@ Page({
     confirmNewPassword: "",
   },
 
+  onLoad() {
+    this.circleSwitchAlive = true;
+  },
+
   onShow() {
+    this.circleSwitchAlive = true;
     this.loadCircles();
+  },
+
+  onUnload() {
+    this.circleSwitchAlive = false;
   },
 
   loadCircles() {
@@ -147,7 +156,7 @@ Page({
   },
 
   switchCircle(e) {
-    if (this.data.switchingCircle || this.data.creatingCircle || this.data.accountBusy) return;
+    if (this.data.switchingCircle || this.data.creatingCircle || this.data.accountBusy || this.data.themeSaving) return;
     const id = e.currentTarget.dataset.id;
     const target = (this.data.circles || []).find((item) => item.id === id) || {};
     this.setData({
@@ -178,7 +187,7 @@ Page({
   },
 
   openSettings(e) {
-    if (this.data.switchingCircle || this.data.creatingCircle) return;
+    if (this.data.switchingCircle || this.data.creatingCircle || this.data.themeSaving) return;
     const id = e.currentTarget.dataset.id;
     wx.navigateTo({
       url: `/pages/circle-settings/index?id=${id}`,
@@ -186,12 +195,12 @@ Page({
   },
 
   openAllCircles() {
-    if (this.data.switchingCircle || this.data.creatingCircle) return;
+    if (this.data.switchingCircle || this.data.creatingCircle || this.data.themeSaving) return;
     wx.navigateTo({ url: "/pages/my-circles/index" });
   },
 
   openJoin() {
-    if (this.data.switchingCircle || this.data.creatingCircle) return;
+    if (this.data.switchingCircle || this.data.creatingCircle || this.data.themeSaving) return;
     wx.navigateTo({
       url: "/pages/circle-join/index",
     });
@@ -207,7 +216,7 @@ Page({
   },
 
   createCircle() {
-    if (this.data.switchingCircle || this.data.creatingCircle || this.data.accountBusy) return;
+    if (this.data.switchingCircle || this.data.creatingCircle || this.data.accountBusy || this.data.themeSaving) return;
     if (!this.data.isSuperAdmin && !this.data.canCreateCircle) {
       this.showCircleCreateLimitDialog();
       return;
@@ -251,7 +260,7 @@ Page({
   },
 
   openHome() {
-    if (this.data.switchingCircle || this.data.creatingCircle) return;
+    if (this.data.switchingCircle || this.data.creatingCircle || this.data.themeSaving) return;
     if (!this.data.hasCurrentCircle) {
       wx.showToast({ title: "请先选择一个圈子", icon: "none" });
       return;
@@ -262,7 +271,7 @@ Page({
   },
 
   openAdmin() {
-    if (this.data.switchingCircle || this.data.creatingCircle) return;
+    if (this.data.switchingCircle || this.data.creatingCircle || this.data.themeSaving) return;
     wx.navigateTo({
       url: "/pages/admin/index",
     });
@@ -277,21 +286,28 @@ Page({
     }
     const previous = theme.getCurrentTheme();
     const previousCustomTheme = theme.getCustomThemeRgba();
-    const selected = theme.setTheme(themeKey);
-    if (selected.key === previous.key) return;
-    theme.applyPageTheme(this);
+    const preferenceToken = theme.beginPreferenceSave();
     this.setData({ themeSaving: true });
-    api
-      .updateTheme(selected.key)
-      .then(() => {
-        wx.showToast({ title: `已保存${selected.name}`, icon: "none" });
-      })
+    const selected = theme.setTheme(themeKey);
+    if (selected.key === previous.key) {
+      theme.endPreferenceSave(preferenceToken);
+      this.setData({ themeSaving: false });
+      return;
+    }
+    Promise.all([
+      api.updateTheme(selected.key),
+      theme.whenThemeReady(),
+    ])
       .catch((error) => {
         theme.setTheme(previous.key, previousCustomTheme);
-        theme.applyPageTheme(this);
-        wx.showToast({ title: (error && error.message) || "主题保存失败，已恢复", icon: "none" });
+        return theme.whenThemeReady().then(() => {
+          wx.showToast({ title: (error && error.message) || "主题保存失败，已恢复", icon: "none" });
+        });
       })
-      .finally(() => this.setData({ themeSaving: false }));
+      .finally(() => {
+        theme.endPreferenceSave(preferenceToken);
+        if (this.circleSwitchAlive) this.setData({ themeSaving: false });
+      });
   },
 
   openCustomTheme() {
@@ -346,27 +362,36 @@ Page({
     const rgba = customThemeRgba(this.data.customThemeDraft);
     const previous = theme.getCurrentTheme();
     const previousCustomTheme = theme.getCustomThemeRgba();
-    theme.setTheme(theme.CUSTOM_THEME_KEY, rgba);
-    theme.applyPageTheme(this);
+    const preferenceToken = theme.beginPreferenceSave();
     this.setData({ themeSaving: true });
-    api
-      .updateTheme(theme.CUSTOM_THEME_KEY, rgba)
-      .then((result) => {
+    theme.setTheme(theme.CUSTOM_THEME_KEY, rgba);
+    Promise.all([
+      api.updateTheme(theme.CUSTOM_THEME_KEY, rgba),
+      theme.whenThemeReady(),
+    ])
+      .then((results) => {
+        const result = results[0];
         const saved = (result && result.customTheme) || rgba;
         theme.setTheme(theme.CUSTOM_THEME_KEY, saved);
-        theme.applyPageTheme(this);
-        this.setData({
-          user: Object.assign({}, this.data.user || {}, { themeKey: theme.CUSTOM_THEME_KEY, customTheme: saved }),
-          customThemeOpen: false,
+        return theme.whenThemeReady().then(() => {
+          if (this.circleSwitchAlive) {
+            this.setData({
+              user: Object.assign({}, this.data.user || {}, { themeKey: theme.CUSTOM_THEME_KEY, customTheme: saved }),
+              customThemeOpen: false,
+            });
+          }
         });
-        wx.showToast({ title: "自定义主题已应用", icon: "none" });
       })
       .catch((error) => {
         theme.setTheme(previous.key, previousCustomTheme);
-        theme.applyPageTheme(this);
-        wx.showToast({ title: (error && error.message) || "主题保存失败，已恢复", icon: "none" });
+        return theme.whenThemeReady().then(() => {
+          wx.showToast({ title: (error && error.message) || "主题保存失败，已恢复", icon: "none" });
+        });
       })
-      .finally(() => this.setData({ themeSaving: false }));
+      .finally(() => {
+        theme.endPreferenceSave(preferenceToken);
+        if (this.circleSwitchAlive) this.setData({ themeSaving: false });
+      });
   },
 
   stopEvent() {},

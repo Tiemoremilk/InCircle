@@ -68,6 +68,18 @@ test("AI Markdown removes trailing paragraph spacing from chat bubbles", () => {
   assert.match(twoParagraphs, /style="margin:0;color:inherit;line-height:inherit;">第二段<\/p>$/);
 });
 
+test("AI Markdown removes the final paragraph gap inside blockquotes", () => {
+  const singleQuote = renderMarkdown("> 因为我终于明白，熬夜对身体不好。");
+  const multipleParagraphs = renderMarkdown("> 第一段\n>\n> 第二段");
+
+  assert.match(singleQuote, /<blockquote[^>]+><p class="md-paragraph" style="margin:0;/);
+  assert.doesNotMatch(singleQuote, /<blockquote[^>]+><p[^>]+margin:0 0 \.5em/);
+  assert.equal((multipleParagraphs.match(/margin:0 0 \.5em/g) || []).length, 1);
+  assert.match(multipleParagraphs, /第二段<\/p><\/blockquote>$/);
+  assert.match(multipleParagraphs, /第二段<\/p>/);
+  assert.doesNotMatch(multipleParagraphs, /第二段<\/p>\s*<p/);
+});
+
 test("AI chat uses the same Markdown view for reasoning and final answers", () => {
   const wxml = fs.readFileSync(path.join(root, "inCircleClient/pages/ai-chat/index.wxml"), "utf8");
   const page = fs.readFileSync(path.join(root, "inCircleClient/pages/ai-chat/index.js"), "utf8");

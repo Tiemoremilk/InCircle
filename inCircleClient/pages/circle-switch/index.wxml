@@ -42,15 +42,15 @@
           <text>{{item.role}}</text><text>·</text><text>{{item.memberText}}</text><text>·</text><text>{{item.lastEnteredText}}</text>
         </view>
         <view class="circle-actions">
-          <view class="primary-btn small-btn {{switchingCircle || creatingCircle ? 'disabled' : ''}}" data-id="{{item.id}}" bindtap="switchCircle" wx:if="{{item.canEnter}}">
+          <view class="primary-btn small-btn {{switchingCircle || creatingCircle || themeSaving ? 'disabled' : ''}}" data-id="{{item.id}}" bindtap="switchCircle" wx:if="{{item.canEnter}}">
             {{switchingCircleId === item.id ? '正在进入...' : item.isCurrent || item.currentClass === 'active' ? '进入圈子' : '切换进入'}}
           </view>
-          <view class="circle-settings-btn {{!item.canEnter ? 'only-action' : ''}} {{switchingCircle || creatingCircle ? 'disabled' : ''}}" data-id="{{item.id}}" bindtap="openSettings">
+          <view class="circle-settings-btn {{!item.canEnter ? 'only-action' : ''}} {{switchingCircle || creatingCircle || themeSaving ? 'disabled' : ''}}" data-id="{{item.id}}" bindtap="openSettings">
             <image src="/images/ui-icons/settings.png" mode="aspectFit"></image><text>设置</text>
           </view>
         </view>
       </view>
-      <view class="view-all-circles" wx:if="{{hasMoreCircles}}" bindtap="openAllCircles">
+      <view class="view-all-circles {{themeSaving ? 'disabled' : ''}}" wx:if="{{hasMoreCircles}}" bindtap="openAllCircles">
         <text>查看全部 {{circleTotal}} 个圈子</text><text class="view-all-arrow">›</text>
       </view>
     </view>
@@ -67,11 +67,11 @@
 
     <view class="circle-launchpad">
       <view class="page-actions">
-        <view class="circle-action join-action {{switchingCircle || creatingCircle ? 'disabled' : ''}}" bindtap="openJoin">
+        <view class="circle-action join-action {{switchingCircle || creatingCircle || themeSaving ? 'disabled' : ''}}" bindtap="openJoin">
           <view class="circle-action-icon"><image src="/images/ui-icons/qr-code.svg" mode="aspectFit"></image></view>
           <text>加入圈子</text>
         </view>
-        <view class="circle-action create-action {{!isSuperAdmin && !canCreateCircle ? 'at-limit' : ''}} {{switchingCircle || creatingCircle ? 'disabled' : ''}}" bindtap="createCircle">
+        <view class="circle-action create-action {{!isSuperAdmin && !canCreateCircle ? 'at-limit' : ''}} {{switchingCircle || creatingCircle || themeSaving ? 'disabled' : ''}}" bindtap="createCircle">
           <view class="circle-action-icon"><image src="/images/ui-icons/layers.svg" mode="aspectFit"></image></view>
           <text>{{creatingCircle ? "创建中..." : !isSuperAdmin && !canCreateCircle ? "已达创建上限" : "创建圈子"}}</text>
         </view>
@@ -84,7 +84,7 @@
   </view>
 
   <view class="section" wx:if="{{isSuperAdmin}}">
-    <view class="management-entry {{switchingCircle || creatingCircle ? 'disabled' : ''}}" bindtap="openAdmin">
+    <view class="management-entry {{switchingCircle || creatingCircle || themeSaving ? 'disabled' : ''}}" bindtap="openAdmin">
       <view class="management-icon"><image src="/images/ui-icons/admin.svg" mode="aspectFit"></image></view>
       <view class="management-copy"><view class="admin-title">管理中心</view><view class="muted">圈子、用户与操作日志</view></view>
       <view class="management-arrow">›</view>
@@ -102,7 +102,7 @@
       </view>
       <view class="theme-picker">
         <view
-          class="theme-swatch motion-state {{item.activeClass}}"
+          class="theme-swatch motion-state {{item.activeClass}} {{themeSaving ? 'disabled' : ''}}"
           wx:for="{{themeOptions}}"
           wx:key="key"
           data-key="{{item.key}}"
@@ -253,7 +253,7 @@
     </view>
   </view>
 
-  <view class="home-link {{switchingCircle || creatingCircle ? 'disabled' : ''}}" bindtap="openHome" wx:if="{{hasCurrentCircle}}">进入当前圈子首页</view>
+  <view class="home-link {{switchingCircle || creatingCircle || themeSaving ? 'disabled' : ''}}" bindtap="openHome" wx:if="{{hasCurrentCircle}}">进入当前圈子首页</view>
 </view>
 
 <view class="page loading-page {{themeClass}}" wx:else>

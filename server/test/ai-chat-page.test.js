@@ -240,6 +240,12 @@ test("AI chat reasoning selector defaults to auto and sends the selected next-re
   page.disposeLiveStream();
 });
 
+test("AI chat styles automatic and enabled reasoning as the same active state", () => {
+  const template = fs.readFileSync(path.resolve(__dirname, "../../inCircleClient/pages/ai-chat/index.wxml"), "utf8");
+  assert.match(template, /reasoningEnabled \? 'active' : ''/);
+  assert.doesNotMatch(template, /reasoningMode === 'on' \? 'active' : ''/);
+});
+
 test("AI chat selector keeps unsupported model modes on auto", () => {
   const page = createPage({}, {});
   page.data.models = [

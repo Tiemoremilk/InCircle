@@ -11,8 +11,23 @@ const TAB_BAR_PATHS = [
 ];
 const TAB_BAR_CONTENT_HEIGHT_RPX = 92;
 const TAB_PAGE_EXTRA_BOTTOM_RPX = 32;
+const THEME_SYNC_CLASS = "incircle-theme-sync";
+const THEME_RENDER_ACK_TIMEOUT_MS = 700;
 let runtimeColorKey = "";
 let tabBarMetrics = null;
+const pageDefinitions = new Set();
+const pageConsumers = new Set();
+const tabBarConsumers = new Set();
+const visualConsumers = new Set();
+const pagesAwaitingRouteSync = new Set();
+let activeThemeSignature = "";
+let themeRevision = 0;
+let themeCommitPending = false;
+let themeCommitPromise = Promise.resolve({ revision: 0, requiresPageReset: false });
+let routeSyncSequence = 0;
+let beforeAppRouteHandler = null;
+let preferenceSaveToken = 0;
+const pendingPreferenceSaves = new Set();
 
 const THEMES = [
   {
@@ -392,9 +407,9 @@ function getTabBarMetrics() {
   return tabBarMetrics;
 }
 
-function getTabBarStyle() {
+function getTabBarStyle(selectedTheme) {
   const metrics = getTabBarMetrics();
-  const currentTheme = getCurrentTheme();
+  const currentTheme = selectedTheme || getCurrentTheme();
   const variables = currentTheme.key === CUSTOM_THEME_KEY ? ` ${currentTheme.tabBarVariables}` : "";
   return `height: ${metrics.heightRpx}rpx; padding-bottom: ${metrics.safeBottomRpx}rpx;${variables}`;
 }
@@ -404,16 +419,68 @@ function getTabPageInsetStyle() {
   return `--incircle-tabbar-height: ${metrics.heightRpx}rpx; --incircle-tabbar-page-bottom: ${metrics.pagePaddingBottomRpx}rpx;`;
 }
 
+function themeSignature(theme) {
+  if (!theme) return "";
+  const custom = theme.key === CUSTOM_THEME_KEY
+    ? normalizeCustomThemeRgba(theme.customRgba, DEFAULT_CUSTOM_THEME_RGBA)
+    : null;
+  return custom ? `${theme.key}:${custom.r}:${custom.g}:${custom.b}:${custom.a}` : theme.key;
+}
+
+function nextViewTick() {
+  return new Promise((resolve) => {
+    if (typeof wx !== "undefined" && typeof wx.nextTick === "function") {
+      wx.nextTick(resolve);
+      return;
+    }
+    setTimeout(resolve, 0);
+  });
+}
+
+function setDataAndWait(target, nextData) {
+  if (!target || typeof target.setData !== "function" || !Object.keys(nextData || {}).length) {
+    return Promise.resolve(true);
+  }
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (rendered) => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      resolve(rendered !== false);
+    };
+    const timer = setTimeout(() => finish(false), THEME_RENDER_ACK_TIMEOUT_MS);
+    if (timer && typeof timer.unref === "function") timer.unref();
+    try {
+      target.setData(nextData, () => finish(true));
+      // Test doubles and older wrappers sometimes expose the one-argument form.
+      if (
+        target.setData.length < 2
+        && (typeof wx === "undefined" || typeof wx.nextTick !== "function")
+      ) Promise.resolve().then(() => finish(true));
+    } catch (error) {
+      finish(false);
+    }
+  });
+}
+
 function applyRuntimeColors(theme, options) {
   if (typeof wx === "undefined") return;
   const force = options && options.force;
-  const nextRuntimeColorKey = theme.navBg;
+  const nextRuntimeColorKey = `${theme.navBg}:${theme.pageBg}`;
   if (!force && runtimeColorKey === nextRuntimeColorKey) return;
   runtimeColorKey = nextRuntimeColorKey;
   if (wx.setNavigationBarColor) {
     wx.setNavigationBarColor({
       frontColor: "#000000",
       backgroundColor: theme.navBg,
+    });
+  }
+  if (wx.setBackgroundColor) {
+    wx.setBackgroundColor({
+      backgroundColor: theme.pageBg,
+      backgroundColorTop: theme.pageBg,
+      backgroundColorBottom: theme.pageBg,
     });
   }
 }
@@ -428,6 +495,32 @@ function syncCustomTabBar(page) {
   }
 }
 
+function registerPage(page) {
+  if (page && typeof page.setData === "function") pageConsumers.add(page);
+}
+
+function unregisterPage(page) {
+  if (!page) return;
+  pageConsumers.delete(page);
+  pagesAwaitingRouteSync.delete(page);
+}
+
+function registerCustomTabBar(tabBar) {
+  if (tabBar && typeof tabBar.refreshTheme === "function") tabBarConsumers.add(tabBar);
+}
+
+function unregisterCustomTabBar(tabBar) {
+  if (tabBar) tabBarConsumers.delete(tabBar);
+}
+
+function registerVisualConsumer(consumer) {
+  if (consumer && typeof consumer.refreshTheme === "function") visualConsumers.add(consumer);
+}
+
+function unregisterVisualConsumer(consumer) {
+  if (consumer) visualConsumers.delete(consumer);
+}
+
 function getThemeOptions(activeKey, options) {
   const source = THEMES.slice();
   if (options && options.includeCustom) source.push(buildCustomTheme(getCustomThemeRgba()));
@@ -438,35 +531,297 @@ function getThemeOptions(activeKey, options) {
   );
 }
 
-function applyPageTheme(page) {
-  if (!page || typeof page.setData !== "function") return;
-  const theme = getCurrentTheme();
-  applyRuntimeColors(theme);
-  const data = page.data || {};
+function buildPageThemeData(data, selectedTheme, options) {
+  const source = data || {};
+  const theme = selectedTheme || getCurrentTheme();
+  const settings = options || {};
   const nextData = {};
   const tabBarInsetStyle = getTabPageInsetStyle();
-  const themeStyle = theme.pageStyle || "";
-  const includeCustom = data.allowCustomThemeOption === true;
-  const optionSignature = `${theme.key}:${includeCustom ? JSON.stringify(getCustomThemeRgba()) : "presets"}`;
+  const renderFrame = settings.routeFrame
+    ? `route-${settings.routeFrame}`
+    : `revision-${Number(settings.revision || 0)}`;
+  const themeStyle = `${theme.pageStyle || ""} --incircle-theme-frame: ${renderFrame};`.trim();
+  const themeClasses = [theme.className];
+  if (settings.suppressMotion) themeClasses.push(THEME_SYNC_CLASS);
+  if (settings.routeFrame) themeClasses.push(`incircle-theme-frame-${settings.routeFrame}`);
+  const themeClass = themeClasses.join(" ");
+  const usesThemeOptions = source.allowCustomThemeOption === true
+    || Object.prototype.hasOwnProperty.call(source, "themeOptions");
+  const includeCustom = source.allowCustomThemeOption === true;
+  const optionSignature = usesThemeOptions
+    ? `${theme.key}:${includeCustom ? JSON.stringify(getCustomThemeRgba()) : "presets"}`
+    : "";
   const expectedOptionCount = THEMES.length + (includeCustom ? 1 : 0);
-  const themeChanged = data.themeKey !== theme.key || data.themeClass !== theme.className || data.themeStyle !== themeStyle;
-  if (data.themeKey !== theme.key) nextData.themeKey = theme.key;
-  if (data.themeClass !== theme.className) nextData.themeClass = theme.className;
-  if (data.themePrimary !== theme.primary) nextData.themePrimary = theme.primary;
-  if (data.themeStyle !== themeStyle) nextData.themeStyle = themeStyle;
-  if (data.tabBarInsetStyle !== tabBarInsetStyle) nextData.tabBarInsetStyle = tabBarInsetStyle;
-  if (
-    themeChanged ||
-    (Object.prototype.hasOwnProperty.call(data, "themeOptions") &&
-      (!Array.isArray(data.themeOptions) || data.themeOptions.length !== expectedOptionCount || data.themeOptionSignature !== optionSignature))
-  ) {
+  const force = settings.force === true;
+  const themeChanged = source.themeKey !== theme.key
+    || source.themeClass !== themeClass
+    || source.themeStyle !== themeStyle;
+  if (force || source.themeKey !== theme.key) nextData.themeKey = theme.key;
+  if (force || source.themeClass !== themeClass) nextData.themeClass = themeClass;
+  if (force || source.themePrimary !== theme.primary) nextData.themePrimary = theme.primary;
+  if (force || source.themeStyle !== themeStyle) nextData.themeStyle = themeStyle;
+  if (force || source.tabBarInsetStyle !== tabBarInsetStyle) nextData.tabBarInsetStyle = tabBarInsetStyle;
+  if (typeof settings.revision === "number" && source.incircleThemeRevision !== settings.revision) {
+    nextData.incircleThemeRevision = settings.revision;
+  }
+  if (usesThemeOptions && (
+    force
+    || themeChanged
+    || !Array.isArray(source.themeOptions)
+    || source.themeOptions.length !== expectedOptionCount
+    || source.themeOptionSignature !== optionSignature
+  )) {
     nextData.themeOptions = getThemeOptions(theme.key, { includeCustom });
     nextData.themeOptionSignature = optionSignature;
   }
+  return nextData;
+}
+
+function getInitialPageThemeData(data) {
+  return buildPageThemeData(data || {}, getCurrentTheme(), {
+    force: true,
+    revision: themeRevision,
+    suppressMotion: false,
+  });
+}
+
+function registerPageDefinition(data) {
+  if (!data || typeof data !== "object") return;
+  Object.assign(data, getInitialPageThemeData(data));
+  pageDefinitions.add(data);
+}
+
+function syncPageDefinitions(selectedTheme, revision) {
+  pageDefinitions.forEach((data) => {
+    Object.assign(data, buildPageThemeData(data, selectedTheme, {
+      force: true,
+      revision,
+      suppressMotion: false,
+    }));
+  });
+}
+
+function applyPageTheme(page) {
+  if (!page || typeof page.setData !== "function") return;
+  registerPage(page);
+  const currentTheme = getCurrentTheme();
+  applyRuntimeColors(currentTheme);
+  const nextData = buildPageThemeData(page.data || {}, currentTheme, {
+    revision: themeRevision,
+    suppressMotion: themeCommitPending,
+  });
   if (Object.keys(nextData).length) {
     page.setData(nextData);
   }
-  return theme;
+  return currentTheme;
+}
+
+function acknowledgePageShown(page) {
+  if (page) pagesAwaitingRouteSync.delete(page);
+}
+
+function renderPageTheme(page, selectedTheme, revision, suppressMotion) {
+  if (!page || typeof page.setData !== "function") return Promise.resolve(true);
+  registerPage(page);
+  const nextData = buildPageThemeData(page.data || {}, selectedTheme, {
+    force: true,
+    revision,
+    suppressMotion,
+  });
+  return setDataAndWait(page, nextData).then((rendered) => {
+    if (!rendered && (!page.route || typeof page.setData !== "function")) pageConsumers.delete(page);
+    return rendered;
+  });
+}
+
+function renderComponentTheme(consumer, selectedTheme, revision, suppressMotion, registry) {
+  if (!consumer || typeof consumer.refreshTheme !== "function") return Promise.resolve(true);
+  try {
+    const refreshResult = consumer.refreshTheme({
+      theme: selectedTheme,
+      revision,
+      suppressMotion,
+      waitForRender: true,
+    });
+    return new Promise((resolve) => {
+      let settled = false;
+      const finish = (rendered) => {
+        if (settled) return;
+        settled = true;
+        if (timer) clearTimeout(timer);
+        resolve(rendered !== false);
+      };
+      const timer = setTimeout(() => finish(false), THEME_RENDER_ACK_TIMEOUT_MS);
+      if (timer && typeof timer.unref === "function") timer.unref();
+      Promise.resolve(refreshResult).then(finish, () => {
+        registry.delete(consumer);
+        finish(true);
+      });
+    });
+  } catch (error) {
+    registry.delete(consumer);
+    return Promise.resolve(true);
+  }
+}
+
+function renderThemePhase(selectedTheme, revision, suppressMotion) {
+  const tasks = [];
+  Array.from(pageConsumers).forEach((page) => {
+    tasks.push(renderPageTheme(page, selectedTheme, revision, suppressMotion));
+  });
+  Array.from(tabBarConsumers).forEach((tabBar) => {
+    tasks.push(renderComponentTheme(tabBar, selectedTheme, revision, suppressMotion, tabBarConsumers));
+  });
+  Array.from(visualConsumers).forEach((consumer) => {
+    tasks.push(renderComponentTheme(consumer, selectedTheme, revision, suppressMotion, visualConsumers));
+  });
+  return Promise.all(tasks);
+}
+
+function runThemeCommit(selectedTheme, revision) {
+  let visiblePage = null;
+  try {
+    const pages = typeof getCurrentPages === "function" ? getCurrentPages() : [];
+    visiblePage = pages[pages.length - 1] || null;
+  } catch (error) {
+    visiblePage = null;
+  }
+
+  pageConsumers.forEach((page) => {
+    if (page !== visiblePage) pagesAwaitingRouteSync.add(page);
+  });
+
+  return renderThemePhase(selectedTheme, revision, true)
+    .then((renderResults) => nextViewTick().then(() => renderResults))
+    .then((renderResults) => {
+      if (revision !== themeRevision) {
+        return { revision, stale: true, requiresPageReset: false };
+      }
+      if (!visiblePage || typeof visiblePage.setData !== "function") return renderResults;
+      return renderPageTheme(visiblePage, selectedTheme, revision, false)
+        .then((rendered) => {
+          pagesAwaitingRouteSync.delete(visiblePage);
+          syncCustomTabBar(visiblePage);
+          return renderResults.concat(rendered);
+        });
+    })
+    .then((renderResults) => {
+      if (!Array.isArray(renderResults)) return renderResults;
+      return {
+        revision,
+        stale: revision !== themeRevision,
+        requiresPageReset: false,
+        renderAcknowledged: renderResults.every((rendered) => rendered !== false),
+      };
+    });
+}
+
+function scheduleThemeCommit(selectedTheme) {
+  const revision = ++themeRevision;
+  syncPageDefinitions(selectedTheme, revision);
+  themeCommitPending = true;
+  const previousCommit = themeCommitPromise.catch(() => ({ requiresPageReset: true }));
+  const commit = previousCommit.then(() => {
+    if (revision !== themeRevision) return { revision, stale: true, requiresPageReset: false };
+    return runThemeCommit(selectedTheme, revision);
+  });
+  themeCommitPromise = commit.then(
+    (result) => {
+      if (revision === themeRevision) themeCommitPending = false;
+      return result;
+    },
+    () => {
+      if (revision === themeRevision) themeCommitPending = false;
+      return { revision, stale: false, requiresPageReset: true };
+    }
+  );
+  return themeCommitPromise;
+}
+
+function normalizeRoutePath(path) {
+  return String(path || "")
+    .replace(/^\/+/, "")
+    .split("?")[0];
+}
+
+function primeThemeForRoute(event) {
+  if (!event) return;
+  const targetRoute = normalizeRoutePath(event.path);
+  if (!targetRoute) return;
+  const selectedTheme = getCurrentTheme();
+  const routeFrame = ++routeSyncSequence % 2 ? "a" : "b";
+
+  pageConsumers.forEach((page) => {
+    if (!page || normalizeRoutePath(page.route) !== targetRoute || !pagesAwaitingRouteSync.has(page)) return;
+    const nextData = buildPageThemeData(page.data || {}, selectedTheme, {
+      force: true,
+      revision: themeRevision,
+      suppressMotion: true,
+      routeFrame,
+    });
+    try {
+      page.setData(nextData);
+    } catch (error) {
+      // The normal onShow synchronization remains the compatibility fallback.
+    }
+  });
+
+  if (TAB_BAR_PATHS.indexOf(`/${targetRoute}`) === -1) return;
+  tabBarConsumers.forEach((tabBar) => {
+    try {
+      tabBar.refreshTheme({
+        theme: selectedTheme,
+        revision: themeRevision,
+        suppressMotion: true,
+      });
+    } catch (error) {
+      // A detached tab bar will unregister itself from the consumer set.
+    }
+  });
+}
+
+function installRouteThemeSync() {
+  if (
+    beforeAppRouteHandler
+    || typeof wx === "undefined"
+    || typeof wx.onBeforeAppRoute !== "function"
+  ) return;
+  beforeAppRouteHandler = primeThemeForRoute;
+  wx.onBeforeAppRoute(beforeAppRouteHandler);
+}
+
+function registerCurrentPages() {
+  let pages = [];
+  try {
+    pages = typeof getCurrentPages === "function" ? getCurrentPages() : [];
+    pages.forEach(registerPage);
+  } catch (error) {
+    pages = [];
+  }
+  return pages;
+}
+
+function whenThemeReady() {
+  return themeCommitPromise;
+}
+
+function isThemeTransitioning() {
+  return themeCommitPending;
+}
+
+function beginPreferenceSave() {
+  const token = ++preferenceSaveToken;
+  pendingPreferenceSaves.add(token);
+  return token;
+}
+
+function endPreferenceSave(token) {
+  pendingPreferenceSaves.delete(token);
+}
+
+function setThemeFromServer(key, customRgba) {
+  if (pendingPreferenceSaves.size) return getCurrentTheme();
+  return setTheme(key, customRgba);
 }
 
 function setTheme(key, customRgba) {
@@ -488,12 +843,13 @@ function setTheme(key, customRgba) {
   } catch (error) {
     // getApp can fail before App is initialized.
   }
-  applyRuntimeColors(theme, { force: true });
-  try {
-    const pages = typeof getCurrentPages === "function" ? getCurrentPages() : [];
-    syncCustomTabBar(pages[pages.length - 1]);
-  } catch (error) {
-    // getCurrentPages can fail in smoke-test contexts.
+  registerCurrentPages();
+  const nextSignature = themeSignature(theme);
+  const themeChanged = activeThemeSignature !== nextSignature;
+  applyRuntimeColors(theme, { force: themeChanged });
+  if (themeChanged) {
+    activeThemeSignature = nextSignature;
+    scheduleThemeCommit(theme);
   }
   return theme;
 }
@@ -508,8 +864,22 @@ module.exports = {
   getThemeOptions,
   getTabBarStyle,
   getTabPageInsetStyle,
+  getInitialPageThemeData,
+  registerPageDefinition,
   applyPageTheme,
+  acknowledgePageShown,
   syncCustomTabBar,
+  registerCustomTabBar,
+  unregisterCustomTabBar,
+  registerVisualConsumer,
+  unregisterVisualConsumer,
+  unregisterPage,
+  whenThemeReady,
+  isThemeTransitioning,
+  installRouteThemeSync,
+  beginPreferenceSave,
+  endPreferenceSave,
+  setThemeFromServer,
   normalizeCustomThemeRgba,
   setTheme,
 };

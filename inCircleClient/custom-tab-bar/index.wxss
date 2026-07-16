@@ -11,6 +11,13 @@
   backdrop-filter: blur(18rpx);
 }
 
+.custom-tabbar.incircle-theme-sync,
+.custom-tabbar.incircle-theme-sync .tabbar-item,
+.custom-tabbar.incircle-theme-sync .tabbar-icon {
+  transition-duration: 0ms !important;
+  transition-delay: 0ms !important;
+}
+
 .custom-tabbar-inner {
   display: flex;
   align-items: center;

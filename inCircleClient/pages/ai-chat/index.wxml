@@ -40,7 +40,7 @@
         disabled="{{sending || reasoningModeNames.length <= 1}}"
         bindchange="onReasoningModeChange"
       >
-        <view class="reasoning-mode motion-state {{reasoningMode === 'on' ? 'active' : ''}} {{sending ? 'disabled' : ''}} {{reasoningModeNames.length <= 1 ? 'single' : ''}}">
+        <view class="reasoning-mode motion-state {{reasoningEnabled ? 'active' : ''}} {{sending ? 'disabled' : ''}} {{reasoningModeNames.length <= 1 ? 'single' : ''}}">
           <view class="reasoning-mode-mark"><view></view></view>
           <text class="reasoning-mode-label">思考模式</text>
           <view class="reasoning-mode-value">

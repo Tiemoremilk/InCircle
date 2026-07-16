@@ -65,6 +65,7 @@ test("eleven presets plus one custom theme stay distinct and accessible", () => 
 
 test("Mini Program palette metadata and WXSS variables stay synchronized", () => {
   const styles = fs.readFileSync(path.join(root, "inCircleClient/app.wxss"), "utf8").toLowerCase();
+  assert.doesNotMatch(styles, /incircle-theme-sync\s+\*/, "WXSS does not support the universal descendant selector");
   miniTheme.THEMES.forEach((theme) => {
     const match = styles.match(new RegExp(`\\.theme-${theme.key}\\s*\\{([\\s\\S]*?)\\}`));
     assert.ok(match, `missing WXSS block for ${theme.key}`);
@@ -219,7 +220,7 @@ test("circle switch offers a live RGBA picker and truncates long circle descript
   assert.match(styles, /\.recent-circle-row \.circle-copy\s*\{[^}]*text-overflow:\s*ellipsis;[^}]*white-space:\s*nowrap;/s);
 });
 
-test("custom RGBA selection persists locally and applies to a live page", () => {
+test("custom RGBA selection persists locally and applies to a live page", async () => {
   const previousWx = global.wx;
   const previousGetApp = global.getApp;
   const previousGetCurrentPages = global.getCurrentPages;
@@ -229,19 +230,26 @@ test("custom RGBA selection persists locally and applies to a live page", () => 
     getStorageSync(key) { return storage[key]; },
     setStorageSync(key, value) { storage[key] = value; },
     setNavigationBarColor() {},
+    setBackgroundColor() {},
+    nextTick(callback) { setImmediate(callback); },
   };
   global.getApp = () => app;
   global.getCurrentPages = () => [];
 
+  let page = null;
   try {
     const rgba = { r: 28, g: 104, b: 188, a: 0.72 };
     const selected = miniTheme.setTheme("custom", rgba);
+    await miniTheme.whenThemeReady();
     assert.equal(selected.key, "custom");
     assert.deepEqual(app.globalData.customTheme, rgba);
 
-    const page = {
+    page = {
       data: { allowCustomThemeOption: true },
-      setData(next) { Object.assign(this.data, next); },
+      setData(next, callback) {
+        Object.assign(this.data, next);
+        if (callback) callback();
+      },
     };
     miniTheme.applyPageTheme(page);
     assert.equal(page.data.themeKey, "custom");
@@ -251,6 +259,7 @@ test("custom RGBA selection persists locally and applies to a live page", () => 
     assert.equal(page.data.themeOptions[11].activeClass, "active");
     assert.match(miniTheme.getTabBarStyle(), /--tabbar-active:/);
   } finally {
+    if (page) miniTheme.unregisterPage(page);
     if (previousWx === undefined) delete global.wx;
     else global.wx = previousWx;
     if (previousGetApp === undefined) delete global.getApp;
@@ -258,4 +267,209 @@ test("custom RGBA selection persists locally and applies to a live page", () => 
     if (previousGetCurrentPages === undefined) delete global.getCurrentPages;
     else global.getCurrentPages = previousGetCurrentPages;
   }
+});
+
+test("theme changes prime every cached page and flush the target before its route is restored", async () => {
+  const previousWx = global.wx;
+  const previousGetApp = global.getApp;
+  const previousGetCurrentPages = global.getCurrentPages;
+  const storage = {};
+  const app = {
+    globalData: {
+      themeKey: "forest",
+      customTheme: DEFAULT_CUSTOM_THEME_RGBA,
+    },
+  };
+  const visibleSettingsPage = { route: "pages/circle-switch/index" };
+  let beforeAppRoute = null;
+  const makePage = (route) => ({
+    route,
+    data: {},
+    updates: 0,
+    renderedClasses: [],
+    setData(next, callback) {
+      this.updates += 1;
+      Object.assign(this.data, next);
+      if (next.themeClass) this.renderedClasses.push(next.themeClass);
+      setImmediate(() => {
+        if (callback) callback();
+      });
+    },
+  });
+  const makeTabBar = () => ({
+    data: {
+      themeClass: miniTheme.getCurrentTheme().className,
+      tabBarStyle: miniTheme.getTabBarStyle(),
+    },
+    updates: 0,
+    renderedClasses: [],
+    refreshTheme(options) {
+      const settings = options || {};
+      const current = settings.theme || miniTheme.getCurrentTheme();
+      const themeClass = `${current.className}${settings.suppressMotion ? " incircle-theme-sync" : ""}`;
+      this.updates += 1;
+      this.data.themeClass = themeClass;
+      this.data.tabBarStyle = miniTheme.getTabBarStyle();
+      this.renderedClasses.push(themeClass);
+      return new Promise((resolve) => setImmediate(() => resolve(true)));
+    },
+  });
+  const home = makePage("pages/index/index");
+  const tools = makePage("pages/tools/index");
+  const pageDefinition = {};
+  let homeTabBar = null;
+  let toolsTabBar = null;
+
+  global.wx = {
+    getStorageSync(key) { return storage[key]; },
+    setStorageSync(key, value) { storage[key] = value; },
+    setNavigationBarColor() {},
+    setBackgroundColor() {},
+    nextTick(callback) { setImmediate(callback); },
+    onBeforeAppRoute(callback) { beforeAppRoute = callback; },
+    getWindowInfo() { return { windowWidth: 375, screenHeight: 812, safeArea: { bottom: 778 } }; },
+  };
+  global.getApp = () => app;
+  global.getCurrentPages = () => [visibleSettingsPage];
+
+  try {
+    miniTheme.installRouteThemeSync();
+    miniTheme.registerPageDefinition(pageDefinition);
+    miniTheme.applyPageTheme(home);
+    miniTheme.applyPageTheme(tools);
+    homeTabBar = makeTabBar();
+    toolsTabBar = makeTabBar();
+    miniTheme.registerCustomTabBar(homeTabBar);
+    miniTheme.registerCustomTabBar(toolsTabBar);
+    home.updates = 0;
+    tools.updates = 0;
+    home.renderedClasses = [];
+    tools.renderedClasses = [];
+    homeTabBar.renderedClasses = [];
+    toolsTabBar.renderedClasses = [];
+
+    miniTheme.setTheme("berry");
+    assert.equal(miniTheme.isThemeTransitioning(), true);
+    await miniTheme.whenThemeReady();
+
+    assert.equal(home.data.themeKey, "berry");
+    assert.equal(tools.data.themeKey, "berry");
+    assert.equal(pageDefinition.themeKey, "berry");
+    assert.equal(pageDefinition.themeClass, "theme-berry");
+    assert.equal(home.data.themeClass, "theme-berry incircle-theme-sync");
+    assert.equal(tools.data.themeClass, "theme-berry incircle-theme-sync");
+    assert.equal(Object.hasOwn(home.data, "themeOptions"), false);
+    assert.equal(Object.hasOwn(tools.data, "themeOptions"), false);
+    assert.equal(home.updates, 1);
+    assert.equal(tools.updates, 1);
+    assert.equal(homeTabBar.data.themeClass, "theme-berry incircle-theme-sync");
+    assert.equal(toolsTabBar.data.themeClass, "theme-berry incircle-theme-sync");
+    assert.equal(homeTabBar.updates, 1);
+    assert.equal(toolsTabBar.updates, 1);
+    assert.match(home.renderedClasses[0], /incircle-theme-sync/);
+    assert.match(homeTabBar.renderedClasses[0], /incircle-theme-sync/);
+    assert.equal(miniTheme.isThemeTransitioning(), false);
+
+    assert.equal(typeof beforeAppRoute, "function");
+    beforeAppRoute({ openType: "switchTab", path: "/pages/index/index" });
+    assert.match(home.data.themeClass, /theme-berry incircle-theme-sync incircle-theme-frame-[ab]/);
+    assert.match(home.data.themeStyle, /--incircle-theme-frame: route-[ab]/);
+    assert.equal(home.updates, 2);
+    miniTheme.applyPageTheme(home);
+    miniTheme.acknowledgePageShown(home);
+    assert.equal(home.data.themeClass, "theme-berry");
+    assert.equal(home.updates, 3);
+    assert.equal(tools.data.themeClass, "theme-berry incircle-theme-sync");
+
+    beforeAppRoute({ openType: "navigateBack", path: "/pages/tools/index" });
+    assert.match(tools.data.themeClass, /theme-berry incircle-theme-sync incircle-theme-frame-[ab]/);
+    assert.match(tools.data.themeStyle, /--incircle-theme-frame: route-[ab]/);
+
+    const firstCustomStyle = home.data.themeStyle;
+    miniTheme.setTheme("custom", { r: 36, g: 112, b: 184, a: 0.42 });
+    await miniTheme.whenThemeReady();
+    assert.match(home.data.themeClass, /theme-custom/);
+    assert.notEqual(home.data.themeStyle, firstCustomStyle);
+    assert.match(home.data.themeStyle, /--theme-primary:/);
+    assert.match(homeTabBar.data.tabBarStyle, /--tabbar-active:/);
+  } finally {
+    miniTheme.unregisterPage(home);
+    miniTheme.unregisterPage(tools);
+    if (homeTabBar) miniTheme.unregisterCustomTabBar(homeTabBar);
+    if (toolsTabBar) miniTheme.unregisterCustomTabBar(toolsTabBar);
+    if (previousWx === undefined) delete global.wx;
+    else global.wx = previousWx;
+    if (previousGetApp === undefined) delete global.getApp;
+    else global.getApp = previousGetApp;
+    if (previousGetCurrentPages === undefined) delete global.getCurrentPages;
+    else global.getCurrentPages = previousGetCurrentPages;
+  }
+});
+
+test("an older session response cannot overwrite a theme preference being saved", async () => {
+  const previousWx = global.wx;
+  const previousGetApp = global.getApp;
+  const previousGetCurrentPages = global.getCurrentPages;
+  const storage = {};
+  const app = { globalData: { themeKey: "forest", customTheme: DEFAULT_CUSTOM_THEME_RGBA } };
+  let preferenceToken = null;
+
+  global.wx = {
+    getStorageSync(key) { return storage[key]; },
+    setStorageSync(key, value) { storage[key] = value; },
+    setNavigationBarColor() {},
+    setBackgroundColor() {},
+    nextTick(callback) { setImmediate(callback); },
+  };
+  global.getApp = () => app;
+  global.getCurrentPages = () => [];
+
+  try {
+    preferenceToken = miniTheme.beginPreferenceSave();
+    miniTheme.setTheme("sky");
+    await miniTheme.whenThemeReady();
+
+    miniTheme.setThemeFromServer("forest");
+    assert.equal(miniTheme.getCurrentTheme().key, "sky");
+
+    miniTheme.endPreferenceSave(preferenceToken);
+    preferenceToken = null;
+    miniTheme.setThemeFromServer("mint");
+    await miniTheme.whenThemeReady();
+    assert.equal(miniTheme.getCurrentTheme().key, "mint");
+  } finally {
+    if (preferenceToken !== null) miniTheme.endPreferenceSave(preferenceToken);
+    if (previousWx === undefined) delete global.wx;
+    else global.wx = previousWx;
+    if (previousGetApp === undefined) delete global.getApp;
+    else global.getApp = previousGetApp;
+    if (previousGetCurrentPages === undefined) delete global.getCurrentPages;
+    else global.getCurrentPages = previousGetCurrentPages;
+  }
+});
+
+test("theme consumers subscribe for their full cached lifetime", () => {
+  const appSource = fs.readFileSync(path.join(root, "inCircleClient/app.js"), "utf8");
+  const tabBarSource = fs.readFileSync(path.join(root, "inCircleClient/custom-tab-bar/index.js"), "utf8");
+  const tabBarTemplate = fs.readFileSync(path.join(root, "inCircleClient/custom-tab-bar/index.wxml"), "utf8");
+  const aiFabSource = fs.readFileSync(path.join(root, "inCircleClient/components/ai-fab/index.js"), "utf8");
+  const switchSource = fs.readFileSync(path.join(root, "inCircleClient/pages/circle-switch/index.js"), "utf8");
+
+  assert.match(appSource, /registerPageDefinition\(config\.data\)/);
+  assert.match(appSource, /installRouteThemeSync\(\)/);
+  assert.match(appSource, /acknowledgePageShown\(this\)/);
+  assert.match(appSource, /config\.onUnload = function[\s\S]*theme\.unregisterPage\(this\)/);
+  assert.doesNotMatch(appSource, /config\.onHide = function[\s\S]*theme\.unregisterPage\(this\)[\s\S]*config\.onUnload/);
+  assert.match(tabBarSource, /attached\(\)[\s\S]*registerCustomTabBar\(this\)/);
+  assert.match(tabBarSource, /detached\(\)[\s\S]*unregisterCustomTabBar\(this\)/);
+  assert.match(tabBarSource, /refreshTheme\(options\)[\s\S]*themeOnly:\s*true/);
+  assert.match(tabBarSource, /whenThemeReady\(\)\.then\(performSwitch\)/);
+  assert.match(tabBarTemplate, /themeReady && !hidden/);
+  assert.match(aiFabSource, /registerVisualConsumer\(this\)/);
+  assert.match(aiFabSource, /unregisterVisualConsumer\(this\)/);
+  assert.match(switchSource, /beginPreferenceSave\(\)/);
+  assert.match(switchSource, /theme\.whenThemeReady\(\)/);
+  assert.doesNotMatch(switchSource, /wx\.reLaunch/);
+  assert.doesNotMatch(switchSource, /已保存.*主题|自定义主题已应用/);
+  assert.doesNotMatch(switchSource, /setTheme\([^\n]+\);\s*theme\.applyPageTheme\(this\)/);
 });

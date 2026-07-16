@@ -116,7 +116,7 @@ function setGlobalSession(data) {
     app.globalData.currentCircleId = currentCircleId;
     if (data.user && data.user.id) app.globalData.userId = data.user.id;
     if (typeof data.isSuperAdmin !== "undefined") app.globalData.isSuperAdmin = !!data.isSuperAdmin;
-    if (data.user && data.user.themeKey) theme.setTheme(data.user.themeKey, data.user.customTheme);
+    if (data.user && data.user.themeKey) theme.setThemeFromServer(data.user.themeKey, data.user.customTheme);
     auth.updateFromSession(data);
   } catch (error) {
     // Ignore smoke-test contexts.

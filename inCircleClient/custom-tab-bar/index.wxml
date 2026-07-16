@@ -1,4 +1,4 @@
-<view wx:if="{{!hidden}}" class="custom-tabbar {{themeClass}}" style="{{tabBarStyle}}">
+<view wx:if="{{themeReady && !hidden}}" class="custom-tabbar {{themeClass}}" style="{{tabBarStyle}}">
   <view class="custom-tabbar-inner">
     <block wx:for="{{list}}" wx:key="pagePath">
       <view
