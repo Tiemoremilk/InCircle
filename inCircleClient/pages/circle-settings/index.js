@@ -30,6 +30,7 @@ Page({
     saveBusy: false,
     destructiveBusy: "",
     aiStatus: null,
+    platformAiEnabled: true,
     aiBusy: false,
     draft: {
       name: "",
@@ -50,17 +51,21 @@ Page({
 
   onShow() {
     if (!this.data.circleId || this.data.loading) return;
-    api
-      .getAiStatus(this.data.circleId, { force: true })
-      .then((aiStatus) => this.setData({ aiStatus }))
-      .catch(() => {});
+    this.refreshAiAvailability();
   },
 
   loadSettings() {
-    Promise.all([
-      api.getCircleSettings(this.data.circleId),
-      api.getAiStatus(this.data.circleId).catch(() => null),
-    ]).then(([data, aiStatus]) => {
+    api.getCircleSettings(this.data.circleId, { force: true }).then((data) => {
+      const platformAiEnabled = data.platformAiEnabled !== false;
+      const aiRequest = platformAiEnabled && data.canManage
+        ? api.getAiStatus(this.data.circleId).catch(() => null)
+        : Promise.resolve(null);
+      return aiRequest.then((aiStatus) => ({
+        data,
+        aiStatus,
+        platformAiEnabled: platformAiEnabled && (!aiStatus || aiStatus.platformEnabled !== false),
+      }));
+    }).then(({ data, aiStatus, platformAiEnabled }) => {
       const circle = data.circle || {};
       this.setData({
         circle,
@@ -77,6 +82,7 @@ Page({
         inviteQrImageUrl: "",
         inviteQrButtonText: "生成入圈码",
         aiStatus,
+        platformAiEnabled,
         draft: {
           name: circle.name || "",
           notice: circle.notice || "",
@@ -87,7 +93,21 @@ Page({
     });
   },
 
+  refreshAiAvailability() {
+    api.getCircleSettings(this.data.circleId, { force: true }).then((data) => {
+      const platformAiEnabled = data.platformAiEnabled !== false;
+      if (!platformAiEnabled || !data.canManage) {
+        this.setData({ platformAiEnabled, aiStatus: null });
+        return null;
+      }
+      return api.getAiStatus(this.data.circleId, { force: true }).then((aiStatus) => {
+        this.setData({ platformAiEnabled: true, aiStatus });
+      });
+    }).catch(() => {});
+  },
+
   toggleAi(e) {
+    if (!this.data.platformAiEnabled) return;
     const aiStatus = this.data.aiStatus;
     const enabled = !!e.detail.value;
     if (!aiStatus || !aiStatus.canManage || this.data.aiBusy) return;

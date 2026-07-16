@@ -71,6 +71,7 @@ function decorate(activity) {
   const coming = attendees.length + (activity.plusOneCount || 0);
   const percent = Math.min(100, Math.round((coming / capacity) * 100));
   const needCount = Math.max(0, capacity - coming);
+  const recap = activity.recap || {};
   return Object.assign({}, activity, {
     attendees,
     pending,
@@ -81,6 +82,11 @@ function decorate(activity) {
     coming,
     percent,
     needCount,
+    highlight: activity.highlight || "活动状态会随着圈友表态实时更新。",
+    recap: Object.assign({}, recap, {
+      mvp: recap.mvp || "待活动结束",
+      earlyBird: recap.earlyBird || "待活动结束",
+    }),
     statusClass: statusClass(activity.status),
     myStatusClass: statusClass(activity.myStatus),
     silentText: silent.length ? silent.join("、") : "全员已表态",

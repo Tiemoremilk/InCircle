@@ -867,6 +867,29 @@
   line-height: 1.5;
 }
 
+.member-note-placeholder {
+  display: flex;
+  align-items: center;
+  gap: 10rpx;
+  min-height: 58rpx;
+  margin-top: 18rpx;
+  padding: 0 18rpx;
+  border: 1rpx solid var(--theme-card-active-border, rgba(47, 125, 80, 0.14));
+  border-radius: 12rpx;
+  background: var(--theme-soft, #eaf5ed);
+  color: var(--theme-primary-dark, #1c5638);
+  font-size: 22rpx;
+  line-height: 1.35;
+  font-weight: 700;
+}
+
+.member-note-placeholder image {
+  width: 26rpx;
+  height: 26rpx;
+  flex-shrink: 0;
+  filter: var(--theme-icon-filter, brightness(0) saturate(100%) invert(40%) sepia(22%) saturate(1023%) hue-rotate(93deg) brightness(96%) contrast(94%));
+}
+
 .sheet-tip {
   margin-top: 20rpx;
   color: #7b8581;

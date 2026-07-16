@@ -633,6 +633,10 @@ Accept: text/event-stream
 
 ## 圈内 AI
 
+InCircle 不自行研发、训练或部署生成式人工智能模型，也不预置统一模型服务。圈子管理者需自行接入其合法开通并有权使用的第三方模型服务；未配置可用服务时，圈内 AI 不提供问答能力。
+
+平台超管后台提供总开关。关闭后，所有圈子的 AI 悬浮入口、圈子设置入口和后端 AI 接口同时停用；已有供应商、模型、授权和会话数据保留，重新开放后仍按各圈原有开关与配置恢复。
+
 ### 默认设置
 
 | 设置 | 默认值 |
@@ -718,6 +722,7 @@ Accept: text/event-stream
 - <code>incircle_circles</code>
 - <code>incircle_circle_members</code>
 - <code>incircle_member_cards</code>
+- <code>incircle_platform_settings</code>：平台级能力开关，当前用于圈内 AI 总开关。
 
 业务：
 

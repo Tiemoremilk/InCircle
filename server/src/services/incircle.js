@@ -2891,18 +2891,21 @@ class InCircleService {
       throw new AppError("你不是这个圈子的成员", { statusCode: 403, errCode: "NOT_IN_CIRCLE" });
     }
     const canManage = !!(auth.user.is_super_admin || (membership && canManageRole(membership.role)));
-    const membersResult = await this.db.query(
-      `
-      SELECT m.*, u.nickname, u.avatar_url,
-             card.title AS card_title, card.profile_note AS card_profile_note
-      FROM incircle_circle_members m
-      JOIN incircle_users u ON u.id = m.user_id
-      LEFT JOIN incircle_member_cards card ON card.circle_id = m.circle_id AND card.user_id = m.user_id
-      WHERE m.circle_id = $1 AND m.status = 'active'
-      ORDER BY CASE WHEN m.role = '圈主' THEN 0 ELSE 1 END, m.joined_at ASC
-      `,
-      [circleId]
-    );
+    const [membersResult, platformSettings] = await Promise.all([
+      this.db.query(
+        `
+        SELECT m.*, u.nickname, u.avatar_url,
+               card.title AS card_title, card.profile_note AS card_profile_note
+        FROM incircle_circle_members m
+        JOIN incircle_users u ON u.id = m.user_id
+        LEFT JOIN incircle_member_cards card ON card.circle_id = m.circle_id AND card.user_id = m.user_id
+        WHERE m.circle_id = $1 AND m.status = 'active'
+        ORDER BY CASE WHEN m.role = '圈主' THEN 0 ELSE 1 END, m.joined_at ASC
+        `,
+        [circleId]
+      ),
+      this.platformSettings(),
+    ]);
     return {
       circle: publicCircle(circle, membership, circleId),
       members: membersResult.rows.map(publicMember),
@@ -2912,6 +2915,7 @@ class InCircleService {
       inviteCode: circle.join_code || "",
       inviteToken: circle.invite_token || "",
       invitePath: invitePagePath(circle.invite_token),
+      platformAiEnabled: platformSettings.circleAiEnabled,
     };
   }
 
@@ -5770,6 +5774,21 @@ class InCircleService {
     return { submitted: true, tag };
   }
 
+  async platformSettings() {
+    const result = await this.db.query(
+      `SELECT circle_ai_enabled, updated_by_user_id, updated_at
+       FROM incircle_platform_settings
+       WHERE singleton_id = 1
+       LIMIT 1`
+    );
+    const row = result.rows[0];
+    return {
+      circleAiEnabled: !!(row && row.circle_ai_enabled === true),
+      updatedByUserId: row ? row.updated_by_user_id || "" : "",
+      updatedAt: row ? row.updated_at || null : null,
+    };
+  }
+
   async requireSuperAdmin(body) {
     const auth = await this.requireUser(body);
     if (!this.isSuperAdmin(auth.identity.openid, auth.user)) {
@@ -5780,7 +5799,7 @@ class InCircleService {
 
   async adminOverview(body) {
     await this.requireSuperAdmin(body);
-    const [circleResult, userResult, logsResult, logsTotalResult] = await Promise.all([
+    const [circleResult, userResult, logsResult, logsTotalResult, platformSettings] = await Promise.all([
       this.db.query(
         `
         SELECT count(*)::int AS total,
@@ -5806,6 +5825,7 @@ class InCircleService {
         `
       ),
       this.db.query("SELECT count(*)::int AS total FROM incircle_operation_logs"),
+      this.platformSettings(),
     ]);
     const circleStats = circleResult.rows[0] || {};
     const userStats = userResult.rows[0] || {};
@@ -5820,11 +5840,52 @@ class InCircleService {
       ],
       circleSummary: { total: Number(circleStats.total || 0), frozen: Number(circleStats.frozen || 0) },
       userSummary: { total: Number(userStats.total || 0), blocked: Number(userStats.blocked || 0) },
+      platformSettings,
       logs,
       operationLogs: logs,
       logTotal,
       hasMoreLogs: logTotal > logs.length,
     };
+  }
+
+  async adminUpdatePlatformAi(body) {
+    const auth = await this.requireSuperAdmin(body);
+    if (typeof body.circleAiEnabled !== "boolean") {
+      throw new AppError("圈内 AI 开关参数无效", {
+        statusCode: 400,
+        errCode: "PLATFORM_AI_SETTING_INVALID",
+      });
+    }
+    const circleAiEnabled = body.circleAiEnabled;
+    const platformSettings = await this.db.withTransaction(async () => {
+      const result = await this.db.query(
+        `
+        INSERT INTO incircle_platform_settings (
+          singleton_id, circle_ai_enabled, updated_by_user_id
+        ) VALUES (1, $1, $2)
+        ON CONFLICT (singleton_id) DO UPDATE SET
+          circle_ai_enabled = EXCLUDED.circle_ai_enabled,
+          updated_by_user_id = EXCLUDED.updated_by_user_id
+        RETURNING circle_ai_enabled, updated_by_user_id, updated_at
+        `,
+        [circleAiEnabled, auth.user.id]
+      );
+      await this.logOperation(
+        null,
+        auth,
+        circleAiEnabled ? "开放平台圈内AI" : "关闭平台圈内AI",
+        "platform_settings",
+        "circle_ai",
+        { circleAiEnabled }
+      );
+      const row = result.rows[0] || {};
+      return {
+        circleAiEnabled: row.circle_ai_enabled === true,
+        updatedByUserId: row.updated_by_user_id || "",
+        updatedAt: row.updated_at || null,
+      };
+    });
+    return { isSuperAdmin: true, platformSettings };
   }
 
   async adminListCircles(body) {

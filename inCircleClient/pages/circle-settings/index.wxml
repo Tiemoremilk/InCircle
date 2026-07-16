@@ -110,7 +110,7 @@
     </view>
   </view>
 
-  <view class="section" wx:if="{{aiStatus && aiStatus.canManage}}">
+  <view class="section" wx:if="{{platformAiEnabled && aiStatus && aiStatus.canManage}}">
     <view class="settings-card card ai-settings-card motion-section">
       <view class="section-head ai-section-head">
         <view class="ai-card-heading">

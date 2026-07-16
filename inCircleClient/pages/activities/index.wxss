@@ -189,47 +189,172 @@
 }
 
 .insight-box {
+  display: flex;
+  align-items: flex-start;
+  gap: 14rpx;
   margin-top: 20rpx;
-  padding: 18rpx;
-  border-radius: 12rpx;
-  background: #f7f3e8;
+  padding: 17rpx 18rpx;
+  border: 1rpx solid var(--theme-card-active-border, rgba(47, 125, 80, 0.14));
+  border-radius: 14rpx;
+  background: var(--theme-soft, #eaf5ed);
+}
+
+.insight-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 42rpx;
+  height: 42rpx;
+  flex: 0 0 42rpx;
+  border-radius: 11rpx;
+  background: rgba(255, 255, 255, 0.68);
+}
+
+.insight-icon image {
+  width: 25rpx;
+  height: 25rpx;
+  filter: var(--theme-icon-filter, brightness(0) saturate(100%) invert(40%) sepia(22%) saturate(1023%) hue-rotate(93deg) brightness(96%) contrast(94%));
+}
+
+.insight-main {
+  min-width: 0;
+  flex: 1;
 }
 
 .insight-line {
   color: var(--theme-primary-dark, #1c5638);
-  font-size: 24rpx;
-  line-height: 1.45;
-  font-weight: 800;
-}
-
-.recap-row {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 12rpx;
-  margin-top: 18rpx;
-  color: var(--theme-primary, #2f7d50);
   font-size: 23rpx;
+  line-height: 1.4;
   font-weight: 800;
 }
 
-.recap-action {
-  display: inline-flex;
-  align-items: center;
-  min-height: 44rpx;
-  padding: 0;
-  background: transparent;
-  color: inherit;
-  font-size: inherit;
-  font-weight: inherit;
-  line-height: 44rpx;
+.insight-meta {
+  margin-top: 5rpx;
+  overflow: hidden;
+  color: #74807b;
+  font-size: 21rpx;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.recap-action.danger {
+.activity-recap {
+  display: flex;
+  align-items: center;
+  gap: 18rpx;
+  margin-top: 20rpx;
+  padding: 18rpx 0;
+  border-top: 1rpx solid var(--theme-card-border, rgba(47, 125, 80, 0.1));
+}
+
+.activity-recap-title {
+  display: flex;
+  align-items: center;
+  gap: 8rpx;
+  flex-shrink: 0;
+  color: var(--theme-primary, #2f7d50);
+  font-size: 22rpx;
+  font-weight: 800;
+}
+
+.activity-recap-title image {
+  width: 27rpx;
+  height: 27rpx;
+  filter: var(--theme-icon-filter, brightness(0) saturate(100%) invert(40%) sepia(22%) saturate(1023%) hue-rotate(93deg) brightness(96%) contrast(94%));
+}
+
+.activity-recap-values {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 14rpx;
+  min-width: 0;
+  flex: 1;
+}
+
+.activity-recap-item {
+  min-width: 0;
+  text-align: right;
+}
+
+.activity-recap-label {
+  display: block;
+  color: #89928e;
+  font-size: 19rpx;
+  line-height: 1.2;
+}
+
+.activity-recap-value {
+  display: block;
+  max-width: 150rpx;
+  margin-top: 4rpx;
+  overflow: hidden;
+  color: #2b3532;
+  font-size: 22rpx;
+  line-height: 1.25;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.activity-recap-divider {
+  width: 1rpx;
+  height: 38rpx;
+  flex: 0 0 1rpx;
+  background: var(--theme-card-border, rgba(47, 125, 80, 0.1));
+}
+
+.activity-actions {
+  display: flex;
+  gap: 12rpx;
+}
+
+.activity-action {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8rpx;
+  min-width: 0;
+  height: 62rpx;
+  flex: 1;
+  padding: 0 14rpx;
+  border: 1rpx solid var(--theme-card-active-border, rgba(47, 125, 80, 0.14));
+  border-radius: 10rpx;
+  background: var(--theme-soft, #eaf5ed);
+  color: var(--theme-primary-dark, #1c5638);
+  font-size: 22rpx;
+  line-height: 1;
+  font-weight: 800;
+}
+
+.activity-action.share {
+  border-color: transparent;
+  background: var(--theme-primary, #2f7d50);
+  color: #ffffff;
+}
+
+.activity-action.danger {
+  border-color: rgba(179, 74, 52, 0.16);
+  background: #fff5f2;
   color: #b34a34;
 }
 
-.recap-action.disabled {
+.activity-action-icon {
+  width: 25rpx;
+  height: 25rpx;
+  flex-shrink: 0;
+  filter: var(--theme-icon-filter, brightness(0) saturate(100%) invert(40%) sepia(22%) saturate(1023%) hue-rotate(93deg) brightness(96%) contrast(94%));
+}
+
+.activity-action.share .activity-action-icon {
+  filter: brightness(0) invert(1);
+}
+
+.activity-action.danger .activity-action-icon {
+  filter: brightness(0) saturate(100%) invert(34%) sepia(32%) saturate(1328%) hue-rotate(328deg) brightness(91%) contrast(87%);
+}
+
+.activity-action.disabled {
   opacity: 0.62;
 }
 

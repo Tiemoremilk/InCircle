@@ -232,7 +232,7 @@ Component({
       const refreshToken = ++this.refreshToken;
       this.refreshCircleId = circleId;
       const request = api
-        .getAiStatus(circleId)
+        .getAiStatus(circleId, { force: true })
         .then((status) => {
           const activeCircleId = this.properties.targetCircleId || currentCircleId();
           if (!this.componentAlive || refreshToken !== this.refreshToken) return;

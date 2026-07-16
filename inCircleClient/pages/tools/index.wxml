@@ -489,16 +489,26 @@
 
   <view class="sheet-mask" wx:if="{{showShareSheet}}" bindtap="closeShareSheet" catchtouchmove="noop">
     <view class="share-ready-sheet" catchtap="noop">
-      <view class="share-ready-mark">✓</view>
-      <view class="share-ready-title">AA 已保存</view>
-      <view class="share-ready-copy">账单已落库，现在可以通过微信原生分享发送结算详情。</view>
-      <button
-        class="primary-btn share-ready-primary"
-        open-type="share"
-        data-share-type="bill"
-        data-id="{{shareTargetBill.id}}"
-      >分享给微信好友或群</button>
-      <view class="ghost-btn share-ready-secondary" bindtap="closeShareSheet">暂不分享</view>
+      <view class="share-ready-handle"></view>
+      <view class="share-ready-head">
+        <view class="share-ready-mark"><image src="/images/ui-icons/check.svg" mode="aspectFit"></image></view>
+        <view class="share-ready-body">
+          <view class="share-ready-title">账单已保存</view>
+          <view class="share-ready-copy">分享后，圈友可以直接查看分摊和结清状态。</view>
+        </view>
+      </view>
+      <view class="share-ready-actions">
+        <view class="ghost-btn share-ready-secondary" bindtap="closeShareSheet">稍后再说</view>
+        <button
+          class="primary-btn share-ready-primary"
+          open-type="share"
+          data-share-type="bill"
+          data-id="{{shareTargetBill.id}}"
+        >
+          <image class="share-ready-action-icon" src="/images/ui-icons/share.svg" mode="aspectFit"></image>
+          <text>分享给好友或群</text>
+        </button>
+      </view>
     </view>
   </view>
 </view>

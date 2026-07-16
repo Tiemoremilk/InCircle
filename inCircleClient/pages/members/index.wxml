@@ -183,7 +183,11 @@
         embedded="{{true}}"
         mini="{{true}}"
       />
-      <view class="member-note">{{member.note}}</view>
+      <view class="member-note" wx:if="{{member.note}}">{{member.note}}</view>
+      <view class="member-note-placeholder" wx:else>
+        <image src="/images/ui-icons/file-text.svg" mode="aspectFit"></image>
+        <text>暂未填写圈内介绍</text>
+      </view>
     </view>
     <empty-state
       wx:if="{{!members.length}}"

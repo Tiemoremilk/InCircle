@@ -67,6 +67,18 @@ const PERSISTED_READ_TYPES = {
 
 const WRITE_INVALIDATION = {
   incircleAcceptAgreements: ["incircleSession"],
+  incircleAdminUpdatePlatformAi: [
+    "incircleAdminOverview",
+    "incircleCircleSettings",
+    "incircleAiStatus",
+    "incircleAiSettings",
+    "incircleAiListProviders",
+    "incircleAiListModels",
+    "incircleAiListConversations",
+    "incircleAiListMessages",
+    "incircleAiUsage",
+    "incircleAiReports",
+  ],
   incircleAiUpdateSettings: ["incircleAiStatus", "incircleAiSettings"],
   incircleAiSaveProvider: ["incircleAiStatus", "incircleAiSettings", "incircleAiListProviders", "incircleAiListModels"],
   incircleAiArchiveProvider: ["incircleAiStatus", "incircleAiSettings", "incircleAiListProviders", "incircleAiListModels"],
@@ -601,7 +613,8 @@ function getJoinPreview(joinCode, inviteToken) {
   return requestAction("incircleJoinPreview", inviteCredentialPayload(joinCode, inviteToken));
 }
 
-function getCircleSettings(circleId) {
+function getCircleSettings(circleId, options) {
+  if (options && options.force) clearCache(["incircleCircleSettings"]);
   return requestAction("incircleCircleSettings", { circleId });
 }
 
@@ -628,6 +641,10 @@ function getInviteQrCode(circleId) {
 
 function adminOverview() {
   return requestAction("incircleAdminOverview", {});
+}
+
+function adminUpdatePlatformAi(circleAiEnabled) {
+  return requestAction("incircleAdminUpdatePlatformAi", { circleAiEnabled: circleAiEnabled === true });
 }
 
 function adminListCircles(params) {
@@ -1382,6 +1399,7 @@ module.exports = {
   rotateInviteCode,
   getInviteQrCode,
   adminOverview,
+  adminUpdatePlatformAi,
   adminListCircles,
   adminUpdateCircleStatus,
   adminDeleteCircle,

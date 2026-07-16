@@ -216,7 +216,7 @@
 <view class="page ai-unavailable {{themeClass}}" wx:elif="{{!loading}}">
   <view class="unavailable-mark">AI</view>
   <view class="unavailable-title">圈内 AI 暂不可用</view>
-  <view class="unavailable-copy">圈主尚未开启，或当前没有可用模型。</view>
+  <view class="unavailable-copy">{{status.unavailableReason || "圈主尚未开启，或当前没有可用模型。"}}</view>
   <view class="ghost-btn unavailable-action" bindtap="goBack">返回上一页</view>
 </view>
 

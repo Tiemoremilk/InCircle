@@ -34,6 +34,39 @@
       </view>
     </view>
 
+    <view class="section platform-capability">
+      <view class="section-title">平台能力</view>
+      <view class="platform-ai-panel card motion-section">
+        <view class="platform-ai-main">
+          <view class="platform-ai-icon">
+            <image src="/images/ui-icons/sparkles.svg" mode="aspectFit"></image>
+          </view>
+          <view class="platform-ai-copy">
+            <view class="platform-ai-title-row">
+              <view class="platform-ai-title">圈内 AI</view>
+              <view class="platform-ai-state {{platformSettings.circleAiEnabled ? 'is-on' : 'is-off'}}">
+                {{platformSettings.circleAiEnabled ? "已开放" : "已关闭"}}
+              </view>
+            </view>
+            <view class="platform-ai-subtitle">
+              {{platformSettings.circleAiEnabled ? "各圈可按需接入第三方模型" : "所有圈子的入口与设置均已隐藏"}}
+            </view>
+          </view>
+          <switch
+            class="platform-ai-switch"
+            checked="{{platformSettings.circleAiEnabled}}"
+            disabled="{{platformAiBusy}}"
+            color="{{themePrimary}}"
+            bindchange="togglePlatformAi"
+          />
+        </view>
+        <view class="platform-ai-note">
+          <view class="platform-ai-note-dot"></view>
+          <text>{{platformAiBusy ? "正在同步平台状态" : (platformSettings.circleAiEnabled ? "圈子仍需由管理员单独开启并完成模型配置" : "关闭不会删除已有配置，重新开放后可继续使用")}}</text>
+        </view>
+      </view>
+    </view>
+
     <view class="section">
       <view class="section-head">
         <view class="section-title with-icon">

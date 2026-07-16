@@ -327,7 +327,12 @@ class AiService {
     uuidOf(circleId, "圈子");
     const result = await this.db.query(
       `
-      SELECT c.*, m.id AS membership_id, m.role AS membership_role, m.status AS membership_status
+      SELECT c.*, m.id AS membership_id, m.role AS membership_role, m.status AS membership_status,
+        COALESCE((
+          SELECT platform.circle_ai_enabled
+          FROM incircle_platform_settings platform
+          WHERE platform.singleton_id = 1
+        ), false) AS platform_ai_enabled
       FROM incircle_circles c
       LEFT JOIN incircle_circle_members m
         ON m.circle_id = c.id AND m.user_id = $2 AND m.status = 'active'
@@ -343,6 +348,7 @@ class AiService {
       auth,
       circleId,
       circle: row,
+      platformAiEnabled: row.platform_ai_enabled !== false,
       ...flags,
     };
   }
@@ -355,6 +361,9 @@ class AiService {
     if (ctx.circle.status !== "active") {
       throw new AppError("这个圈子暂不可使用 AI", { statusCode: 403, errCode: "CIRCLE_DISABLED" });
     }
+    if (!ctx.platformAiEnabled) {
+      throw new AppError("平台当前未开放圈内 AI", { statusCode: 403, errCode: "AI_PLATFORM_DISABLED" });
+    }
     return ctx;
   }
 
@@ -362,6 +371,9 @@ class AiService {
     const ctx = await this.accessContext(body);
     if (!ctx.canManage) {
       throw new AppError("只有圈主或超管可以配置圈内 AI", { statusCode: 403, errCode: "AI_CONFIG_FORBIDDEN" });
+    }
+    if (!ctx.platformAiEnabled) {
+      throw new AppError("平台当前未开放圈内 AI", { statusCode: 403, errCode: "AI_PLATFORM_DISABLED" });
     }
     return ctx;
   }
@@ -439,14 +451,37 @@ class AiService {
       throw new AppError("AI 助手不可用", { statusCode: 404, errCode: "AI_NOT_AVAILABLE" });
     }
     const settings = await this.readSettings(ctx.circleId);
+    const source = settings || {};
+    if (!ctx.platformAiEnabled) {
+      return {
+        circleId: ctx.circleId,
+        circleName: ctx.circle.name,
+        platformEnabled: false,
+        enabled: !!(settings && settings.enabled),
+        configured: false,
+        canChat: false,
+        canManage: ctx.canManage,
+        isSuperAdmin: ctx.isSuperAdmin,
+        assistantName: source.assistant_name || DEFAULT_SETTINGS.assistantName,
+        quickPrompts: arrayOfStrings(source.quick_prompts || DEFAULT_SETTINGS.quickPrompts, 8, 80),
+        memberDailyLimit: Number(source.member_daily_limit || DEFAULT_SETTINGS.memberDailyLimit),
+        circleDailyLimit: Number(source.circle_daily_limit || DEFAULT_SETTINGS.circleDailyLimit),
+        maxOutputTokens: Number(source.max_output_tokens || DEFAULT_SETTINGS.maxOutputTokens),
+        modelCount: 0,
+        defaultModel: null,
+        models: [],
+        usage: { circleUsed: 0, memberUsed: 0, date: beijingDateKey() },
+        unavailableReason: "平台当前未开放圈内 AI",
+      };
+    }
     const models = ctx.isMember || ctx.isSuperAdmin ? await this.enabledModels(ctx.circleId, ctx.auth.user.id) : [];
     const counts = await this.usageCounts(ctx.circleId, ctx.auth.user.id, beijingDateKey());
     const defaultModel = models.find((model) => model.isDefault) || null;
     const configured = !!defaultModel;
-    const source = settings || {};
     return {
       circleId: ctx.circleId,
       circleName: ctx.circle.name,
+      platformEnabled: true,
       enabled: !!(settings && settings.enabled),
       configured,
       canChat: !!(ctx.isMember && ctx.circle.status === "active" && settings && settings.enabled && configured),

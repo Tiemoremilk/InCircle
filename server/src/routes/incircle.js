@@ -115,6 +115,8 @@ async function dispatchInCircleType(fastify, body, request) {
       return service.adminListCircles(body);
     case "incircleAdminOverview":
       return service.adminOverview(body);
+    case "incircleAdminUpdatePlatformAi":
+      return service.adminUpdatePlatformAi(body);
     case "incircleAdminListUsers":
       return service.adminListUsers(body);
     case "incircleAdminUserDetail":
