@@ -112,7 +112,6 @@
 
       <view
         class="agreement-row {{agreementAccepted ? 'accepted' : ''}} {{agreementAttention ? 'needs-attention' : ''}}"
-        wx:if="{{mode !== 'consent' && mode !== 'agreement'}}"
         bindtap="toggleAgreement"
       >
         <view class="agreement-check"><image src="/images/ui-icons/check.svg" mode="aspectFit"></image></view>
@@ -166,26 +165,6 @@
             <view class="auth-label">个人备注 <text class="optional-mark">选填</text></view>
             <input class="plain-input" adjust-position="{{true}}" cursor-spacing="24" value="{{profileNote}}" placeholder="可约时间、忌口等" bindinput="onNoteInput" />
           </view>
-        </view>
-      </view>
-
-      <view class="consent-overview" wx:if="{{mode === 'consent' || mode === 'agreement'}}">
-        <view class="consent-shield"><image src="/images/ui-icons/shield-check.svg" mode="aspectFit"></image></view>
-        <view class="consent-title">{{mode === 'agreement' ? '先授权，再连接' : '你的数据仍在原处'}}</view>
-        <view class="consent-copy">{{mode === 'agreement' ? '同意前不会向后端校验微信身份，也不会提交账号或个人资料。' : '本次只补充协议确认，不会修改账号、圈子、身份卡或历史业务数据。'}}</view>
-      </view>
-
-      <view
-        class="agreement-row {{agreementAccepted ? 'accepted' : ''}} {{agreementAttention ? 'needs-attention' : ''}}"
-        wx:if="{{mode === 'consent' || mode === 'agreement'}}"
-        bindtap="toggleAgreement"
-      >
-        <view class="agreement-check"><image src="/images/ui-icons/check.svg" mode="aspectFit"></image></view>
-        <view class="agreement-copy">
-          <text>我已阅读并同意</text>
-          <text class="agreement-link" data-type="terms" catchtap="openLegal">《用户服务协议》</text>
-          <text>和</text>
-          <text class="agreement-link" data-type="privacy" catchtap="openLegal">《隐私政策》</text>
         </view>
       </view>
 

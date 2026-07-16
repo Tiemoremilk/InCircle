@@ -61,7 +61,11 @@ function parseUploadResponse(response, fallbackMessage) {
     }
   }
   if (!response || response.statusCode < 200 || response.statusCode >= 300 || !body || body.success === false) {
-    throw new Error((body && body.errMsg) || `${fallbackMessage || "图片上传失败"} (${response && response.statusCode})`);
+    const error = new Error((body && body.errMsg) || `${fallbackMessage || "图片上传失败"} (${response && response.statusCode})`);
+    if (body && body.errCode) error.errCode = body.errCode;
+    if (body && typeof body.details !== "undefined") error.details = body.details;
+    auth.handleAgreementRequired(error);
+    throw error;
   }
   return body.data || body;
 }

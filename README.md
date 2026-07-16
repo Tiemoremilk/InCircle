@@ -467,18 +467,19 @@ node -e "console.log(require('crypto').randomBytes(48).toString('base64url'))"
 | 变量 | 生产要求 | 默认值或说明 |
 | --- | --- | --- |
 | <code>NODE_ENV</code> | production | 部署脚本自动写入 |
-| <code>HOST</code> | 可选 | <code>0.0.0.0</code> |
-| <code>PORT</code> | 可选 | <code>3000</code> |
+| <code>HOST</code> | 容器内固定 | <code>0.0.0.0</code>，只表示监听容器网络 |
+| <code>PORT</code> | 容器内固定 | <code>3000</code> |
 | <code>POSTGRES_PASSWORD</code> | 随机值 | Docker 内部数据库密码 |
 | <code>DATABASE_URL</code> | 必填且不能使用默认密码 | Docker 内主机名为 postgres |
 | <code>CORS_ORIGINS</code> | 生产限制为真实域名 | 多个来源逗号分隔 |
 | <code>PUBLIC_BASE_URL</code> | 必须是 HTTPS | 生成图片和头像公开 URL |
 | <code>UPLOAD_DIR</code> | 可选 | <code>/app/uploads</code> |
-| <code>LEGAL_OPERATOR_NAME</code> | 首次部署必填 | 迁移时同步到协议公开信息表，不写入小程序源码 |
-| <code>LEGAL_CONTACT_EMAIL</code> | 首次部署必填 | 迁移时同步到协议公开信息表，不写入小程序源码 |
-| <code>LEGAL_TERMS_VERSION</code> | 必填 | 当前用户服务协议版本，变化后要求重新同意 |
-| <code>LEGAL_PRIVACY_VERSION</code> | 必填 | 当前隐私政策版本，变化后要求重新同意 |
-| <code>LEGAL_EFFECTIVE_DATE</code> | 必填 | 协议生效日期，格式 <code>YYYY-MM-DD</code> |
+| <code>LEGAL_OPERATOR_TYPE</code> | 首次初始化 | 默认 <code>individual</code>；<code>enterprise</code> 为企业开发者 |
+| <code>LEGAL_OPERATOR_NAME</code> | 首次初始化必填 | 只用于补齐数据库空字段，不覆盖已有主体 |
+| <code>LEGAL_CONTACT_EMAIL</code> | 首次初始化必填 | 只用于补齐数据库空字段，不覆盖已有邮箱 |
+| <code>LEGAL_TERMS_VERSION</code> | 首次初始化必填 | 已有版本以数据库为准，后续版本变化需主动更新数据库 |
+| <code>LEGAL_PRIVACY_VERSION</code> | 首次初始化必填 | 已有版本以数据库为准，后续版本变化需主动更新数据库 |
+| <code>LEGAL_EFFECTIVE_DATE</code> | 首次初始化必填 | 格式 <code>YYYY-MM-DD</code>，已有日期不会被部署覆盖 |
 | <code>WECHAT_APP_ID</code> | 必填 | 小程序 AppID |
 | <code>WECHAT_APP_SECRET</code> | 必填，严禁提交 | 登录、小程序码和内容安全 |
 | <code>INCIRCLE_SUPER_ADMIN_OPENIDS</code> | 可选 | 多个 OpenID 逗号分隔 |
@@ -487,6 +488,8 @@ node -e "console.log(require('crypto').randomBytes(48).toString('base64url'))"
 | <code>AI_CREDENTIALS_ENCRYPTION_KEY</code> | 必填 | 32 随机字节 |
 | <code>AI_PROVIDER_TIMEOUT_MS</code> | 可选 | 默认 300000，上游空闲超时 |
 | <code>AI_CONTENT_SECURITY_ENABLED</code> | 生产必须为 true | 关闭时生产服务拒绝启动 |
+
+`HOST=0.0.0.0` 不会让宿主机公网开放 3000 端口。安全边界由 Compose 的 `127.0.0.1:3000:3000` 映射保证；若改成容器内 `HOST=127.0.0.1`，Docker 端口转发和 Nginx 反向代理会无法连接 API。
 
 生产启动会拒绝：
 
@@ -790,11 +793,12 @@ powershell -ExecutionPolicy Bypass -File .\scripts\deploy-server.ps1 -HostName "
 | <code>-WechatAppId</code> | 空 | 首次填充，或在本机脚本中配置 |
 | <code>-WechatAppSecret</code> | 空 | 服务端为空时填充 |
 | <code>-PublicBaseUrl</code> | 空 | HTTPS 公开 API 地址，或在本机脚本中配置 |
-| <code>-LegalOperatorName</code> | 空 | 协议展示的运营主体，仅配置在本机私有脚本和服务器 |
-| <code>-LegalContactEmail</code> | 空 | 协议展示的联系邮箱，仅配置在本机私有脚本和服务器 |
-| <code>-LegalTermsVersion</code> | 空 | 用户服务协议当前版本 |
-| <code>-LegalPrivacyVersion</code> | 空 | 隐私政策当前版本 |
-| <code>-LegalEffectiveDate</code> | 空 | 协议生效日期，格式 <code>YYYY-MM-DD</code> |
+| <code>-LegalOperatorType</code> | individual | 仅在服务器配置或数据库对应字段尚未初始化时使用 |
+| <code>-LegalOperatorName</code> | 空 | 仅用于首次补齐协议主体，不覆盖数据库已有值 |
+| <code>-LegalContactEmail</code> | 空 | 仅用于首次补齐联系邮箱，不覆盖数据库已有值 |
+| <code>-LegalTermsVersion</code> | 空 | 仅用于首次补齐用户服务协议版本 |
+| <code>-LegalPrivacyVersion</code> | 空 | 仅用于首次补齐隐私政策版本 |
+| <code>-LegalEffectiveDate</code> | 空 | 仅用于首次补齐生效日期，格式 <code>YYYY-MM-DD</code> |
 | <code>-SuperAdminOpenids</code> | 空 | 平台超管 OpenID |
 | <code>-UseSudo</code> | false | Docker 使用 sudo |
 | <code>-SkipBackup</code> | false | 跳过部署前备份 |
@@ -810,11 +814,12 @@ powershell -ExecutionPolicy Bypass -File .\scripts\deploy-server.ps1 -HostName "
 3. 保留服务器现有 <code>.env</code>。
 4. 缺失时生成数据库密码、JWT Secret 和 AI 加密密钥。
 5. PostgreSQL 已运行且健康时执行 <code>pg_dump</code>。
-6. 解压新版本并重建 API 容器。
-7. 自动运行数据库迁移。
-8. 将服务器私有的协议运营主体和联系邮箱同步到 PostgreSQL。
-9. 最多等待约 60 秒检查 <code>/health</code>。
-9. 失败时输出容器状态。
+6. 解压新版本、构建 API 镜像并确保 PostgreSQL 已启动。
+7. 停止旧 API，使用一次性容器原子执行数据库迁移。
+8. 仅在法律资料字段缺失时用服务器配置完成首次初始化；已有数据库值保持不变。
+9. 迁移成功后启动 API。
+10. 最多等待约 60 秒检查 <code>/health</code>，并确认宿主机端口只绑定到 <code>127.0.0.1</code>。
+11. 失败时输出容器状态和最近日志。
 
 脚本不会删除 PostgreSQL volume，也不会覆盖服务器 uploads。部署压缩包可在发布后删除，下次会重新生成。
 
@@ -991,7 +996,7 @@ npm audit --omit=dev
 ### 隐私
 
 - OpenID、手机号、密码哈希、用户导出和聊天正文属于敏感数据。
-- 协议运营主体、联系邮箱、两个版本号和生效日期存放在生产数据库，通过匿名只读接口展示；它们会向小程序用户公开，但不写入 Git 仓库。
+- 协议主体类型、运营主体、联系邮箱、两个版本号和生效日期存放在生产数据库，通过匿名只读接口展示；它们会向小程序用户公开，但不写入 Git 仓库。
 - 不提交数据库备份、历史导出、头像包或生产日志。
 - 分享链接不能替代服务端成员校验。
 - 避免在身份卡、账单、打卡图片、资料和 AI 输入中填写高敏信息。

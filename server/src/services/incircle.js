@@ -13,6 +13,7 @@ const {
 } = require("../member-role");
 const { reserveCircleMemberNumber } = require("../member-number");
 const { agreementStatus, requireAgreementAcceptance } = require("../legal");
+const { readAgreementAcceptanceState, recordAgreementAcceptance } = require("../agreement-store");
 const { readPublicLegalProfile } = require("../legal-profile");
 const { DEFAULT_CUSTOM_THEME_RGBA, DEFAULT_THEME_KEY, normalizeCustomThemeRgba, normalizeThemeKey } = require("../theme");
 const { beijingDateKey, beijingParts, dateFromBeijingParts, formatBeijingDateTime, parseBeijingDateTime } = require("../time");
@@ -1860,59 +1861,43 @@ class InCircleService {
   async saveAccountCredentials(openid, accountName, password, patch) {
     const credentials = await createPasswordCredentials(password);
     const agreement = patch && patch.agreement ? patch.agreement : null;
-    const result = await this.db.query(
-      `
-      UPDATE incircle_users SET
-        account_name = $2,
-        account_key = $3,
-        password_hash = $4,
-        password_salt = $5,
-        password_iterations = $6,
-        password_digest = $7,
-        auth_version = auth_version + 1,
-        logged_in = true,
-        status = CASE WHEN status = 'blocked' THEN 'blocked' ELSE 'active' END,
-        account_bound_at = COALESCE(account_bound_at, now()),
-        wechat_bound_at = COALESCE(wechat_bound_at, now()),
-        password_updated_at = now(),
-        last_login_at = COALESCE($8::timestamptz, last_login_at),
-        terms_version = CASE WHEN $9::text <> '' THEN $9 ELSE terms_version END,
-        privacy_version = CASE WHEN $10::text <> '' THEN $10 ELSE privacy_version END,
-        agreements_accepted_at = CASE
-          WHEN $9::text <> '' AND $10::text <> '' AND (
-            agreements_accepted_at IS NULL
-            OR terms_version IS DISTINCT FROM $9
-            OR privacy_version IS DISTINCT FROM $10
-          ) THEN now()
-          ELSE agreements_accepted_at
-        END,
-        agreement_acceptance_source = CASE
-          WHEN $11::text <> '' AND (
-            agreements_accepted_at IS NULL
-            OR terms_version IS DISTINCT FROM $9
-            OR privacy_version IS DISTINCT FROM $10
-          ) THEN $11
-          ELSE agreement_acceptance_source
-        END,
-        updated_at = now()
-      WHERE openid = $1
-      RETURNING *
-      `,
-      [
-        openid,
-        normalizeAccountName(accountName),
-        accountKeyOf(accountName),
-        credentials.passwordHash,
-        credentials.passwordSalt,
-        credentials.passwordIterations,
-        credentials.passwordDigest,
-        patch && patch.lastLoginAt ? patch.lastLoginAt : null,
-        agreement ? agreement.termsVersion : "",
-        agreement ? agreement.privacyVersion : "",
-        agreement ? agreement.source : "",
-      ]
-    );
-    return result.rows[0];
+    return this.db.withTransaction(async () => {
+      const result = await this.db.query(
+        `
+        UPDATE incircle_users SET
+          account_name = $2,
+          account_key = $3,
+          password_hash = $4,
+          password_salt = $5,
+          password_iterations = $6,
+          password_digest = $7,
+          auth_version = auth_version + 1,
+          logged_in = true,
+          status = CASE WHEN status = 'blocked' THEN 'blocked' ELSE 'active' END,
+          account_bound_at = COALESCE(account_bound_at, now()),
+          wechat_bound_at = COALESCE(wechat_bound_at, now()),
+          password_updated_at = now(),
+          last_login_at = COALESCE($8::timestamptz, last_login_at),
+          updated_at = now()
+        WHERE openid = $1
+        RETURNING *
+        `,
+        [
+          openid,
+          normalizeAccountName(accountName),
+          accountKeyOf(accountName),
+          credentials.passwordHash,
+          credentials.passwordSalt,
+          credentials.passwordIterations,
+          credentials.passwordDigest,
+          patch && patch.lastLoginAt ? patch.lastLoginAt : null,
+        ]
+      );
+      const user = result.rows[0];
+      if (!user || !agreement) return user;
+      const recorded = await recordAgreementAcceptance(this.db, user.id, agreement);
+      return recorded.user;
+    });
   }
 
   async getActiveMemberships(userId) {
@@ -1951,6 +1936,32 @@ class InCircleService {
         accountBlocked: true,
         blockedReason: userRow.blocked_reason || "账号已被封禁，请联系平台处理",
       });
+    }
+    if (!userRow.logged_in) return this.emptySession(publicUser(userRow), legalProfile);
+    const acceptanceState = await readAgreementAcceptanceState(this.db, userRow, legalProfile);
+    const agreements = agreementStatus(userRow, legalProfile, acceptanceState);
+    const hasActiveAccount = !!(userRow.logged_in && hasPasswordAccount(userRow));
+    const access = hasActiveAccount ? issueAccessToken(this.config, userRow) : null;
+    if (hasActiveAccount && !agreements.accepted) {
+      return {
+        user: publicUser(userRow),
+        circles: [],
+        myCircles: [],
+        circleMemberships: [],
+        memberships: [],
+        currentCircleId: "",
+        currentCircle: null,
+        loggedIn: true,
+        hasCircle: false,
+        hasCircles: false,
+        isSuperAdmin: false,
+        needsAccountBinding: false,
+        agreementsAccepted: false,
+        agreements,
+        accessToken: access.token,
+        accessTokenExpiresAt: access.expiresAt,
+        backend: { provider: "self-hosted", mode: "http", migrated: true },
+      };
     }
     const memberships = await this.getActiveMemberships(userRow.id);
     const circles = await this.getCirclesByMemberships(memberships);
@@ -1991,8 +2002,6 @@ class InCircleService {
         const rightTime = Date.parse(right.lastEnteredAt || right.createdAt || 0) || 0;
         return rightTime - leftTime;
       });
-    const access = userRow.logged_in && hasPasswordAccount(userRow) ? issueAccessToken(this.config, userRow) : null;
-    const agreements = agreementStatus(userRow, legalProfile);
     return {
       user: publicUser(userRow),
       circles: decoratedCircles,
@@ -2001,7 +2010,7 @@ class InCircleService {
       memberships: memberships.map(publicMembership),
       currentCircleId,
       currentCircle: currentCircleId ? decoratedCircles.find((circle) => circle.id === currentCircleId) || null : null,
-      loggedIn: !!(userRow.logged_in && hasPasswordAccount(userRow)),
+      loggedIn: hasActiveAccount,
       hasCircle: !!currentCircleId,
       hasCircles: decoratedCircles.length > 0,
       isSuperAdmin: this.isSuperAdmin(userRow.openid, userRow),
@@ -2035,7 +2044,7 @@ class InCircleService {
     };
   }
 
-  async requireUser(body) {
+  async requireUser(body, options) {
     const identity = await this.resolveIdentity(body, { required: true });
     const user = await this.getUserByOpenid(identity.openid);
     if (user && user.status === "blocked") {
@@ -2055,6 +2064,18 @@ class InCircleService {
     }
     if (identity.authVersion && Number(identity.authVersion) !== Number(user.auth_version || 1)) {
       throw new AppError("登录状态已失效，请重新登录", { statusCode: 401, errCode: "TOKEN_REVOKED" });
+    }
+    if (!(options && options.allowPendingAgreement)) {
+      const legalProfile = await this.currentLegalProfile();
+      const acceptanceState = await readAgreementAcceptanceState(this.db, user, legalProfile);
+      const agreements = agreementStatus(user, legalProfile, acceptanceState);
+      if (!agreements.accepted) {
+        throw new AppError("请确认当前用户服务协议和隐私政策后继续", {
+          statusCode: 428,
+          errCode: "AGREEMENT_ACCEPTANCE_REQUIRED",
+          details: agreements,
+        });
+      }
     }
     return { identity, user };
   }
@@ -2181,33 +2202,20 @@ class InCircleService {
               wechat_bound_at = now(),
               logged_in = true,
               auth_version = auth_version + 1,
-              terms_version = $4,
-              privacy_version = $5,
-              agreements_accepted_at = CASE
-                WHEN agreements_accepted_at IS NULL
-                  OR terms_version IS DISTINCT FROM $4
-                  OR privacy_version IS DISTINCT FROM $5
-                THEN now() ELSE agreements_accepted_at
-              END,
-              agreement_acceptance_source = CASE
-                WHEN agreements_accepted_at IS NULL
-                  OR terms_version IS DISTINCT FROM $4
-                  OR privacy_version IS DISTINCT FROM $5
-                THEN $6 ELSE agreement_acceptance_source
-              END,
               last_login_at = now(),
               updated_at = now()
           WHERE id = $1 AND status = 'active' AND openid IS NULL AND wechat_bound = false
           RETURNING *
           `,
-          [user.id, identity.openid, identity.unionid || "", agreement.termsVersion, agreement.privacyVersion, agreement.source]
+          [user.id, identity.openid, identity.unionid || ""]
         );
         if (!rebound.rows[0]) {
           throw new AppError("账号绑定状态已变化，请重新登录", { statusCode: 409, errCode: "WECHAT_REBIND_STALE" });
         }
         await this.db.query("UPDATE incircle_circle_members SET openid = $2, updated_at = now() WHERE user_id = $1", [user.id, identity.openid]);
         await this.db.query("UPDATE incircle_member_cards SET openid = $2, updated_at = now() WHERE user_id = $1", [user.id, identity.openid]);
-        return rebound.rows[0];
+        const recorded = await recordAgreementAcceptance(this.db, user.id, agreement);
+        return recorded.user;
       });
       return this.buildSession(user);
     }
@@ -2218,33 +2226,23 @@ class InCircleService {
       });
     }
     user = await this.syncClientThemePreference(user, body);
-    const result = await this.db.query(
-      `
-      UPDATE incircle_users SET
-        logged_in = true,
-        auth_version = auth_version + 1,
-        terms_version = $2,
-        privacy_version = $3,
-        agreements_accepted_at = CASE
-          WHEN agreements_accepted_at IS NULL
-            OR terms_version IS DISTINCT FROM $2
-            OR privacy_version IS DISTINCT FROM $3
-          THEN now() ELSE agreements_accepted_at
-        END,
-        agreement_acceptance_source = CASE
-          WHEN agreements_accepted_at IS NULL
-            OR terms_version IS DISTINCT FROM $2
-            OR privacy_version IS DISTINCT FROM $3
-          THEN $4 ELSE agreement_acceptance_source
-        END,
-        last_login_at = now(),
-        updated_at = now()
-      WHERE id = $1
-      RETURNING *
-      `,
-      [user.id, agreement.termsVersion, agreement.privacyVersion, agreement.source]
-    );
-    return this.buildSession(result.rows[0]);
+    user = await this.db.withTransaction(async () => {
+      const result = await this.db.query(
+        `
+        UPDATE incircle_users SET
+          logged_in = true,
+          auth_version = auth_version + 1,
+          last_login_at = now(),
+          updated_at = now()
+        WHERE id = $1
+        RETURNING *
+        `,
+        [user.id]
+      );
+      const recorded = await recordAgreementAcceptance(this.db, result.rows[0].id, agreement);
+      return recorded.user;
+    });
+    return this.buildSession(user);
   }
 
   async bindAccount(body) {
@@ -2320,32 +2318,10 @@ class InCircleService {
   }
 
   async acceptAgreements(body) {
-    const auth = await this.requireUser(body);
+    const auth = await this.requireUser(body, { allowPendingAgreement: true });
     const agreement = requireAgreementAcceptance(body, "session", await this.currentLegalProfile());
-    const result = await this.db.query(
-      `
-      UPDATE incircle_users SET
-        terms_version = $2,
-        privacy_version = $3,
-        agreements_accepted_at = CASE
-          WHEN agreements_accepted_at IS NULL
-            OR terms_version IS DISTINCT FROM $2
-            OR privacy_version IS DISTINCT FROM $3
-          THEN now() ELSE agreements_accepted_at
-        END,
-        agreement_acceptance_source = CASE
-          WHEN agreements_accepted_at IS NULL
-            OR terms_version IS DISTINCT FROM $2
-            OR privacy_version IS DISTINCT FROM $3
-          THEN $4 ELSE agreement_acceptance_source
-        END,
-        updated_at = now()
-      WHERE id = $1
-      RETURNING *
-      `,
-      [auth.user.id, agreement.termsVersion, agreement.privacyVersion, agreement.source]
-    );
-    return this.buildSession(result.rows[0] || auth.user);
+    const recorded = await recordAgreementAcceptance(this.db, auth.user.id, agreement);
+    return this.buildSession(recorded.user || auth.user);
   }
 
   async changePassword(body) {
@@ -2398,7 +2374,7 @@ class InCircleService {
   }
 
   async logout(body) {
-    const auth = await this.requireUser(body);
+    const auth = await this.requireUser(body, { allowPendingAgreement: true });
     const legalProfile = await this.currentLegalProfile();
     const result = await this.db.query(
       "UPDATE incircle_users SET logged_in = false, auth_version = auth_version + 1, updated_at = now() WHERE id = $1 RETURNING *",

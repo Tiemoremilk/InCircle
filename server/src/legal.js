@@ -15,19 +15,29 @@ function currentAgreementVersions(publicProfile) {
   return { termsVersion, privacyVersion };
 }
 
-function agreementStatus(user, publicProfile) {
-  const source = user || {};
+function agreementStatus(user, publicProfile, acceptanceState) {
   const versions = currentAgreementVersions(publicProfile);
-  const accepted = !!(
-    source.agreements_accepted_at &&
-    source.terms_version === versions.termsVersion &&
-    source.privacy_version === versions.privacyVersion
-  );
+  const state = acceptanceState || {};
+  const current = state.current || null;
+  const latest = state.latest || null;
+  const accepted = !!current;
+  const required = !!user && !accepted;
+  const changedDocuments = [];
+  if (required && latest) {
+    if (latest.termsVersion !== versions.termsVersion) changedDocuments.push("terms");
+    if (latest.privacyVersion !== versions.privacyVersion) changedDocuments.push("privacy");
+  }
   return {
     accepted,
+    required,
+    reason: required ? (latest ? "updated" : "missing") : "",
     termsVersion: versions.termsVersion,
     privacyVersion: versions.privacyVersion,
-    acceptedAt: accepted ? source.agreements_accepted_at : null,
+    acceptedTermsVersion: latest ? latest.termsVersion : "",
+    acceptedPrivacyVersion: latest ? latest.privacyVersion : "",
+    changedDocuments,
+    acceptedAt: accepted ? current.acceptedAt : null,
+    lastAcceptedAt: latest ? latest.acceptedAt : null,
   };
 }
 

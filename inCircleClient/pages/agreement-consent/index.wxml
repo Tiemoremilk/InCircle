@@ -1,0 +1,100 @@
+<page-meta page-style="{{themeStyle}}"></page-meta>
+
+<view class="page consent-page {{themeClass}}" wx:if="{{!loading && !errorMessage}}">
+  <view class="consent-shell">
+    <view class="consent-hero">
+      <view class="consent-hero-head">
+        <view>
+          <view class="consent-brand">InCircle</view>
+          <view class="consent-hero-title">{{title}}</view>
+        </view>
+        <view class="consent-hero-icon">
+          <image src="/images/ui-icons/shield-check.svg" mode="aspectFit"></image>
+        </view>
+      </view>
+      <view class="consent-hero-copy">{{copy}}</view>
+    </view>
+
+    <view class="consent-panel">
+      <view class="account-row">
+        <image class="account-avatar" src="{{user.avatarUrl || '/images/avatar.png'}}" mode="aspectFill"></image>
+        <view class="account-copy">
+          <view class="account-label">当前账号</view>
+          <view class="account-name">{{user.nickName || 'InCircle 用户'}}</view>
+        </view>
+        <view class="account-id">{{user.accountName || ''}}</view>
+      </view>
+
+      <view class="section-head">
+        <view class="section-title">请确认以下协议</view>
+        <view class="section-note">点击可查看全文</view>
+      </view>
+
+      <view class="document-list">
+        <view class="document-row {{item.checked ? 'checked' : ''}}" wx:for="{{documents}}" wx:key="type">
+          <view class="document-open" data-type="{{item.type}}" bindtap="openLegal" hover-class="document-open-active">
+            <view class="document-icon document-icon-{{item.type}}">
+              <image src="{{item.icon}}" mode="aspectFit"></image>
+            </view>
+            <view class="document-copy">
+              <view class="document-title-line">
+                <view class="document-title">{{item.title}}</view>
+                <view class="document-status {{item.statusState}}" wx:if="{{item.status}}">{{item.status}}</view>
+              </view>
+              <view class="document-version">版本 {{item.version}}</view>
+            </view>
+          </view>
+          <view
+            class="document-check-hit"
+            data-type="{{item.type}}"
+            catchtap="toggleDocument"
+            aria-role="checkbox"
+            aria-checked="{{item.checked}}"
+            aria-label="确认{{item.title}}"
+          >
+            <view class="document-check {{item.checked ? 'checked' : ''}}">
+              <image src="/images/ui-icons/check.svg" mode="aspectFit"></image>
+            </view>
+          </view>
+        </view>
+      </view>
+
+      <view class="consent-actions">
+        <view class="consent-check-row {{accepted ? 'accepted' : ''}}" bindtap="toggleAccepted">
+          <view class="consent-check">
+            <image src="/images/ui-icons/check.svg" mode="aspectFit"></image>
+          </view>
+          <view class="consent-check-copy">
+            我已阅读并同意《用户服务协议》和《隐私政策》
+          </view>
+        </view>
+
+        <view class="consent-button-grid">
+          <button class="consent-decline" disabled="{{submitting || leaving}}" bindtap="declineAndLogout">
+            {{leaving ? '正在退出...' : '暂不同意并退出账号'}}
+          </button>
+          <button
+            class="primary-btn consent-submit"
+            disabled="{{!accepted || submitting || leaving}}"
+            bindtap="submitAcceptance"
+          >{{submitting ? '正在确认...' : '同意并继续'}}</button>
+        </view>
+        <view class="consent-action-note">退出账号不会删除圈子和历史数据</view>
+      </view>
+    </view>
+  </view>
+</view>
+
+<view class="page consent-state {{themeClass}}" wx:elif="{{!loading}}">
+  <view class="state-icon">!</view>
+  <view class="state-title">协议状态暂时无法读取</view>
+  <view class="state-copy">{{errorMessage}}</view>
+  <button class="primary-btn state-action" bindtap="retryLoad">重新加载</button>
+</view>
+
+<view class="page loading-page {{themeClass}}" wx:else>
+  <view class="loading-panel">
+    <view class="loading-text">正在核对协议状态...</view>
+    <view class="loading-dots"><view></view><view></view><view></view></view>
+  </view>
+</view>

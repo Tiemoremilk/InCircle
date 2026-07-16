@@ -1,6 +1,7 @@
 const { AppError } = require("./errors");
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const OPERATOR_TYPES = new Set(["individual", "enterprise"]);
 
 function normalizeDateOnly(value) {
   if (!value) return "";
@@ -17,6 +18,7 @@ function normalizeDateOnly(value) {
 function normalizePublicLegalProfile(source) {
   const profile = source || {};
   return {
+    operatorType: String(profile.operatorType || profile.operator_type || "individual").trim().toLowerCase(),
     operatorName: String(profile.operatorName || profile.operator_name || "").trim(),
     contactEmail: String(profile.contactEmail || profile.contact_email || "").trim().toLowerCase(),
     termsVersion: String(profile.termsVersion || profile.terms_version || "").trim(),
@@ -36,6 +38,9 @@ function validatePublicLegalProfile(source, options) {
     && !profile.privacyVersion
     && !profile.effectiveDate
   ) return profile;
+  if (!OPERATOR_TYPES.has(profile.operatorType)) {
+    throw new Error("LEGAL_OPERATOR_TYPE must be individual or enterprise.");
+  }
   if (!profile.operatorName || profile.operatorName.length > 80 || /[\r\n]/.test(profile.operatorName)) {
     throw new Error("LEGAL_OPERATOR_NAME must contain 1-80 characters without line breaks.");
   }
@@ -67,66 +72,115 @@ function validatePublicLegalProfile(source, options) {
   return profile;
 }
 
-async function reconcilePublicLegalProfile(db, config) {
+function isCompletePublicLegalProfile(profile) {
+  return !!(
+    profile.operatorName
+    && profile.contactEmail
+    && profile.termsVersion
+    && profile.privacyVersion
+    && profile.effectiveDate
+  );
+}
+
+function hasPublicLegalDetails(profile) {
+  return !!(
+    profile.operatorName
+    || profile.contactEmail
+    || profile.termsVersion
+    || profile.privacyVersion
+    || profile.effectiveDate
+  );
+}
+
+async function lockPublicLegalProfile(db) {
+  let result = await db.query(
+    `SELECT operator_type, operator_name, contact_email, terms_version, privacy_version, effective_date, updated_at
+     FROM incircle_public_legal_profile WHERE singleton_id = 1 FOR UPDATE`
+  );
+  if (result.rows[0]) return result.rows[0];
+  await db.query(
+    "INSERT INTO incircle_public_legal_profile (singleton_id) VALUES (1) ON CONFLICT (singleton_id) DO NOTHING"
+  );
+  result = await db.query(
+    `SELECT operator_type, operator_name, contact_email, terms_version, privacy_version, effective_date, updated_at
+     FROM incircle_public_legal_profile WHERE singleton_id = 1 FOR UPDATE`
+  );
+  return result.rows[0] || {};
+}
+
+async function reconcilePublicLegalProfile(db, config, options) {
   const configured = normalizePublicLegalProfile({
+    operatorType: config && config.legalOperatorType,
     operatorName: config && config.legalOperatorName,
     contactEmail: config && config.legalContactEmail,
     termsVersion: config && config.legalTermsVersion,
     privacyVersion: config && config.legalPrivacyVersion,
     effectiveDate: config && config.legalEffectiveDate,
   });
+  const currentRow = await lockPublicLegalProfile(db);
+  const current = normalizePublicLegalProfile(currentRow);
+  const initializeOperatorType = !!(options && options.initializeOperatorType);
+  const updates = [];
+  const values = [];
+  const next = Object.assign({}, current);
+  const queueUpdate = (key, column, value, cast) => {
+    values.push(value);
+    updates.push({ key, sql: `${column} = $${values.length}${cast || ""}` });
+    next[key] = value;
+  };
+
+  if (!OPERATOR_TYPES.has(configured.operatorType)) {
+    throw new Error("LEGAL_OPERATOR_TYPE must be individual or enterprise.");
+  }
   if (
-    !configured.operatorName
-    && !configured.contactEmail
-    && !configured.termsVersion
-    && !configured.privacyVersion
-    && !configured.effectiveDate
+    (initializeOperatorType || !hasPublicLegalDetails(current))
+    && current.operatorType !== configured.operatorType
   ) {
-    const current = await db.query(
-      `SELECT operator_name, contact_email, terms_version, privacy_version, effective_date, updated_at
-       FROM incircle_public_legal_profile WHERE singleton_id = 1`
-    );
-    const profile = normalizePublicLegalProfile(current.rows[0]);
-    const complete = !!(
-      profile.operatorName
-      && profile.contactEmail
-      && profile.termsVersion
-      && profile.privacyVersion
-      && profile.effectiveDate
-    );
-    return { configured: complete, profile };
+    queueUpdate("operatorType", "operator_type", configured.operatorType);
+  }
+  if (!current.operatorName && configured.operatorName) {
+    queueUpdate("operatorName", "operator_name", configured.operatorName);
+  }
+  if (!current.contactEmail && configured.contactEmail) {
+    queueUpdate("contactEmail", "contact_email", configured.contactEmail);
+  }
+  if (!current.termsVersion && configured.termsVersion) {
+    queueUpdate("termsVersion", "terms_version", configured.termsVersion);
+  }
+  if (!current.privacyVersion && configured.privacyVersion) {
+    queueUpdate("privacyVersion", "privacy_version", configured.privacyVersion);
+  }
+  if (!current.effectiveDate && configured.effectiveDate) {
+    queueUpdate("effectiveDate", "effective_date", configured.effectiveDate, "::date");
   }
 
-  const profile = validatePublicLegalProfile(configured);
+  const detailUpdates = updates.some((item) => item.key !== "operatorType");
+  if (detailUpdates || isCompletePublicLegalProfile(next)) validatePublicLegalProfile(next);
+  if (!updates.length) {
+    return { configured: isCompletePublicLegalProfile(current), profile: current, initializedFields: [] };
+  }
+
   const result = await db.query(
     `
-    INSERT INTO incircle_public_legal_profile (
-      singleton_id, operator_name, contact_email, terms_version, privacy_version, effective_date
-    )
-    VALUES (1, $1, $2, $3, $4, $5::date)
-    ON CONFLICT (singleton_id) DO UPDATE SET
-      operator_name = EXCLUDED.operator_name,
-      contact_email = EXCLUDED.contact_email,
-      terms_version = EXCLUDED.terms_version,
-      privacy_version = EXCLUDED.privacy_version,
-      effective_date = EXCLUDED.effective_date,
+    UPDATE incircle_public_legal_profile SET
+      ${updates.map((item) => item.sql).join(",\n      ")},
       updated_at = now()
-    RETURNING operator_name, contact_email, terms_version, privacy_version, effective_date, updated_at
+    WHERE singleton_id = 1
+    RETURNING operator_type, operator_name, contact_email, terms_version, privacy_version, effective_date, updated_at
     `,
-    [
-      profile.operatorName,
-      profile.contactEmail,
-      profile.termsVersion,
-      profile.privacyVersion,
-      profile.effectiveDate,
-    ]
+    values
   );
-  return { configured: true, profile: normalizePublicLegalProfile(result.rows[0]) };
+  const profile = normalizePublicLegalProfile(result.rows[0] || next);
+  return {
+    configured: isCompletePublicLegalProfile(profile),
+    profile,
+    initializedFields: updates.map((item) => item.key),
+  };
 }
 
 async function readPublicLegalProfile(db) {
   const result = await db.query(
-    `SELECT operator_name, contact_email, terms_version, privacy_version, effective_date, updated_at
+    `SELECT operator_type, operator_name, contact_email, terms_version, privacy_version, effective_date, updated_at
      FROM incircle_public_legal_profile WHERE singleton_id = 1`
   );
   const row = result.rows[0] || {};

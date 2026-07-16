@@ -22,6 +22,7 @@ DATABASE_URL=postgres://incircle:your-db-password@postgres:5432/incircle
 CORS_ORIGINS=https://your-api.example.com
 PUBLIC_BASE_URL=https://your-api.example.com
 UPLOAD_DIR=/app/uploads
+LEGAL_OPERATOR_TYPE=individual
 LEGAL_OPERATOR_NAME=your-public-operator-name
 LEGAL_CONTACT_EMAIL=legal-contact@example.com
 LEGAL_TERMS_VERSION=your-terms-version
@@ -38,7 +39,9 @@ AI_CONTENT_SECURITY_ENABLED=true
 
 `WECHAT_APP_SECRET` is required because the backend validates every login request with WeChat `jscode2session` and generates official WeChat Mini Program invite codes with `getwxacodeunlimit`.
 
-The five `LEGAL_*` values are synchronized into the singleton `incircle_public_legal_profile` table by `npm run db:migrate`. The Mini Program reads them through an anonymous, read-only endpoint so real production values do not need to be committed to Git. Changing either version makes prior acceptance stale and requires users to confirm the current agreements again.
+The legal configuration is only an initialization seed for the singleton `incircle_public_legal_profile` table. Migration fills missing fields but never overwrites a complete database profile on later deploys. `LEGAL_OPERATOR_TYPE` accepts `individual` or `enterprise`; migration `0025` may initialize only this newly introduced field. Later legal text or version changes must be made deliberately in PostgreSQL. Changing either agreement version makes prior acceptance stale and requires users to confirm the current agreements again.
+
+Docker publishes the API only on `127.0.0.1:3000` for the local reverse proxy. Keep `HOST=0.0.0.0` inside the container so Docker networking works; do not change the Compose port mapping back to `3000:3000`.
 
 ## Deploy
 
@@ -48,7 +51,7 @@ From the Windows project root, first create the local private deployment script 
 Copy-Item .\scripts\deploy-server.example.ps1 .\scripts\deploy-server.ps1
 ```
 
-Set the local AppID, public API URL, legal operator name, and legal contact email in `scripts/deploy-server.ps1`, or pass them as command parameters. The copied script is excluded from Git. Then deploy with:
+Set the local AppID, public API URL, and first-install legal profile seed in `scripts/deploy-server.ps1`, or pass them as command parameters. The copied script is excluded from Git. Existing legal values in `.env` and PostgreSQL are preserved on later deploys. Then deploy with:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\deploy-server.ps1 -HostName "your-server-host"
@@ -60,7 +63,7 @@ If the server `.env` does not have `WECHAT_APP_SECRET` yet, pass it once during 
 powershell -ExecutionPolicy Bypass -File .\scripts\deploy-server.ps1 -HostName "your-server-host" -WechatAppSecret "your-wechat-app-secret"
 ```
 
-The script preserves `.env`, backs up PostgreSQL when it is already running, rebuilds containers, runs migrations, and checks `/health`. It does not delete the PostgreSQL volume or uploaded files.
+The script preserves `.env`, backs up PostgreSQL, builds the API image, stops the old API, runs migrations in a one-off container, starts the API, checks `/health`, and verifies that port 3000 is bound only to loopback. It does not delete the PostgreSQL volume or uploaded files.
 
 The first deployment containing the circle AI feature also generates and preserves `AI_CREDENTIALS_ENCRYPTION_KEY` automatically. Do not rotate or remove that value unless every saved provider API key will be entered again.
 
@@ -115,7 +118,11 @@ Then SSH in again and rerun deploy.
 ```bash
 cd ~/incircle-server
 docker compose ps
-docker compose exec api npm run db:migrate
+docker compose build api
+docker compose up -d postgres
+docker compose stop api
+docker compose run --rm api npm run db:migrate
+docker compose up -d api
 curl http://127.0.0.1:3000/health
 ```
 

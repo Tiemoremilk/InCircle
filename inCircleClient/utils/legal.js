@@ -1,9 +1,9 @@
 const OPERATOR_TOKEN = "{{INCIRCLE_LEGAL_OPERATOR}}";
+const OPERATOR_TYPE_TOKEN = "{{INCIRCLE_LEGAL_OPERATOR_TYPE}}";
 const CONTACT_EMAIL_TOKEN = "{{INCIRCLE_LEGAL_CONTACT_EMAIL}}";
 const TERMS_VERSION_TOKEN = "{{INCIRCLE_TERMS_VERSION}}";
 const PRIVACY_VERSION_TOKEN = "{{INCIRCLE_PRIVACY_VERSION}}";
 const EFFECTIVE_DATE_TOKEN = "{{INCIRCLE_LEGAL_EFFECTIVE_DATE}}";
-const ACCEPTANCE_STORAGE_KEY = "incircleAgreementAcceptance";
 
 const documents = {
   terms: {
@@ -12,7 +12,7 @@ const documents = {
     shortTitle: "用户服务协议",
     version: TERMS_VERSION_TOKEN,
     effectiveDate: EFFECTIVE_DATE_TOKEN,
-    intro: `欢迎使用 InCircle。本协议由用户与个人开发者${OPERATOR_TOKEN}共同订立，用于说明双方在使用熟人圈协作服务时的权利、义务与责任边界。`,
+    intro: `欢迎使用 InCircle。本协议由用户与${OPERATOR_TYPE_TOKEN}${OPERATOR_TOKEN}共同订立，用于说明双方在使用熟人圈协作服务时的权利、义务与责任边界。`,
     sections: [
       {
         title: "一、协议确认与适用范围",
@@ -106,7 +106,7 @@ const documents = {
       {
         title: "十二、联系我们",
         paragraphs: [
-          `个人开发者：${OPERATOR_TOKEN}`,
+          `${OPERATOR_TYPE_TOKEN}：${OPERATOR_TOKEN}`,
           `联系邮箱：${CONTACT_EMAIL_TOKEN}`,
           "我们会在核验请求人与账号关系后处理账号、安全、协议及其他服务问题。",
         ],
@@ -119,7 +119,7 @@ const documents = {
     shortTitle: "隐私政策",
     version: PRIVACY_VERSION_TOKEN,
     effectiveDate: EFFECTIVE_DATE_TOKEN,
-    intro: `本政策说明个人开发者${OPERATOR_TOKEN}在运营 InCircle 时如何收集、使用、共享、存储和保护个人信息，以及用户如何行使相关权利。`,
+    intro: `本政策说明${OPERATOR_TYPE_TOKEN}${OPERATOR_TOKEN}在运营 InCircle 时如何收集、使用、共享、存储和保护个人信息，以及用户如何行使相关权利。`,
     sections: [
       {
         title: "一、我们如何收集和使用信息",
@@ -220,42 +220,6 @@ const documents = {
   },
 };
 
-function storageGet() {
-  try {
-    return typeof wx !== "undefined" && wx.getStorageSync ? wx.getStorageSync(ACCEPTANCE_STORAGE_KEY) || {} : {};
-  } catch (error) {
-    return {};
-  }
-}
-
-function isLocallyAccepted(publicProfile) {
-  const stored = storageGet();
-  const profile = normalizePublicLegalProfile(publicProfile);
-  return !!(
-    profile.termsVersion
-    && profile.privacyVersion
-    && stored.termsVersion === profile.termsVersion
-    && stored.privacyVersion === profile.privacyVersion
-  );
-}
-
-function markLocallyAccepted(publicProfile) {
-  const profile = normalizePublicLegalProfile(publicProfile);
-  if (!profile.termsVersion || !profile.privacyVersion) return false;
-  try {
-    if (typeof wx !== "undefined" && wx.setStorageSync) {
-      wx.setStorageSync(ACCEPTANCE_STORAGE_KEY, {
-        termsVersion: profile.termsVersion,
-        privacyVersion: profile.privacyVersion,
-        acceptedAt: new Date().toISOString(),
-      });
-    }
-  } catch (error) {
-    // Server-side acceptance remains authoritative when local storage is unavailable.
-  }
-  return true;
-}
-
 function acceptancePayload(accepted, publicProfile) {
   const profile = normalizePublicLegalProfile(publicProfile);
   return {
@@ -268,6 +232,9 @@ function acceptancePayload(accepted, publicProfile) {
 function normalizePublicLegalProfile(source) {
   const profile = source || {};
   return {
+    operatorType: ["individual", "enterprise"].includes(String(profile.operatorType || "").trim())
+      ? String(profile.operatorType).trim()
+      : "individual",
     operatorName: String(profile.operatorName || "").trim(),
     contactEmail: String(profile.contactEmail || "").trim().toLowerCase(),
     termsVersion: String(profile.termsVersion || "").trim(),
@@ -279,12 +246,18 @@ function normalizePublicLegalProfile(source) {
 function isPublicLegalProfileComplete(source) {
   const profile = normalizePublicLegalProfile(source);
   return !!(
+    ["individual", "enterprise"].includes(profile.operatorType)
+    &&
     profile.operatorName
     && profile.contactEmail
     && profile.termsVersion
     && profile.privacyVersion
     && /^\d{4}-\d{2}-\d{2}$/.test(profile.effectiveDate)
   );
+}
+
+function operatorTypeLabel(value) {
+  return value === "enterprise" ? "企业开发者" : "个人开发者";
 }
 
 function effectiveDateText(value) {
@@ -303,6 +276,7 @@ function replaceProfileTokens(value, profile) {
   }
   if (typeof value !== "string") return value;
   return value
+    .split(OPERATOR_TYPE_TOKEN).join(operatorTypeLabel(profile.operatorType))
     .split(OPERATOR_TOKEN).join(profile.operatorName || "未配置")
     .split(CONTACT_EMAIL_TOKEN).join(profile.contactEmail || "未配置")
     .split(TERMS_VERSION_TOKEN).join(profile.termsVersion || "未配置")
@@ -319,7 +293,5 @@ module.exports = {
   acceptancePayload,
   getDocument,
   isPublicLegalProfileComplete,
-  isLocallyAccepted,
-  markLocallyAccepted,
   normalizePublicLegalProfile,
 };

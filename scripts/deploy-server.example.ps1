@@ -16,6 +16,8 @@ param(
 
   [string]$PublicBaseUrl = "",
 
+  [string]$LegalOperatorType = "individual",
+
   [string]$LegalOperatorName = "",
 
   [string]$LegalContactEmail = "",
@@ -189,6 +191,7 @@ PACKAGE_PATH="${1:-incircle-server-release.tar.gz}"
 WECHAT_APP_ID_VALUE="${WECHAT_APP_ID_VALUE:-your-wechat-app-id}"
 WECHAT_APP_SECRET_VALUE="${WECHAT_APP_SECRET_VALUE:-}"
 PUBLIC_BASE_URL_VALUE="${PUBLIC_BASE_URL_VALUE:-https://your-api.example.com}"
+LEGAL_OPERATOR_TYPE_VALUE="${LEGAL_OPERATOR_TYPE_VALUE:-individual}"
 LEGAL_OPERATOR_NAME_VALUE="${LEGAL_OPERATOR_NAME_VALUE:-}"
 LEGAL_CONTACT_EMAIL_VALUE="${LEGAL_CONTACT_EMAIL_VALUE:-}"
 LEGAL_TERMS_VERSION_VALUE="${LEGAL_TERMS_VERSION_VALUE:-}"
@@ -335,6 +338,7 @@ DATABASE_URL=postgres://incircle:${db_password}@postgres:5432/incircle
 CORS_ORIGINS=${PUBLIC_BASE_URL_VALUE}
 PUBLIC_BASE_URL=${PUBLIC_BASE_URL_VALUE}
 UPLOAD_DIR=/app/uploads
+LEGAL_OPERATOR_TYPE=${LEGAL_OPERATOR_TYPE_VALUE}
 LEGAL_OPERATOR_NAME=${LEGAL_OPERATOR_NAME_VALUE}
 LEGAL_CONTACT_EMAIL=${LEGAL_CONTACT_EMAIL_VALUE}
 LEGAL_TERMS_VERSION=${LEGAL_TERMS_VERSION_VALUE}
@@ -364,13 +368,14 @@ EOF
   fi
 
   ensure_line NODE_ENV production
-  ensure_line HOST 0.0.0.0
-  ensure_line PORT 3000
+  set_line HOST 0.0.0.0
+  set_line PORT 3000
   ensure_line POSTGRES_PASSWORD "$db_password"
   ensure_line DATABASE_URL "postgres://incircle:${db_password}@postgres:5432/incircle"
   ensure_line CORS_ORIGINS "$PUBLIC_BASE_URL_VALUE"
   ensure_line PUBLIC_BASE_URL "$PUBLIC_BASE_URL_VALUE"
   ensure_line UPLOAD_DIR '/app/uploads'
+  ensure_line LEGAL_OPERATOR_TYPE "$LEGAL_OPERATOR_TYPE_VALUE"
   ensure_line LEGAL_OPERATOR_NAME "$LEGAL_OPERATOR_NAME_VALUE"
   ensure_line LEGAL_CONTACT_EMAIL "$LEGAL_CONTACT_EMAIL_VALUE"
   ensure_line LEGAL_TERMS_VERSION "$LEGAL_TERMS_VERSION_VALUE"
@@ -395,20 +400,21 @@ EOF
     fill_empty_line WECHAT_APP_SECRET "$WECHAT_APP_SECRET_VALUE"
   fi
   fill_empty_line PUBLIC_BASE_URL "$PUBLIC_BASE_URL_VALUE"
+  fill_empty_line LEGAL_OPERATOR_TYPE "$LEGAL_OPERATOR_TYPE_VALUE"
   if [ -n "$LEGAL_OPERATOR_NAME_VALUE" ]; then
-    set_line LEGAL_OPERATOR_NAME "$LEGAL_OPERATOR_NAME_VALUE"
+    fill_empty_line LEGAL_OPERATOR_NAME "$LEGAL_OPERATOR_NAME_VALUE"
   fi
   if [ -n "$LEGAL_CONTACT_EMAIL_VALUE" ]; then
-    set_line LEGAL_CONTACT_EMAIL "$LEGAL_CONTACT_EMAIL_VALUE"
+    fill_empty_line LEGAL_CONTACT_EMAIL "$LEGAL_CONTACT_EMAIL_VALUE"
   fi
   if [ -n "$LEGAL_TERMS_VERSION_VALUE" ]; then
-    set_line LEGAL_TERMS_VERSION "$LEGAL_TERMS_VERSION_VALUE"
+    fill_empty_line LEGAL_TERMS_VERSION "$LEGAL_TERMS_VERSION_VALUE"
   fi
   if [ -n "$LEGAL_PRIVACY_VERSION_VALUE" ]; then
-    set_line LEGAL_PRIVACY_VERSION "$LEGAL_PRIVACY_VERSION_VALUE"
+    fill_empty_line LEGAL_PRIVACY_VERSION "$LEGAL_PRIVACY_VERSION_VALUE"
   fi
   if [ -n "$LEGAL_EFFECTIVE_DATE_VALUE" ]; then
-    set_line LEGAL_EFFECTIVE_DATE "$LEGAL_EFFECTIVE_DATE_VALUE"
+    fill_empty_line LEGAL_EFFECTIVE_DATE "$LEGAL_EFFECTIVE_DATE_VALUE"
   fi
   if [ -n "$SUPER_ADMIN_OPENIDS_VALUE" ]; then
     fill_empty_line INCIRCLE_SUPER_ADMIN_OPENIDS "$SUPER_ADMIN_OPENIDS_VALUE"
@@ -446,11 +452,16 @@ echo "Extracting package $PACKAGE_PATH"
 tar -xzf "$PACKAGE_PATH" -C .
 ensure_env
 
-echo "Building and starting containers"
-compose up -d --build
+echo "Building API image"
+compose build api
+compose up -d postgres
 
-echo "Running database migrations"
-compose exec api npm run db:migrate
+echo "Stopping API for database migration"
+compose stop api >/dev/null 2>&1 || true
+compose run --rm api npm run db:migrate
+
+echo "Starting API container"
+compose up -d api
 
 PORT_VALUE="$(env_value PORT 3000)"
 HEALTH_URL="http://127.0.0.1:${PORT_VALUE}/health"
@@ -476,6 +487,15 @@ if [ "$health_ok" != "1" ]; then
   compose logs --tail=160 api >&2 || true
   exit 1
 fi
+
+PUBLISHED_API="$(compose port api 3000 2>/dev/null | head -n 1 || true)"
+case "$PUBLISHED_API" in
+  127.0.0.1:*) echo "API port is bound to loopback: $PUBLISHED_API" ;;
+  *)
+    echo "Unsafe API port binding detected: ${PUBLISHED_API:-not published}" >&2
+    exit 1
+    ;;
+esac
 
 LEGAL_PROFILE_URL="http://127.0.0.1:${PORT_VALUE}/api/incircle"
 LEGAL_PROFILE_PAYLOAD='{"type":"incirclePublicLegalProfile","circleId":""}'
@@ -537,6 +557,7 @@ try {
   $quotedWechatAppId = Quote-RemoteValue $WechatAppId
   $quotedWechatAppSecret = Quote-RemoteValue $WechatAppSecret
   $quotedPublicBaseUrl = Quote-RemoteValue $PublicBaseUrl
+  $quotedLegalOperatorType = Quote-RemoteValue $LegalOperatorType
   $quotedLegalOperatorName = Quote-RemoteValue $LegalOperatorName
   $quotedLegalContactEmail = Quote-RemoteValue $LegalContactEmail
   $quotedLegalTermsVersion = Quote-RemoteValue $LegalTermsVersion
@@ -565,7 +586,7 @@ try {
     )) -ErrorMessage "Failed to upload remote deploy script"
 
     Write-Host "Running remote deploy..."
-    $remoteCommand = "cd $quotedRemoteDir && chmod +x $quotedRemoteScript && WECHAT_APP_ID_VALUE=$quotedWechatAppId WECHAT_APP_SECRET_VALUE=$quotedWechatAppSecret PUBLIC_BASE_URL_VALUE=$quotedPublicBaseUrl LEGAL_OPERATOR_NAME_VALUE=$quotedLegalOperatorName LEGAL_CONTACT_EMAIL_VALUE=$quotedLegalContactEmail LEGAL_TERMS_VERSION_VALUE=$quotedLegalTermsVersion LEGAL_PRIVACY_VERSION_VALUE=$quotedLegalPrivacyVersion LEGAL_EFFECTIVE_DATE_VALUE=$quotedLegalEffectiveDate SUPER_ADMIN_OPENIDS_VALUE=$quotedSuperAdminOpenids SKIP_BACKUP=$skipBackupValue USE_SUDO=$useSudoValue bash $quotedRemoteScript $quotedRemotePackage"
+    $remoteCommand = "cd $quotedRemoteDir && chmod +x $quotedRemoteScript && WECHAT_APP_ID_VALUE=$quotedWechatAppId WECHAT_APP_SECRET_VALUE=$quotedWechatAppSecret PUBLIC_BASE_URL_VALUE=$quotedPublicBaseUrl LEGAL_OPERATOR_TYPE_VALUE=$quotedLegalOperatorType LEGAL_OPERATOR_NAME_VALUE=$quotedLegalOperatorName LEGAL_CONTACT_EMAIL_VALUE=$quotedLegalContactEmail LEGAL_TERMS_VERSION_VALUE=$quotedLegalTermsVersion LEGAL_PRIVACY_VERSION_VALUE=$quotedLegalPrivacyVersion LEGAL_EFFECTIVE_DATE_VALUE=$quotedLegalEffectiveDate SUPER_ADMIN_OPENIDS_VALUE=$quotedSuperAdminOpenids SKIP_BACKUP=$skipBackupValue USE_SUDO=$useSudoValue bash $quotedRemoteScript $quotedRemotePackage"
     Invoke-CheckedCommand -FilePath "ssh" -Arguments ($sshOptions + @(
       $sshTarget,
       $remoteCommand
@@ -605,7 +626,7 @@ fi
 
 cd "`$REMOTE_DIR"
 chmod +x "`$REMOTE_SCRIPT"
-WECHAT_APP_ID_VALUE=$quotedWechatAppId WECHAT_APP_SECRET_VALUE=$quotedWechatAppSecret PUBLIC_BASE_URL_VALUE=$quotedPublicBaseUrl LEGAL_OPERATOR_NAME_VALUE=$quotedLegalOperatorName LEGAL_CONTACT_EMAIL_VALUE=$quotedLegalContactEmail LEGAL_TERMS_VERSION_VALUE=$quotedLegalTermsVersion LEGAL_PRIVACY_VERSION_VALUE=$quotedLegalPrivacyVersion LEGAL_EFFECTIVE_DATE_VALUE=$quotedLegalEffectiveDate SUPER_ADMIN_OPENIDS_VALUE=$quotedSuperAdminOpenids SKIP_BACKUP=$skipBackupValue USE_SUDO=$useSudoValue bash "`$REMOTE_SCRIPT" "`$REMOTE_PACKAGE"
+WECHAT_APP_ID_VALUE=$quotedWechatAppId WECHAT_APP_SECRET_VALUE=$quotedWechatAppSecret PUBLIC_BASE_URL_VALUE=$quotedPublicBaseUrl LEGAL_OPERATOR_TYPE_VALUE=$quotedLegalOperatorType LEGAL_OPERATOR_NAME_VALUE=$quotedLegalOperatorName LEGAL_CONTACT_EMAIL_VALUE=$quotedLegalContactEmail LEGAL_TERMS_VERSION_VALUE=$quotedLegalTermsVersion LEGAL_PRIVACY_VERSION_VALUE=$quotedLegalPrivacyVersion LEGAL_EFFECTIVE_DATE_VALUE=$quotedLegalEffectiveDate SUPER_ADMIN_OPENIDS_VALUE=$quotedSuperAdminOpenids SKIP_BACKUP=$skipBackupValue USE_SUDO=$useSudoValue bash "`$REMOTE_SCRIPT" "`$REMOTE_PACKAGE"
 "@.Replace("`r`n", "`n")
 
     Invoke-CheckedCommandWithInput -FilePath "ssh" -Arguments ($sshOptions + @(

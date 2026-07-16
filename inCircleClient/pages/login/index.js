@@ -4,6 +4,7 @@ const avatar = require("../../utils/avatar");
 const dialog = require("../../utils/dialog");
 const invite = require("../../utils/invite");
 const legal = require("../../utils/legal");
+const auth = require("../../utils/auth");
 
 function normalizePhone(value) {
   return String(value || "").replace(/[^\d]/g, "").slice(0, 11);
@@ -43,24 +44,6 @@ function modeMeta(mode) {
       button: "确认重置密码",
       hero: "忘记密码时，不发短信；用当前绑定微信校验身份后重置。",
       icon: "/images/ui-icons/key-round.svg",
-    };
-  }
-  if (mode === "consent") {
-    return {
-      title: "继续使用 InCircle",
-      copy: "服务协议和隐私政策已补充，请阅读并确认后继续。",
-      button: "同意并继续",
-      hero: "你的圈子数据仍然保留，确认最新协议后即可继续进入。",
-      icon: "/images/ui-icons/shield-check.svg",
-    };
-  }
-  if (mode === "agreement") {
-    return {
-      title: "使用前请先确认",
-      copy: "阅读服务协议与隐私政策后，再连接账号服务。",
-      button: "同意并继续",
-      hero: "我们会先取得你的明确同意，再校验微信身份或处理账号信息。",
-      icon: "/images/ui-icons/shield-check.svg",
     };
   }
   return {
@@ -112,7 +95,6 @@ Page({
     agreementAttention: false,
     legalProfile: null,
     legalProfileReady: false,
-    pendingAgreementSession: null,
   },
 
   onLoad(options) {
@@ -143,23 +125,20 @@ Page({
         if (!legal.isPublicLegalProfileComplete(normalized)) {
           throw new Error("协议公开信息尚未配置");
         }
-        const agreementAccepted = legal.isLocallyAccepted(normalized);
         this.setData({
           legalProfile: normalized,
           legalProfileReady: true,
-          agreementAccepted,
+          agreementAccepted: false,
           loginDisabled: false,
         });
-        if (!agreementAccepted) {
-          this.setAuthMode("agreement", { keepProfile: true });
-          this.setData({ loading: false });
-          return null;
-        }
-        return this.loadSession();
+        if (auth.getAccessToken()) return this.loadSession();
+        this.setAuthMode("login", { keepProfile: true });
+        this.setData({ loading: false });
+        return null;
       })
       .catch((error) => {
         const message = (error && error.message) || "协议信息加载失败，请稍后重试";
-        this.setAuthMode("agreement", { keepProfile: true });
+        this.setAuthMode("login", { keepProfile: true });
         this.setData({
           loading: false,
           loginDisabled: true,
@@ -210,36 +189,14 @@ Page({
         const user = session.user || {};
         this.applyUser(user);
         if (session.loggedIn && !session.needsAccountBinding) {
-          if (session.agreementsAccepted) {
-            legal.markLocallyAccepted(this.data.legalProfile);
-            this.goNext(session);
+          if (!session.agreementsAccepted) {
+            this.openAgreementConsent();
             return;
           }
-          if (this.initialConsentJustGranted) {
-            this.initialConsentJustGranted = false;
-            return api
-              .acceptAgreements(legal.acceptancePayload(true, this.data.legalProfile))
-              .then((acceptedSession) => {
-                legal.markLocallyAccepted(this.data.legalProfile);
-                this.goNext(acceptedSession);
-              })
-              .catch((error) => {
-                const message = (error && error.message) || "协议确认失败，请重试";
-                if (error && error.errCode === "AGREEMENT_ACCEPTANCE_REQUIRED") {
-                  this.setData({ agreementAccepted: false, agreementAttention: true });
-                  return this.loadLegalProfile({ force: true });
-                }
-                this.setAuthMode("consent", { keepProfile: true });
-                this.setData({ pendingAgreementSession: session, loading: false, setupError: message });
-                this.showFeedback(message, "error");
-              });
-          }
-          this.setAuthMode("consent", { keepProfile: true });
-          this.setData({ pendingAgreementSession: session, loading: false });
+          this.goNext(session);
           return;
         }
         if (session.needsAccountBinding) {
-          this.initialConsentJustGranted = false;
           this.setAuthMode("bind", { keepProfile: true });
           if (!this.hasShownBindModal) {
             this.hasShownBindModal = true;
@@ -250,10 +207,7 @@ Page({
               showCancel: false,
             });
           }
-        } else if (this.initialConsentJustGranted) {
-          this.initialConsentJustGranted = false;
-          this.setAuthMode("login");
-        }
+        } else this.setAuthMode("login", { keepProfile: true });
         this.setData({ loading: false });
       })
       .catch((error) => {
@@ -307,7 +261,6 @@ Page({
       registerStep: 1,
       agreementAccepted: false,
       agreementAttention: false,
-      pendingAgreementSession: mode === "consent" ? this.data.pendingAgreementSession : null,
     };
     if (!(options && options.keepProfile)) {
       Object.assign(nextData, {
@@ -334,7 +287,7 @@ Page({
       this.setData({ registerStep: 1, setupError: "" });
       return;
     }
-    if (this.data.mode !== "bind" && this.data.mode !== "consent") this.setAuthMode("login");
+    if (this.data.mode !== "bind") this.setAuthMode("login");
   },
 
   nextRegistrationStep() {
@@ -522,42 +475,6 @@ Page({
     if (!this.requireAgreement()) return;
     const agreementAcceptance = legal.acceptancePayload(true, this.data.legalProfile);
 
-    if (mode === "consent") {
-      this.setData({
-        submitting: true,
-        loginDisabled: true,
-        primaryButtonText: "确认中...",
-        setupError: "",
-      });
-      api
-        .acceptAgreements(agreementAcceptance)
-        .then((session) => {
-          legal.markLocallyAccepted(this.data.legalProfile);
-          this.showFeedback("协议确认成功", "success");
-          this.goNext(session || this.data.pendingAgreementSession);
-        })
-        .catch((error) => {
-          const message = (error && error.message) || "协议确认失败，请重试";
-          if (error && error.errCode === "AGREEMENT_ACCEPTANCE_REQUIRED") {
-            this.setData({ agreementAccepted: false, agreementAttention: true });
-            return this.loadLegalProfile({ force: true });
-          }
-          this.setData({ setupError: message });
-          this.showFeedback(message, "error");
-        })
-        .finally(() => {
-          this.setData({ submitting: false, loginDisabled: false, primaryButtonText: modeMeta("consent").button });
-        });
-      return;
-    }
-
-    if (mode === "agreement") {
-      legal.markLocallyAccepted(this.data.legalProfile);
-      this.initialConsentJustGranted = true;
-      this.loadSession();
-      return;
-    }
-
     const requireConfirm = mode !== "login";
     let error = this.validateAccountPassword(requireConfirm);
     const payload = {
@@ -601,7 +518,6 @@ Page({
 
     action
       .then((session) => {
-        legal.markLocallyAccepted(this.data.legalProfile);
         this.showFeedback(mode === "forgot" ? "密码已重置" : "登录成功", "success");
         this.goNext(session);
       })
@@ -651,7 +567,6 @@ Page({
         ),
       })
       .then((session) => {
-        legal.markLocallyAccepted(this.data.legalProfile);
         this.showFeedback("微信已重新绑定", "success");
         this.goNext(session);
       })
@@ -671,6 +586,11 @@ Page({
       return;
     }
     this.loadSession();
+  },
+
+  openAgreementConsent() {
+    const query = invite.inviteQuery(this.data.nextCode, this.data.nextInviteToken);
+    wx.reLaunch({ url: `/pages/agreement-consent/index${query}` });
   },
 
   goNext(session) {

@@ -1,5 +1,6 @@
 const ACCESS_TOKEN_KEY = "incircleAccessToken";
 const ACCESS_TOKEN_EXPIRES_KEY = "incircleAccessTokenExpiresAt";
+let agreementRedirecting = false;
 
 function getGlobalData() {
   if (typeof getApp !== "function") return {};
@@ -95,11 +96,35 @@ function getWechatLoginCode() {
   });
 }
 
+function handleAgreementRequired(error) {
+  if (!error || error.errCode !== "AGREEMENT_ACCEPTANCE_REQUIRED") return false;
+  const globalData = getGlobalData();
+  globalData.pendingAgreementRequirement = error.details || null;
+  if (typeof wx === "undefined" || typeof wx.reLaunch !== "function") return true;
+  try {
+    const pages = typeof getCurrentPages === "function" ? getCurrentPages() : [];
+    const current = pages.length ? pages[pages.length - 1] : null;
+    if (current && current.route === "pages/agreement-consent/index") return true;
+  } catch (navigationError) {
+    // Continue with the guarded reLaunch.
+  }
+  if (agreementRedirecting) return true;
+  agreementRedirecting = true;
+  wx.reLaunch({
+    url: "/pages/agreement-consent/index",
+    complete() {
+      setTimeout(() => { agreementRedirecting = false; }, 500);
+    },
+  });
+  return true;
+}
+
 module.exports = {
   authorizationHeader,
   clearAccessToken,
   getAccessToken,
   getWechatLoginCode,
+  handleAgreementRequired,
   setAccessToken,
   updateFromSession,
 };

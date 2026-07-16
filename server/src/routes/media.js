@@ -6,6 +6,9 @@ const sharp = require("sharp");
 
 const { bearerToken, verifyAccessToken } = require("../auth");
 const { AppError } = require("../errors");
+const { readAgreementAcceptanceState } = require("../agreement-store");
+const { agreementStatus } = require("../legal");
+const { readPublicLegalProfile } = require("../legal-profile");
 const { exchangeWechatLoginCode } = require("../services/wechat");
 
 const AVATAR_EXTENSIONS = ["jpg", "png", "webp", "gif"];
@@ -124,6 +127,18 @@ async function authenticateUpload(fastify, request, fields, isAvatar) {
   const hasBoundAccount = !!(user && user.account_key && (user.password_hash || user.password_digest));
   if (!token && (!isAvatar || hasBoundAccount)) {
     throw new AppError("请先登录后再上传图片", { statusCode: 401, errCode: "AUTH_REQUIRED" });
+  }
+  if (token && user && hasBoundAccount) {
+    const legalProfile = await readPublicLegalProfile(fastify.db);
+    const acceptanceState = await readAgreementAcceptanceState(fastify.db, user, legalProfile);
+    const agreements = agreementStatus(user, legalProfile, acceptanceState);
+    if (!agreements.accepted) {
+      throw new AppError("请确认当前用户服务协议和隐私政策后继续", {
+        statusCode: 428,
+        errCode: "AGREEMENT_ACCEPTANCE_REQUIRED",
+        details: agreements,
+      });
+    }
   }
 
   const circleId = fieldValue(fields, "circleId");

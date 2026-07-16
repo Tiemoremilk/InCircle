@@ -285,6 +285,12 @@ function isTransientReadError(error) {
 
 function callHttpBackend(type, data, options) {
   return sendHttpRequest(type, data, options).catch((error) => {
+    if (
+      error && error.errCode === "AGREEMENT_ACCEPTANCE_REQUIRED"
+      && !["incircleSession", "incircleAcceptAgreements", "incircleLogout"].includes(type)
+    ) {
+      auth.handleAgreementRequired(error);
+    }
     const authRetryable = error && ["TOKEN_INVALID", "TOKEN_EXPIRED", "TOKEN_REVOKED", "TOKEN_SUBJECT_MISMATCH"].indexOf(error.errCode) !== -1;
     if (authRetryable && !(options && options.authRetried)) {
       auth.clearAccessToken();
@@ -1288,6 +1294,7 @@ function streamAiChat(payload, handlers) {
     success(response) {
       if (response.statusCode < 200 || response.statusCode >= 300) {
         const error = makeHttpError(normalizeHttpResponseBody(response.data), `AI 请求失败 (${response.statusCode})`);
+        auth.handleAgreementRequired(error);
         if ([408, 502, 503, 504].indexOf(Number(response.statusCode)) !== -1) recover(error, 0);
         else fail(error);
         return;

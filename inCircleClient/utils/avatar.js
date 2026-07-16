@@ -143,7 +143,11 @@ function uploadFileToHttp(filePath, options) {
               }
             }
             if (!response || response.statusCode < 200 || response.statusCode >= 300 || !body || body.success === false) {
-              reject(new Error((body && body.errMsg) || `头像上传失败 (${response && response.statusCode})`));
+              const error = new Error((body && body.errMsg) || `头像上传失败 (${response && response.statusCode})`);
+              if (body && body.errCode) error.errCode = body.errCode;
+              if (body && typeof body.details !== "undefined") error.details = body.details;
+              auth.handleAgreementRequired(error);
+              reject(error);
               return;
             }
             const data = body.data || body;

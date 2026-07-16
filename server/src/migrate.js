@@ -7,6 +7,8 @@ const { createDatabase } = require("./db");
 const { reconcilePublicLegalProfile } = require("./legal-profile");
 const { reconcileDefaultSystemDocs } = require("./system-docs");
 
+const OPERATOR_TYPE_MIGRATION_ID = "0025_legal_consent_and_operator_type.sql";
+
 function checksumOf(content) {
   return crypto.createHash("sha256").update(content).digest("hex");
 }
@@ -68,6 +70,7 @@ async function main() {
     await ensureMigrationTable(db);
     await db.query(schema);
     const applied = await getAppliedMigrations(db);
+    const initializeOperatorType = !applied[OPERATOR_TYPE_MIGRATION_ID];
     const migrations = readMigrationFiles();
     for (const migration of migrations) {
       const appliedChecksum = applied[migration.id];
@@ -76,10 +79,12 @@ async function main() {
       }
       if (!appliedChecksum) await applyVersionedMigration(db, migration);
     }
-    const legalProfile = await db.withTransaction(() => reconcilePublicLegalProfile(db, config));
+    const legalProfile = await db.withTransaction(() => reconcilePublicLegalProfile(db, config, {
+      initializeOperatorType,
+    }));
     if (config.nodeEnv === "production" && !legalProfile.configured) {
       throw new Error(
-        "Public legal profile is incomplete. Configure all five LEGAL_* values before deployment."
+        "Public legal profile is incomplete. Configure all required LEGAL_* values before deployment."
       );
     }
     console.log(`Public legal profile ${legalProfile.configured ? "is configured" : "is not configured"}.`);

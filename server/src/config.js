@@ -55,6 +55,7 @@ function loadConfig() {
     aiCredentialsEncryptionKey: process.env.AI_CREDENTIALS_ENCRYPTION_KEY || "",
     aiProviderTimeoutMs: numberFromEnv("AI_PROVIDER_TIMEOUT_MS", 300000),
     aiContentSecurityEnabled: booleanFromEnv("AI_CONTENT_SECURITY_ENABLED", nodeEnv === "production"),
+    legalOperatorType: String(process.env.LEGAL_OPERATOR_TYPE || "individual").trim().toLowerCase(),
     legalOperatorName: String(process.env.LEGAL_OPERATOR_NAME || "").trim(),
     legalContactEmail: String(process.env.LEGAL_CONTACT_EMAIL || "").trim(),
     legalTermsVersion: String(process.env.LEGAL_TERMS_VERSION || "").trim(),
@@ -68,6 +69,10 @@ function loadConfig() {
 }
 
 function validateConfig(config) {
+  const legalOperatorType = String(config.legalOperatorType || "individual").trim().toLowerCase();
+  if (!["individual", "enterprise"].includes(legalOperatorType)) {
+    throw new Error("LEGAL_OPERATOR_TYPE must be individual or enterprise.");
+  }
   if (config.nodeEnv !== "production") return;
   if (!config.databaseUrl || /change-this-password/i.test(config.databaseUrl)) {
     throw new Error("Production DATABASE_URL must use a non-default password.");

@@ -3,6 +3,7 @@ const theme = require("./utils/theme");
 const runtimeEnv = require("./config/runtimeEnv");
 const backend = require("./config/backend");
 const auth = require("./utils/auth");
+const agreementGate = require("./utils/agreementGate");
 const keyboard = require("./utils/keyboard");
 
 if (typeof Promise !== "undefined" && !Promise.prototype.finally) {
@@ -53,9 +54,18 @@ if (typeof Page === "function" && !Page.__incircleThemePatched) {
       theme.applyPageTheme(this);
       theme.syncCustomTabBar(this);
       attachKeyboard(this);
-      if (typeof originalOnShow === "function") {
-        return originalOnShow.call(this);
+      const page = this;
+      const runOriginalOnShow = function () {
+        return typeof originalOnShow === "function" ? originalOnShow.call(page) : undefined;
+      };
+      const gateResult = agreementGate.beforePageShow(page);
+      if (!gateResult || typeof gateResult.then !== "function") {
+        return gateResult === false ? undefined : runOriginalOnShow();
       }
+      return gateResult.then((allowed) => {
+        if (!allowed || !agreementGate.isCurrentPage(page)) return undefined;
+        return runOriginalOnShow();
+      });
     };
     config.onHide = function () {
       try {

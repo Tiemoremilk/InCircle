@@ -2,6 +2,9 @@ services:
   postgres:
     image: postgres:16-alpine
     restart: unless-stopped
+    #监听，便于 SSH 隧道访问 15432，可根据实际情况选择删除或者注释
+    ports:
+      - "127.0.0.1:15432:5432"
     environment:
       POSTGRES_DB: incircle
       POSTGRES_USER: incircle
@@ -26,6 +29,7 @@ services:
       CORS_ORIGINS: "${CORS_ORIGINS:-}"
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
       UPLOAD_DIR: ${UPLOAD_DIR:-/app/uploads}
+      LEGAL_OPERATOR_TYPE: ${LEGAL_OPERATOR_TYPE:-individual}
       LEGAL_OPERATOR_NAME: ${LEGAL_OPERATOR_NAME:-}
       LEGAL_CONTACT_EMAIL: ${LEGAL_CONTACT_EMAIL:-}
       LEGAL_TERMS_VERSION: ${LEGAL_TERMS_VERSION:-}
@@ -41,7 +45,7 @@ services:
       AI_CONTENT_SECURITY_ENABLED: ${AI_CONTENT_SECURITY_ENABLED:-true}
       TZ: Asia/Shanghai
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     volumes:
       - ./uploads:/app/uploads
     depends_on:
