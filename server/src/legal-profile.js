@@ -2,6 +2,18 @@ const { AppError } = require("./errors");
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
+function normalizeDateOnly(value) {
+  if (!value) return "";
+  if (value instanceof Date) {
+    if (Number.isNaN(value.getTime())) return "";
+    const year = value.getFullYear();
+    const month = String(value.getMonth() + 1).padStart(2, "0");
+    const day = String(value.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+  }
+  return String(value).trim().slice(0, 10);
+}
+
 function normalizePublicLegalProfile(source) {
   const profile = source || {};
   return {
@@ -9,7 +21,7 @@ function normalizePublicLegalProfile(source) {
     contactEmail: String(profile.contactEmail || profile.contact_email || "").trim().toLowerCase(),
     termsVersion: String(profile.termsVersion || profile.terms_version || "").trim(),
     privacyVersion: String(profile.privacyVersion || profile.privacy_version || "").trim(),
-    effectiveDate: String(profile.effectiveDate || profile.effective_date || "").trim().slice(0, 10),
+    effectiveDate: normalizeDateOnly(profile.effectiveDate || profile.effective_date),
   };
 }
 

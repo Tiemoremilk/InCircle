@@ -476,6 +476,26 @@ if [ "$health_ok" != "1" ]; then
   compose logs --tail=160 api >&2 || true
   exit 1
 fi
+
+LEGAL_PROFILE_URL="http://127.0.0.1:${PORT_VALUE}/api/incircle"
+LEGAL_PROFILE_PAYLOAD='{"type":"incirclePublicLegalProfile","circleId":""}'
+echo "Checking public legal profile"
+legal_profile_ok=0
+if command -v curl >/dev/null 2>&1; then
+  if curl -fsS -o /dev/null -X POST "$LEGAL_PROFILE_URL" \
+    -H 'Content-Type: application/json' --data "$LEGAL_PROFILE_PAYLOAD"; then
+    legal_profile_ok=1
+  fi
+elif wget -qO- --header='Content-Type: application/json' \
+  --post-data="$LEGAL_PROFILE_PAYLOAD" "$LEGAL_PROFILE_URL" >/dev/null; then
+  legal_profile_ok=1
+fi
+if [ "$legal_profile_ok" != "1" ]; then
+  echo "Public legal profile check failed after migration." >&2
+  compose logs --tail=80 api >&2 || true
+  exit 1
+fi
+echo "Public legal profile endpoint is ready."
 echo
 echo "InCircle self-hosted backend deploy completed."
 '@

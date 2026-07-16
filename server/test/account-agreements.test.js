@@ -2,6 +2,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const test = require("node:test");
+const { types: pgTypes } = require("pg");
 
 const ROOT = path.resolve(__dirname, "../..");
 const serverLegal = require("../src/legal");
@@ -185,6 +186,7 @@ test("public legal profile is stored in PostgreSQL and read without authenticati
   const migrateSource = read("server/src/migrate.js");
   const clientSource = read("inCircleClient/utils/legal.js");
   const compose = read("server/docker-compose.yml");
+  const deployExample = read("scripts/deploy-server.example.ps1");
 
   [migration, schema].forEach((sql) => {
     assert.match(sql, /CREATE TABLE IF NOT EXISTS incircle_public_legal_profile/);
@@ -203,6 +205,7 @@ test("public legal profile is stored in PostgreSQL and read without authenticati
   assert.match(api, /function getPublicLegalProfile\(options\)/);
   assert.doesNotMatch(clientSource, /const (?:OPERATOR_NAME|CONTACT_EMAIL|TERMS_VERSION|PRIVACY_VERSION|EFFECTIVE_DATE)\s*=/);
   assert.match(migrateSource, /config\.nodeEnv === "production" && !legalProfile\.configured/);
+  assert.match(deployExample, /incirclePublicLegalProfile/);
   [
     "LEGAL_OPERATOR_NAME",
     "LEGAL_CONTACT_EMAIL",
@@ -213,12 +216,16 @@ test("public legal profile is stored in PostgreSQL and read without authenticati
     assert.ok(compose.includes(name + ": ${" + name + ":-}"));
   });
 
+  const parsedEffectiveDate = pgTypes.getTypeParser(pgTypes.builtins.DATE)(
+    TEST_LEGAL_PROFILE.effectiveDate
+  );
+  assert.ok(parsedEffectiveDate instanceof Date);
   const storedRow = {
     operator_name: "测试运营者",
     contact_email: "legal@example.test",
     terms_version: TEST_LEGAL_PROFILE.termsVersion,
     privacy_version: TEST_LEGAL_PROFILE.privacyVersion,
-    effective_date: TEST_LEGAL_PROFILE.effectiveDate,
+    effective_date: parsedEffectiveDate,
     updated_at: "2099-01-02T00:00:00.000Z",
   };
   const db = {
@@ -243,6 +250,7 @@ test("public legal profile is stored in PostgreSQL and read without authenticati
     legalEffectiveDate: TEST_LEGAL_PROFILE.effectiveDate,
   });
   assert.equal(reconciled.configured, true);
+  assert.equal(reconciled.profile.effectiveDate, TEST_LEGAL_PROFILE.effectiveDate);
   assert.deepEqual(await readPublicLegalProfile(db), {
     operatorName: "测试运营者",
     contactEmail: "legal@example.test",
