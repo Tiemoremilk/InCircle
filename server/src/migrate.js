@@ -77,6 +77,11 @@ async function main() {
       if (!appliedChecksum) await applyVersionedMigration(db, migration);
     }
     const legalProfile = await db.withTransaction(() => reconcilePublicLegalProfile(db, config));
+    if (config.nodeEnv === "production" && !legalProfile.configured) {
+      throw new Error(
+        "Public legal profile is incomplete. Configure all five LEGAL_* values before deployment."
+      );
+    }
     console.log(`Public legal profile ${legalProfile.configured ? "is configured" : "is not configured"}.`);
     const systemDocs = await db.withTransaction(() => reconcileDefaultSystemDocs(db));
     console.log(

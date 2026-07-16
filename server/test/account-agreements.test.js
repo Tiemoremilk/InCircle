@@ -182,7 +182,9 @@ test("public legal profile is stored in PostgreSQL and read without authenticati
   const routes = read("server/src/routes/incircle.js");
   const api = read("inCircleClient/utils/api.js");
   const profileSource = read("server/src/legal-profile.js");
+  const migrateSource = read("server/src/migrate.js");
   const clientSource = read("inCircleClient/utils/legal.js");
+  const compose = read("server/docker-compose.yml");
 
   [migration, schema].forEach((sql) => {
     assert.match(sql, /CREATE TABLE IF NOT EXISTS incircle_public_legal_profile/);
@@ -200,6 +202,16 @@ test("public legal profile is stored in PostgreSQL and read without authenticati
   assert.match(api, /const loginCodePromise = anonymous[\s\S]*Promise\.resolve\(""\)/);
   assert.match(api, /function getPublicLegalProfile\(options\)/);
   assert.doesNotMatch(clientSource, /const (?:OPERATOR_NAME|CONTACT_EMAIL|TERMS_VERSION|PRIVACY_VERSION|EFFECTIVE_DATE)\s*=/);
+  assert.match(migrateSource, /config\.nodeEnv === "production" && !legalProfile\.configured/);
+  [
+    "LEGAL_OPERATOR_NAME",
+    "LEGAL_CONTACT_EMAIL",
+    "LEGAL_TERMS_VERSION",
+    "LEGAL_PRIVACY_VERSION",
+    "LEGAL_EFFECTIVE_DATE",
+  ].forEach((name) => {
+    assert.ok(compose.includes(name + ": ${" + name + ":-}"));
+  });
 
   const storedRow = {
     operator_name: "测试运营者",
