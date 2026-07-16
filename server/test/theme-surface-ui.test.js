@@ -133,6 +133,11 @@ test("custom theme picker uses real derived colors and fixed actions", () => {
   assert.match(bodyRule, /overflow:\s*visible/);
   assert.match(template, /custom-theme-stage-samples/);
   assert.match(template, /custom-theme-alpha-chip/);
+  assert.match(template, /class="custom-theme-preview-hex"/);
+  assert.match(template, /class="custom-theme-alpha-chip"[\s\S]*透明度/);
+  assert.match(template, /class="custom-theme-rgb-text"/);
+  assert.match(styles, /\.custom-theme-alpha-chip\s*\{[^}]*display:\s*inline-flex;[^}]*align-items:\s*center;[^}]*justify-content:\s*center;[^}]*height:\s*36rpx;[^}]*line-height:\s*1;/s);
+  assert.doesNotMatch(styles, /\.custom-theme-preview-copy text\s*\{/);
   assert.match(template, /customThemeStageButtonStyle/);
   assert.match(template, /customThemeAlphaStyle/);
   assert.match(styles, /\.custom-channel-panel\s*\{[^}]*background:\s*rgba\(255, 255, 255, 0\.86\)/s);

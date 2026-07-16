@@ -920,20 +920,30 @@
   gap: 10rpx;
 }
 
+.custom-theme-preview-hex {
+  color: #26312d;
+  font-size: 25rpx;
+  line-height: 1.25;
+  font-weight: 900;
+}
+
 .custom-theme-alpha-chip {
   display: inline-flex;
   align-items: center;
-  min-height: 34rpx;
+  justify-content: center;
+  height: 36rpx;
   padding: 0 10rpx;
   border-radius: 999rpx;
   background: var(--theme-soft, #eaf5ed);
   color: var(--theme-primary-dark, #1c5638);
   font-size: 19rpx;
-  line-height: 34rpx;
+  line-height: 1;
   font-weight: 800;
+  white-space: nowrap;
+  box-sizing: border-box;
 }
 
-.custom-theme-preview-copy text {
+.custom-theme-rgb-text {
   display: block;
   margin-top: 5rpx;
   color: #6f7a76;

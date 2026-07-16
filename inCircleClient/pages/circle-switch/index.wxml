@@ -203,10 +203,10 @@
             </view>
             <view class="custom-theme-preview-copy">
               <view class="custom-theme-preview-heading">
-                <text>{{customThemePreviewHex}}</text>
-                <text class="custom-theme-alpha-chip" style="{{customThemeAlphaStyle}}">透明度 {{customThemeDraft.a}}%</text>
+                <text class="custom-theme-preview-hex">{{customThemePreviewHex}}</text>
+                <view class="custom-theme-alpha-chip" style="{{customThemeAlphaStyle}}">透明度 {{customThemeDraft.a}}%</view>
               </view>
-              <text>{{customThemeRgbText}}</text>
+              <text class="custom-theme-rgb-text">{{customThemeRgbText}}</text>
             </view>
             <view class="custom-theme-palette-strip">
               <view style="{{customThemeDarkStyle}}"></view>
