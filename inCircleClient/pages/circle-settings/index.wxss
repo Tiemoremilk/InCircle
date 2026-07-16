@@ -357,6 +357,20 @@
   filter: brightness(0) invert(1);
 }
 
+.invite-action-primary[disabled] {
+  border: 1rpx solid var(--theme-card-active-border, rgba(47, 130, 89, 0.18));
+  background: var(--theme-soft, #eaf5ed) !important;
+  color: var(--theme-primary-dark, #205f42) !important;
+  -webkit-text-fill-color: currentColor;
+  box-shadow: none;
+  opacity: 1;
+}
+
+.invite-action-primary[disabled] .invite-action-icon {
+  filter: var(--theme-icon-filter, brightness(0) saturate(100%) invert(45%) sepia(18%) saturate(1138%) hue-rotate(96deg) brightness(90%) contrast(86%));
+  opacity: 0.66;
+}
+
 .share-button {
   min-width: 0;
   width: auto;

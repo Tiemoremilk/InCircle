@@ -28,6 +28,8 @@ test("circle invitation uses a compact themed code bar with semantic actions", (
   assert.match(styles, /\.invite-code-row\s*\{[^}]*background:\s*var\(--theme-soft/s);
   assert.match(styles, /\.invite-action-primary\s*\{[^}]*background:\s*var\(--theme-primary/s);
   assert.match(styles, /\.invite-action-secondary\s*\{[^}]*background:\s*var\(--theme-soft/s);
+  assert.match(styles, /\.invite-action-primary\[disabled\]\s*\{[^}]*background:\s*var\(--theme-soft[^}]*color:\s*var\(--theme-primary-dark[^}]*opacity:\s*1/s);
+  assert.match(styles, /\.invite-action-primary\[disabled\] \.invite-action-icon\s*\{[^}]*filter:\s*var\(--theme-icon-filter/s);
   assert.match(styles, /\.invite-rotate-action\s*\{[^}]*background:\s*var\(--theme-soft/s);
   assert.doesNotMatch(styles, /\.invite-row\s*\{|border:\s*1rpx dashed/);
 

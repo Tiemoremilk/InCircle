@@ -179,10 +179,24 @@ button::after {
 }
 
 .primary-btn[disabled],
+.primary-btn.disabled {
+  border: 1rpx solid var(--theme-card-active-border, rgba(47, 125, 80, 0.18));
+  background: var(--theme-soft, #eaf5ed) !important;
+  color: var(--theme-primary-dark, #1c5638) !important;
+  -webkit-text-fill-color: currentColor;
+  box-shadow: none !important;
+  opacity: 1;
+  transform: none;
+}
+
 .ghost-btn[disabled],
-.primary-btn.disabled,
 .ghost-btn.disabled {
-  opacity: 0.58;
+  border-color: #e2e7e4;
+  background: #f4f6f5 !important;
+  color: #7a8581 !important;
+  -webkit-text-fill-color: currentColor;
+  box-shadow: none !important;
+  opacity: 1;
   transform: none;
 }
 
