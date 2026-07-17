@@ -10,6 +10,31 @@ function safeDecode(value) {
   }
 }
 
+function compactTokenCount(value) {
+  const count = Number(value || 0);
+  if (count >= 1000000) return `${Number((count / 1000000).toFixed(2))}M`;
+  if (count >= 1000) return `${Number((count / 1000).toFixed(1))}K`;
+  return String(count || 0);
+}
+
+function capabilitySourceText(source, value) {
+  if (!Number(value || 0)) return "待补充";
+  if (source === "manual") return "手动设置";
+  if (source === "catalog") return "能力库匹配";
+  if (source === "probe" || source === "compatibility") return "兼容探测";
+  return "供应商识别";
+}
+
+function parsedCapability(value, minimum, label) {
+  const source = String(value || "").trim();
+  if (!source || source === "0") return { valid: true, value: 0 };
+  const parsed = Number(source);
+  if (!Number.isInteger(parsed) || parsed < minimum || parsed > 2000000) {
+    return { valid: false, message: `${label}应为 ${minimum}–2000000 的整数` };
+  }
+  return { valid: true, value: parsed };
+}
+
 function decorateModel(model) {
   const source = model || {};
   const latency = Number(source.lastTestLatencyMs || 0);
@@ -21,6 +46,10 @@ function decorateModel(model) {
         ? "测试失败"
         : "尚未测试",
     testTimeText: source.lastTestedAt ? time.formatDateMinute(source.lastTestedAt) : "",
+    contextWindowText: source.contextWindow ? compactTokenCount(source.contextWindow) : "待识别",
+    maxOutputTokensText: source.maxOutputTokens ? compactTokenCount(source.maxOutputTokens) : "待识别",
+    contextWindowSourceText: capabilitySourceText(source.contextWindowSource, source.contextWindow),
+    maxOutputTokensSourceText: capabilitySourceText(source.maxOutputTokensSource, source.maxOutputTokens),
   });
 }
 
@@ -62,8 +91,10 @@ Page({
     testingModelId: "",
     addOpen: false,
     addBusy: false,
+    editingModelId: "",
     setupMessage: "",
-    draft: { modelId: "", displayName: "" },
+    draft: { modelId: "", displayName: "", contextWindow: "", maxOutputTokens: "" },
+    capabilityDraft: { contextWindow: "", maxOutputTokens: "" },
   },
 
   onLoad(options) {
@@ -108,7 +139,7 @@ Page({
       loadError: "",
     }, derived, suggested && !hasSuggested && derived.selectedProvider ? {
       addOpen: true,
-      draft: { modelId: suggested, displayName: suggested },
+      draft: { modelId: suggested, displayName: suggested, contextWindow: "", maxOutputTokens: "" },
     } : {}));
   },
 
@@ -138,7 +169,8 @@ Page({
       requestedProviderId: (provider && provider.id) || "",
       addOpen: false,
       setupMessage: "",
-      draft: { modelId: "", displayName: "" },
+      draft: { modelId: "", displayName: "", contextWindow: "", maxOutputTokens: "" },
+      editingModelId: "",
     }));
   },
 
@@ -181,6 +213,10 @@ Page({
     this.setData({ [`draft.${e.currentTarget.dataset.field}`]: e.detail.value });
   },
 
+  onCapabilityInput(e) {
+    this.setData({ [`capabilityDraft.${e.currentTarget.dataset.field}`]: e.detail.value });
+  },
+
   addModel() {
     const provider = this.data.selectedProvider;
     const modelId = String(this.data.draft.modelId || "").trim();
@@ -189,17 +225,29 @@ Page({
       wx.showToast({ title: "请填写模型 ID", icon: "none" });
       return;
     }
+    const contextWindow = parsedCapability(this.data.draft.contextWindow, 1024, "上下文窗口");
+    const maxOutputTokens = parsedCapability(this.data.draft.maxOutputTokens, 128, "最大输出");
+    if (!contextWindow.valid || !maxOutputTokens.valid) {
+      wx.showToast({ title: contextWindow.message || maxOutputTokens.message, icon: "none" });
+      return;
+    }
     this.setData({ addBusy: true });
     api
       .saveAiModel(this.data.circleId, {
         providerId: provider.id,
         modelId,
         displayName: String(this.data.draft.displayName || "").trim(),
+        contextWindow: contextWindow.value,
+        maxOutputTokens: maxOutputTokens.value,
         enabled: true,
       })
       .then((data) => {
         this.applyData(this.data.providers, data.models || [], { providerId: provider.id });
-        this.setData({ draft: { modelId: "", displayName: "" }, addOpen: false, setupMessage: "模型已添加，请按需设为默认" });
+        this.setData({
+          draft: { modelId: "", displayName: "", contextWindow: "", maxOutputTokens: "" },
+          addOpen: false,
+          setupMessage: "模型已添加，请按需设为默认",
+        });
       })
       .catch((error) => wx.showToast({ title: error.message || "添加失败", icon: "none" }))
       .finally(() => this.setData({ addBusy: false }));
@@ -220,6 +268,49 @@ Page({
         return false;
       })
       .finally(() => this.setData({ modelBusyId: "" }));
+  },
+
+  openCapabilityEditor(e) {
+    const id = e.currentTarget.dataset.id;
+    const model = this.data.allModels.find((item) => item.id === id);
+    if (!model || this.data.modelBusyId || this.data.testingModelId) return;
+    this.setData({
+      editingModelId: id,
+      capabilityDraft: {
+        contextWindow: model.contextWindow || "",
+        maxOutputTokens: model.maxOutputTokens || "",
+      },
+    });
+  },
+
+  closeCapabilityEditor() {
+    if (this.data.modelBusyId) return;
+    this.setData({
+      editingModelId: "",
+      capabilityDraft: { contextWindow: "", maxOutputTokens: "" },
+    });
+  },
+
+  saveModelCapabilities() {
+    const id = this.data.editingModelId;
+    if (!id || this.data.modelBusyId || this.data.testingModelId) return;
+    const contextWindow = parsedCapability(this.data.capabilityDraft.contextWindow, 1024, "上下文窗口");
+    const maxOutputTokens = parsedCapability(this.data.capabilityDraft.maxOutputTokens, 128, "最大输出");
+    if (!contextWindow.valid || !maxOutputTokens.valid) {
+      wx.showToast({ title: contextWindow.message || maxOutputTokens.message, icon: "none" });
+      return;
+    }
+    this.updateModelState(id, {
+      contextWindow: contextWindow.value,
+      maxOutputTokens: maxOutputTokens.value,
+    }).then((updated) => {
+      if (!updated) return;
+      this.setData({
+        editingModelId: "",
+        capabilityDraft: { contextWindow: "", maxOutputTokens: "" },
+        setupMessage: "模型能力已更新",
+      });
+    });
   },
 
   onModelEnabledChange(e) {
@@ -250,16 +341,34 @@ Page({
     api
       .testAiModel(this.data.circleId, id)
       .then((result) => {
+        const capabilities = result.capabilities || {};
+        const detection = result.capabilityDetection || {};
+        const hasContextCapability = Object.prototype.hasOwnProperty.call(capabilities, "contextWindow");
+        const hasOutputCapability = Object.prototype.hasOwnProperty.call(capabilities, "maxOutputTokens");
         const nextModels = this.data.allModels.map((item) => item.id === id
           ? Object.assign({}, item, {
             lastTestStatus: "success",
             lastTestErrorCode: "",
             lastTestLatencyMs: Number(result.latencyMs || 0),
             lastTestedAt: result.testedAt || new Date().toISOString(),
+            contextWindow: hasContextCapability ? Number(capabilities.contextWindow || 0) : item.contextWindow,
+            contextWindowSource: hasContextCapability ? capabilities.contextWindowSource || "" : item.contextWindowSource,
+            maxOutputTokens: hasOutputCapability ? Number(capabilities.maxOutputTokens || 0) : item.maxOutputTokens,
+            maxOutputTokensSource: hasOutputCapability ? capabilities.maxOutputTokensSource || "" : item.maxOutputTokensSource,
           })
           : item);
         this.applyData(this.data.providers, nextModels, { providerId: model.providerId });
-        wx.showToast({ title: "模型测试通过", icon: "success" });
+        const updatedFields = Array.isArray(detection.updatedFields) ? detection.updatedFields : [];
+        const setupMessage = detection.complete
+          ? "模型可用，能力参数已识别"
+          : updatedFields.includes("maxOutputTokens")
+            ? "已识别最大输出；上下文窗口可按供应商文档补充"
+            : "模型可用；供应商未提供完整能力参数";
+        this.setData({ setupMessage });
+        wx.showToast({
+          title: updatedFields.length ? "能力已更新" : "模型测试通过",
+          icon: "success",
+        });
       })
       .catch((error) => {
         const nextModels = this.data.allModels.map((item) => item.id === id

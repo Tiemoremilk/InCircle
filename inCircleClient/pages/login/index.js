@@ -160,20 +160,8 @@ Page({
       backendError: "",
       hasBackendError: false,
     });
-    if (this.sessionTimer) clearTimeout(this.sessionTimer);
-    const sessionCheck = Promise.resolve().then(() => api.getSession({ force: true }));
-    const sessionTimeout = new Promise((resolve, reject) => {
-      this.sessionTimer = setTimeout(
-        () => reject(new Error("登录状态检查超时，请确认自建后端 HTTPS 和 request 合法域名已配置")),
-        12000
-      );
-    });
-    return Promise.race([sessionCheck, sessionTimeout])
+    return api.getSession({ force: true })
       .then((session) => {
-        if (this.sessionTimer) {
-          clearTimeout(this.sessionTimer);
-          this.sessionTimer = null;
-        }
         const sessionAgreements = (session && session.agreements) || {};
         const legalProfile = this.data.legalProfile || {};
         if (
@@ -211,10 +199,6 @@ Page({
         this.setData({ loading: false });
       })
       .catch((error) => {
-        if (this.sessionTimer) {
-          clearTimeout(this.sessionTimer);
-          this.sessionTimer = null;
-        }
         const message = error && error.message ? error.message : "后端登录状态检查失败";
         this.setData({
           loading: false,
@@ -357,7 +341,6 @@ Page({
 
   onUnload() {
     if (this.feedbackTimer) clearTimeout(this.feedbackTimer);
-    if (this.sessionTimer) clearTimeout(this.sessionTimer);
   },
 
   onAccountInput(e) {

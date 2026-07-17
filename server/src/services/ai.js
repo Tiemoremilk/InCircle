@@ -1,3 +1,5 @@
+const crypto = require("crypto");
+
 const { AppError } = require("../errors");
 const { canManageCircleRole, isOwnerRole } = require("../member-role");
 const { beijingDateKey } = require("../time");
@@ -9,6 +11,7 @@ const {
   encryptCredential,
   maskedCredential,
 } = require("./ai/credentials");
+const { catalogModelCapabilities, enrichModelsWithCatalog } = require("./ai/model-capabilities");
 const {
   listProviderModels,
   listProviderPresets,
@@ -38,8 +41,24 @@ const OUTPUT_PARTIAL_FLUSH_MS = 110;
 const OUTPUT_QUEUE_HIGH_WATER_CHARS = 8192;
 const GENERATION_CHECKPOINT_INTERVAL_MS = 350;
 const EXISTING_GENERATION_POLL_MS = 350;
+const GENERATION_LEASE_MS = 30000;
+const AI_CONTEXT_WINDOW_FALLBACK_TOKENS = 16384;
+const AI_CONTEXT_HISTORY_MESSAGE_LIMIT = 100;
+const AI_CONTEXT_MESSAGE_OVERHEAD_TOKENS = 8;
+const AI_CONTEXT_MIN_OUTPUT_TOKENS = 128;
+const AI_CONTEXT_SAFETY_MARGIN_MIN_TOKENS = 256;
+const AI_CONTEXT_SAFETY_MARGIN_RATE = 0.08;
+const AI_OUTPUT_PLATFORM_MAX_TOKENS = 32768;
+const AI_OUTPUT_COMPATIBILITY_FALLBACK_TOKENS = 8192;
+const AI_OUTPUT_PROBE_TIMEOUT_MS = 15000;
+const AI_MODEL_CAPABILITY_MAX_TOKENS = 2000000;
+const DIRECT_ANSWER_SYSTEM_SUFFIX = "\n请直接给出最终答案，不要输出分析过程、思考标签或中间推理。";
+const REASONING_SYSTEM_SUFFIX = "\n完成分析后必须预留足够输出额度给出完整最终回答，不能只返回思考过程。";
+const DIRECT_ANSWER_RETRY_SYSTEM_SUFFIX = "\n上一次生成只完成了分析。本次不要展示思考过程，直接给出完整、可独立阅读的最终回答。";
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const activeGenerationControllers = new Map();
+const generationOwnerId = `${process.pid}:${crypto.randomUUID()}`;
+let aiRuntimeClosing = false;
 
 function hasVisibleReasoning(value) {
   return String(value || "").replace(/[\s\u200b-\u200d\u2060\ufeff]/g, "").length > 0;
@@ -94,6 +113,60 @@ function cancelActiveGeneration(messageId) {
   return cancelled;
 }
 
+function abortAllActiveGenerations(reason) {
+  let aborted = 0;
+  activeGenerationControllers.forEach((controllers) => {
+    controllers.forEach((controller) => {
+      if (!controller || controller.signal.aborted) return;
+      controller.abort(reason);
+      aborted += 1;
+    });
+  });
+  return aborted;
+}
+
+function generationLeaseExpired(row) {
+  if (!row || row.assistant_status !== "generating") return false;
+  const value = row.assistant_generation_lease_expires_at;
+  if (!value) return true;
+  const expiresAt = new Date(value).getTime();
+  return !Number.isFinite(expiresAt) || expiresAt <= Date.now();
+}
+
+async function recoverExpiredAiGenerations(db) {
+  if (!db || typeof db.query !== "function") return { rowCount: 0, rows: [] };
+  return db.query(
+    `UPDATE incircle_ai_messages
+     SET status = 'failed', error_code = 'AI_GENERATION_LEASE_EXPIRED',
+       generation_owner_id = '', generation_lease_expires_at = NULL
+     WHERE role = 'assistant' AND status = 'generating'
+       AND (generation_lease_expires_at IS NULL OR generation_lease_expires_at < now())
+     RETURNING id`
+  );
+}
+
+async function beginAiShutdown(db) {
+  aiRuntimeClosing = true;
+  const reason = new AppError("AI 服务正在重启，请稍后重新生成", {
+    statusCode: 503,
+    errCode: "AI_SERVER_RESTARTED",
+  });
+  let result = { rowCount: 0, rows: [] };
+  try {
+    result = await db.query(
+      `UPDATE incircle_ai_messages
+       SET status = 'failed', error_code = 'AI_SERVER_RESTARTED',
+         generation_owner_id = '', generation_lease_expires_at = NULL
+       WHERE role = 'assistant' AND status = 'generating' AND generation_owner_id = $1
+       RETURNING id`,
+      [generationOwnerId]
+    );
+  } finally {
+    abortAllActiveGenerations(reason);
+  }
+  return result;
+}
+
 function arrayOfStrings(value, limit, itemLimit) {
   return (Array.isArray(value) ? value : [])
     .map((item) => String(item || "").trim().slice(0, itemLimit || 100))
@@ -104,6 +177,31 @@ function arrayOfStrings(value, limit, itemLimit) {
 function integerBetween(value, fallback, min, max) {
   const number = Number(value);
   return Number.isInteger(number) && number >= min && number <= max ? number : fallback;
+}
+
+function capabilityTokenValue(value, minimum, label) {
+  const source = String(value === null || typeof value === "undefined" ? "" : value).trim();
+  if (!source || source === "0") return 0;
+  const parsed = Number(source);
+  if (!Number.isInteger(parsed) || parsed < minimum || parsed > AI_MODEL_CAPABILITY_MAX_TOKENS) {
+    throw new AppError(`${label}应为 ${minimum}–${AI_MODEL_CAPABILITY_MAX_TOKENS} 之间的整数，留空表示自动识别`, {
+      statusCode: 400,
+      errCode: "AI_MODEL_TOKEN_CAPABILITY_INVALID",
+    });
+  }
+  return parsed;
+}
+
+function settingOutputTokenValue(value, fallback) {
+  if (value === null || typeof value === "undefined" || String(value).trim() === "") return Number(fallback);
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < AI_CONTEXT_MIN_OUTPUT_TOKENS || parsed > AI_OUTPUT_PLATFORM_MAX_TOKENS) {
+    throw new AppError(`单次最大输出应为 ${AI_CONTEXT_MIN_OUTPUT_TOKENS}–${AI_OUTPUT_PLATFORM_MAX_TOKENS} Token`, {
+      statusCode: 400,
+      errCode: "AI_OUTPUT_TOKEN_LIMIT_INVALID",
+    });
+  }
+  return parsed;
 }
 
 function publicProvider(row) {
@@ -160,6 +258,9 @@ function publicModel(row) {
     archived: !!row.archived,
     supportsStream: row.supports_stream !== false,
     contextWindow: Number(row.context_window || 0),
+    contextWindowSource: row.context_window_source || "",
+    maxOutputTokens: Number(row.max_output_tokens || 0),
+    maxOutputTokensSource: row.max_output_tokens_source || "",
     source: row.source || "manual",
     isDefault: !!row.is_default,
     consented: !!row.consented,
@@ -256,6 +357,44 @@ function usageEstimate(text) {
   return Math.max(1, Math.ceil(String(text || "").length / 4));
 }
 
+function estimatedAiTextTokens(value) {
+  let asciiCodePoints = 0;
+  let nonAsciiCodePoints = 0;
+  for (const symbol of String(value || "")) {
+    if (symbol.codePointAt(0) <= 0x7f) asciiCodePoints += 1;
+    else nonAsciiCodePoints += 1;
+  }
+  return Math.ceil(asciiCodePoints / 3) + (nonAsciiCodePoints * 2);
+}
+
+function estimatedAiMessageTokens(message) {
+  return AI_CONTEXT_MESSAGE_OVERHEAD_TOKENS + estimatedAiTextTokens(message && message.content);
+}
+
+function effectiveModelContextWindow(value) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 1024
+    ? Math.floor(parsed)
+    : AI_CONTEXT_WINDOW_FALLBACK_TOKENS;
+}
+
+function generationSystemPrompts(settings, reasoningMode) {
+  const configured = String(settings && settings.system_prompt || "");
+  const base = configured.trim() ? configured : DEFAULT_SETTINGS.systemPrompt;
+  return {
+    systemPrompt: `${base}${reasoningMode && reasoningMode.selection === "off"
+      ? DIRECT_ANSWER_SYSTEM_SUFFIX
+      : REASONING_SYSTEM_SUFFIX}`,
+    retrySystemPrompt: `${base}${DIRECT_ANSWER_RETRY_SYSTEM_SUFFIX}`,
+  };
+}
+
+function minimumGenerationOutputTokens(reasoningMode) {
+  return reasoningMode && reasoningMode.enabled && reasoningMode.adapter === "anthropic-thinking"
+    ? 1152
+    : AI_CONTEXT_MIN_OUTPUT_TOKENS;
+}
+
 function outputSecurityBatchSize(acceptedLength) {
   const length = Math.max(0, Number(acceptedLength || 0));
   if (!length) return OUTPUT_SECURITY_INITIAL_CHARS;
@@ -267,13 +406,87 @@ function outputSecurityBatchSize(acceptedLength) {
 function modelRowsForUpsert(models, fallbackSource) {
   return Array.from(
     new Map((Array.isArray(models) ? models : []).map((model) => [model.modelId, model])).values()
-  ).map((model) => ({
-    model_id: model.modelId,
-    display_name: model.displayName,
-    context_window: Number(model.contextWindow || 0),
-    source: model.source === "manual" ? "manual" : fallbackSource || "sync",
-    metadata: model.metadata && typeof model.metadata === "object" ? model.metadata : {},
-  }));
+  ).map((model) => {
+    const contextWindow = Number(model.contextWindow || 0);
+    const maxOutputTokens = Number(model.maxOutputTokens || 0);
+    const contextWindowSource = ["sync", "catalog"].includes(model.contextWindowSource)
+      ? model.contextWindowSource
+      : contextWindow > 0 ? "sync" : "";
+    const maxOutputTokensSource = ["sync", "catalog"].includes(model.maxOutputTokensSource)
+      ? model.maxOutputTokensSource
+      : maxOutputTokens > 0 ? "sync" : "";
+    return {
+      model_id: model.modelId,
+      display_name: model.displayName,
+      context_window: contextWindow,
+      context_window_source: contextWindowSource,
+      max_output_tokens: maxOutputTokens,
+      max_output_tokens_source: maxOutputTokensSource,
+      source: model.source === "manual" ? "manual" : fallbackSource || "sync",
+      metadata: model.metadata && typeof model.metadata === "object" ? model.metadata : {},
+    };
+  });
+}
+
+function modelCapabilityState(model) {
+  const source = model || {};
+  return {
+    contextWindow: Number(source.context_window || 0),
+    contextWindowSource: String(source.context_window_source || ""),
+    maxOutputTokens: Number(source.max_output_tokens || 0),
+    maxOutputTokensSource: String(source.max_output_tokens_source || ""),
+  };
+}
+
+function capabilitiesWithDetectedModel(model, detectedModel) {
+  const state = modelCapabilityState(model);
+  const detected = detectedModel || {};
+  const detectedContextSource = String(detected.contextWindowSource || "");
+  const detectedOutputSource = String(detected.maxOutputTokensSource || "");
+  if (
+    state.contextWindowSource !== "manual" && detected.contextWindow > 0 &&
+    (detectedContextSource === "sync" || !state.contextWindowSource || state.contextWindowSource === "catalog")
+  ) {
+    state.contextWindow = Number(detected.contextWindow);
+    state.contextWindowSource = detectedContextSource || "sync";
+  }
+  if (
+    state.maxOutputTokensSource !== "manual" && detected.maxOutputTokens > 0 &&
+    (detectedOutputSource === "sync" || !state.maxOutputTokensSource || state.maxOutputTokensSource === "catalog")
+  ) {
+    state.maxOutputTokens = Number(detected.maxOutputTokens);
+    state.maxOutputTokensSource = detectedOutputSource || "sync";
+  }
+  return state;
+}
+
+function capabilitiesWithCatalog(model, catalog) {
+  const detected = catalog || {};
+  return capabilitiesWithDetectedModel(model, {
+    contextWindow: Number(detected.contextWindow || 0),
+    contextWindowSource: detected.contextWindow > 0 ? "catalog" : "",
+    maxOutputTokens: Number(detected.maxOutputTokens || 0),
+    maxOutputTokensSource: detected.maxOutputTokens > 0 ? "catalog" : "",
+  });
+}
+
+function capabilityDetectionSummary(before, after, probeStatus) {
+  const previous = before || {};
+  const current = after || {};
+  const updatedFields = [];
+  if (
+    Number(previous.contextWindow || 0) !== Number(current.contextWindow || 0) ||
+    String(previous.contextWindowSource || "") !== String(current.contextWindowSource || "")
+  ) updatedFields.push("contextWindow");
+  if (
+    Number(previous.maxOutputTokens || 0) !== Number(current.maxOutputTokens || 0) ||
+    String(previous.maxOutputTokensSource || "") !== String(current.maxOutputTokensSource || "")
+  ) updatedFields.push("maxOutputTokens");
+  return {
+    updatedFields,
+    complete: Number(current.contextWindow || 0) > 0 && Number(current.maxOutputTokens || 0) > 0,
+    probeStatus: probeStatus || "not_needed",
+  };
 }
 
 function aiAccessFlags(circleRow, userId, isSuperAdmin) {
@@ -300,11 +513,17 @@ class AiService {
     this.request = options && options.request;
     this.checkTextSecurity = (options && options.checkTextSecurity) || checkTextSecurity;
     this.streamCompletion = (options && options.streamProviderCompletion) || streamProviderCompletion;
+    this.fetchProviderModels = (options && options.listProviderModels) || listProviderModels;
     this.generationHeartbeatMs = Math.max(10, Number((options && options.generationHeartbeatMs) || 3000));
     this.contentSecurityRetryDelays = Array.isArray(options && options.contentSecurityRetryDelays)
       ? options.contentSecurityRetryDelays
       : [200, 600];
     this.core = new InCircleService(app, options);
+  }
+
+  async providerModelsWithCapabilities(provider, apiKey, options) {
+    const models = await this.fetchProviderModels(provider, apiKey, options);
+    return enrichModelsWithCatalog(this.db, provider, models);
   }
 
   async checkContentSecurity(options) {
@@ -524,7 +743,9 @@ class AiService {
       : arrayOfStrings(current.quick_prompts, 8, 80);
     const memberDailyLimit = integerBetween(patch.memberDailyLimit, current.member_daily_limit, 1, 200);
     const circleDailyLimit = integerBetween(patch.circleDailyLimit, current.circle_daily_limit, 1, 5000);
-    const maxOutputTokens = integerBetween(patch.maxOutputTokens, current.max_output_tokens, 128, 8192);
+    const maxOutputTokens = Object.prototype.hasOwnProperty.call(patch, "maxOutputTokens")
+      ? settingOutputTokenValue(patch.maxOutputTokens, current.max_output_tokens)
+      : Number(current.max_output_tokens);
     const changesDefaultModel = Object.prototype.hasOwnProperty.call(patch, "defaultModelId");
     const defaultModelIdRaw = changesDefaultModel
       ? String(patch.defaultModelId || "")
@@ -632,7 +853,10 @@ class AiService {
       });
       models = [{ modelId, displayName: modelId, contextWindow: 0, source: "manual" }];
     } else {
-      models = await listProviderModels(provider, apiKey, { timeoutMs: 20000 });
+      models = await this.providerModelsWithCapabilities(provider, apiKey, { timeoutMs: 20000 });
+    }
+    if (provider.protocol === "azure") {
+      models = await enrichModelsWithCatalog(this.db, provider, models);
     }
     return { ok: true, modelCount: models.length, latencyMs: Date.now() - started, models };
   }
@@ -669,6 +893,7 @@ class AiService {
         {
           id: existing && existing.id,
           protocol: normalized.protocol,
+          preset_key: normalized.presetKey,
           base_url: normalized.baseUrl,
           api_version: normalized.apiVersion,
           azure_deployment: normalized.azureDeployment,
@@ -777,14 +1002,53 @@ class AiService {
           await this.db.query(
             `
             INSERT INTO incircle_ai_models (
-              circle_id, provider_id, model_id, display_name, context_window, source, metadata, enabled, archived
+              circle_id, provider_id, model_id, display_name,
+              context_window, context_window_source, max_output_tokens, max_output_tokens_source,
+              source, metadata, enabled, archived
             )
-            SELECT $1, $2, item.model_id, item.display_name, item.context_window, item.source, item.metadata, true, false
+            SELECT $1, $2, item.model_id, item.display_name,
+              item.context_window, item.context_window_source, item.max_output_tokens, item.max_output_tokens_source,
+              item.source, item.metadata, true, false
             FROM jsonb_to_recordset($3::jsonb) AS item(
-              model_id text, display_name text, context_window integer, source text, metadata jsonb
+              model_id text, display_name text,
+              context_window integer, context_window_source text,
+              max_output_tokens integer, max_output_tokens_source text,
+              source text, metadata jsonb
             )
             ON CONFLICT (provider_id, model_id) DO UPDATE SET
-              display_name = EXCLUDED.display_name, context_window = EXCLUDED.context_window,
+              display_name = EXCLUDED.display_name,
+              context_window = CASE
+                WHEN incircle_ai_models.context_window_source = 'manual' THEN incircle_ai_models.context_window
+                WHEN EXCLUDED.context_window > 0 AND (
+                  EXCLUDED.context_window_source = 'sync' OR
+                  incircle_ai_models.context_window_source IN ('', 'catalog')
+                ) THEN EXCLUDED.context_window
+                ELSE incircle_ai_models.context_window
+              END,
+              context_window_source = CASE
+                WHEN incircle_ai_models.context_window_source = 'manual' THEN 'manual'
+                WHEN EXCLUDED.context_window > 0 AND (
+                  EXCLUDED.context_window_source = 'sync' OR
+                  incircle_ai_models.context_window_source IN ('', 'catalog')
+                ) THEN EXCLUDED.context_window_source
+                ELSE incircle_ai_models.context_window_source
+              END,
+              max_output_tokens = CASE
+                WHEN incircle_ai_models.max_output_tokens_source = 'manual' THEN incircle_ai_models.max_output_tokens
+                WHEN EXCLUDED.max_output_tokens > 0 AND (
+                  EXCLUDED.max_output_tokens_source = 'sync' OR
+                  incircle_ai_models.max_output_tokens_source IN ('', 'catalog')
+                ) THEN EXCLUDED.max_output_tokens
+                ELSE incircle_ai_models.max_output_tokens
+              END,
+              max_output_tokens_source = CASE
+                WHEN incircle_ai_models.max_output_tokens_source = 'manual' THEN 'manual'
+                WHEN EXCLUDED.max_output_tokens > 0 AND (
+                  EXCLUDED.max_output_tokens_source = 'sync' OR
+                  incircle_ai_models.max_output_tokens_source IN ('', 'catalog')
+                ) THEN EXCLUDED.max_output_tokens_source
+                ELSE incircle_ai_models.max_output_tokens_source
+              END,
               metadata = incircle_ai_models.metadata || EXCLUDED.metadata,
               archived = false, updated_at = now()
             `,
@@ -871,6 +1135,60 @@ class AiService {
     return this.streamCompletion(options);
   }
 
+  async probeModelOutputCapability(options) {
+    const source = options || {};
+    const reasoning = source.reasoning || {};
+    if (reasoning.control === "always") return { value: 0, source: "", status: "reasoning_required" };
+
+    const runProbe = async (maxTokens) => {
+      let reply = "";
+      await this.runProviderCompletion({
+        provider: source.provider,
+        model: source.model,
+        apiKey: source.apiKey,
+        messages: [{ role: "user", content: "Capability check. Reply with OK only." }],
+        systemPrompt: "Reply with the exact text OK and nothing else.",
+        maxTokens,
+        reasoningMode: reasoning.control === "toggle" ? "off" : "auto",
+        timeoutMs: AI_OUTPUT_PROBE_TIMEOUT_MS,
+        onDelta: async (delta) => {
+          if (reply.length < 64) reply += String(delta || "").slice(0, 64 - reply.length);
+        },
+      });
+      return !!reply.trim();
+    };
+
+    try {
+      const accepted = await runProbe(AI_OUTPUT_PLATFORM_MAX_TOKENS);
+      return accepted
+        ? { value: AI_OUTPUT_PLATFORM_MAX_TOKENS, source: "probe", status: "accepted_platform_max" }
+        : { value: 0, source: "", status: "empty_response" };
+    } catch (error) {
+      if (!error || error.errCode !== "AI_PROVIDER_OUTPUT_LIMIT_UNSUPPORTED") {
+        return { value: 0, source: "", status: "unavailable" };
+      }
+      const reportedLimit = Number(error.details && error.details.providerTokenLimit || 0);
+      if (Number.isInteger(reportedLimit) && reportedLimit >= 128 && reportedLimit < AI_OUTPUT_PLATFORM_MAX_TOKENS) {
+        return { value: reportedLimit, source: "probe", status: "provider_reported_limit" };
+      }
+      try {
+        const accepted = await runProbe(AI_OUTPUT_COMPATIBILITY_FALLBACK_TOKENS);
+        return accepted
+          ? { value: AI_OUTPUT_COMPATIBILITY_FALLBACK_TOKENS, source: "probe", status: "fallback_accepted" }
+          : { value: 0, source: "", status: "empty_response" };
+      } catch (fallbackError) {
+        const fallbackLimit = Number(fallbackError && fallbackError.details && fallbackError.details.providerTokenLimit || 0);
+        if (
+          fallbackError && fallbackError.errCode === "AI_PROVIDER_OUTPUT_LIMIT_UNSUPPORTED" &&
+          Number.isInteger(fallbackLimit) && fallbackLimit >= 128 && fallbackLimit < AI_OUTPUT_COMPATIBILITY_FALLBACK_TOKENS
+        ) {
+          return { value: fallbackLimit, source: "probe", status: "provider_reported_limit" };
+        }
+        return { value: 0, source: "", status: "unavailable" };
+      }
+    }
+  }
+
   async testModel(body) {
     const ctx = await this.requireManager(body);
     const modelId = uuidOf(body.modelId, "模型");
@@ -899,13 +1217,38 @@ class AiService {
     const started = Date.now();
     const testReasoning = reasoningCapability(model, model);
     const testMaxTokens = testReasoning.control === "always" ? 1024 : 16;
+    const capabilitiesBefore = modelCapabilityState(model);
+    let capabilities = capabilitiesBefore;
+    let capabilityProbeStatus = "not_needed";
     let responseText = "";
     let failure = null;
+    let apiKey = "";
+    let provider = null;
+    let metadataController = null;
+    let metadataPromise = Promise.resolve(null);
     try {
-      const apiKey = decryptCredential(this.config, model.credential_ciphertext);
-      const provider = Object.assign({}, model, {
+      apiKey = decryptCredential(this.config, model.credential_ciphertext);
+      provider = Object.assign({}, model, {
         azure_deployment: model.protocol === "azure" ? model.model_id : model.azure_deployment,
       });
+      if (
+        model.protocol !== "azure" &&
+        (
+          !capabilitiesBefore.contextWindow || !capabilitiesBefore.maxOutputTokens ||
+          capabilitiesBefore.contextWindowSource === "catalog" ||
+          capabilitiesBefore.maxOutputTokensSource === "catalog"
+        )
+      ) {
+        metadataController = new AbortController();
+        metadataPromise = this.providerModelsWithCapabilities(provider, apiKey, {
+          timeoutMs: 10000,
+          signal: metadataController.signal,
+        })
+          .then((models) => (Array.isArray(models) ? models : []).find((item) => (
+            String(item.modelId || "") === String(model.model_id || "")
+          )) || null)
+          .catch(() => null);
+      }
       await this.runProviderCompletion({
         provider,
         model,
@@ -927,18 +1270,59 @@ class AiService {
       }
     } catch (error) {
       failure = error;
+      if (metadataController) metadataController.abort();
     }
 
     const latencyMs = Math.max(0, Date.now() - started);
+    const detectedModel = await metadataPromise;
+    if (!failure) {
+      capabilities = detectedModel
+        ? capabilitiesWithDetectedModel(model, detectedModel)
+        : capabilitiesWithCatalog(
+          model,
+          await catalogModelCapabilities(this.db, provider, model.model_id)
+        );
+      if (!capabilities.maxOutputTokens) {
+        const probed = await this.probeModelOutputCapability({
+          provider,
+          model,
+          apiKey,
+          reasoning: testReasoning,
+        });
+        capabilityProbeStatus = probed.status;
+        if (probed.value > 0) {
+          capabilities.maxOutputTokens = probed.value;
+          capabilities.maxOutputTokensSource = probed.source;
+        }
+      }
+    }
+    const capabilityDetection = capabilityDetectionSummary(
+      capabilitiesBefore,
+      capabilities,
+      capabilityProbeStatus
+    );
     const status = failure ? "failed" : "success";
     const errorCode = failure ? failure.errCode || failure.code || "AI_MODEL_TEST_FAILED" : "";
     await this.db.withTransaction(async () => {
       await this.db.query(
         `UPDATE incircle_ai_models
          SET last_test_status = $3, last_test_error_code = $4,
-           last_test_latency_ms = $5, last_tested_at = now(), updated_at = now()
+           last_test_latency_ms = $5,
+           context_window = $6, context_window_source = $7,
+           max_output_tokens = $8, max_output_tokens_source = $9,
+           last_tested_at = now(), updated_at = now()
          WHERE id = $1 AND circle_id = $2`,
-        [model.id, ctx.circleId, status, errorCode, latencyMs]
+        [
+          model.id,
+          ctx.circleId,
+          status,
+          errorCode,
+          latencyMs,
+          capabilities.contextWindow,
+          capabilities.contextWindowSource,
+          capabilities.maxOutputTokens,
+          capabilities.maxOutputTokensSource,
+        ]
       );
       await this.db.query(
         `UPDATE incircle_ai_providers
@@ -953,6 +1337,7 @@ class AiService {
       providerName: model.provider_name,
       modelId: model.model_id,
       latencyMs,
+      capabilityFields: capabilityDetection.updatedFields,
     });
     return {
       ok: true,
@@ -961,6 +1346,8 @@ class AiService {
       latencyMs,
       testedAt: new Date().toISOString(),
       reply: responseText.trim().slice(0, 80),
+      capabilities,
+      capabilityDetection,
     };
   }
 
@@ -994,21 +1381,60 @@ class AiService {
       throw new AppError("供应商已停用，请先启用连接", { statusCode: 409, errCode: "AI_PROVIDER_DISABLED" });
     }
     const apiKey = decryptCredential(this.config, provider.credential_ciphertext);
-    const models = await listProviderModels(provider, apiKey, { timeoutMs: 25000 });
+    const models = await this.providerModelsWithCapabilities(provider, apiKey, { timeoutMs: 25000 });
     await this.db.withTransaction(async () => {
       const discoveredModels = modelRowsForUpsert(models, "sync");
       if (discoveredModels.length) {
         await this.db.query(
           `
           INSERT INTO incircle_ai_models (
-            circle_id, provider_id, model_id, display_name, context_window, source, metadata, enabled, archived
+            circle_id, provider_id, model_id, display_name,
+            context_window, context_window_source, max_output_tokens, max_output_tokens_source,
+            source, metadata, enabled, archived
           )
-          SELECT $1, $2, item.model_id, item.display_name, item.context_window, item.source, item.metadata, true, false
+          SELECT $1, $2, item.model_id, item.display_name,
+            item.context_window, item.context_window_source, item.max_output_tokens, item.max_output_tokens_source,
+            item.source, item.metadata, true, false
           FROM jsonb_to_recordset($3::jsonb) AS item(
-            model_id text, display_name text, context_window integer, source text, metadata jsonb
+            model_id text, display_name text,
+            context_window integer, context_window_source text,
+            max_output_tokens integer, max_output_tokens_source text,
+            source text, metadata jsonb
           )
           ON CONFLICT (provider_id, model_id) DO UPDATE SET
-            display_name = EXCLUDED.display_name, context_window = EXCLUDED.context_window,
+            display_name = EXCLUDED.display_name,
+            context_window = CASE
+              WHEN incircle_ai_models.context_window_source = 'manual' THEN incircle_ai_models.context_window
+              WHEN EXCLUDED.context_window > 0 AND (
+                EXCLUDED.context_window_source = 'sync' OR
+                incircle_ai_models.context_window_source IN ('', 'catalog')
+              ) THEN EXCLUDED.context_window
+              ELSE incircle_ai_models.context_window
+            END,
+            context_window_source = CASE
+              WHEN incircle_ai_models.context_window_source = 'manual' THEN 'manual'
+              WHEN EXCLUDED.context_window > 0 AND (
+                EXCLUDED.context_window_source = 'sync' OR
+                incircle_ai_models.context_window_source IN ('', 'catalog')
+              ) THEN EXCLUDED.context_window_source
+              ELSE incircle_ai_models.context_window_source
+            END,
+            max_output_tokens = CASE
+              WHEN incircle_ai_models.max_output_tokens_source = 'manual' THEN incircle_ai_models.max_output_tokens
+              WHEN EXCLUDED.max_output_tokens > 0 AND (
+                EXCLUDED.max_output_tokens_source = 'sync' OR
+                incircle_ai_models.max_output_tokens_source IN ('', 'catalog')
+              ) THEN EXCLUDED.max_output_tokens
+              ELSE incircle_ai_models.max_output_tokens
+            END,
+            max_output_tokens_source = CASE
+              WHEN incircle_ai_models.max_output_tokens_source = 'manual' THEN 'manual'
+              WHEN EXCLUDED.max_output_tokens > 0 AND (
+                EXCLUDED.max_output_tokens_source = 'sync' OR
+                incircle_ai_models.max_output_tokens_source IN ('', 'catalog')
+              ) THEN EXCLUDED.max_output_tokens_source
+              ELSE incircle_ai_models.max_output_tokens_source
+            END,
             metadata = incircle_ai_models.metadata || EXCLUDED.metadata,
             archived = false, updated_at = now()
           `,
@@ -1031,21 +1457,37 @@ class AiService {
     if (!modelId || modelId.length > 200 || /[\u0000-\u001f]/.test(modelId)) {
       throw new AppError("模型 ID 格式不正确", { statusCode: 400, errCode: "AI_MODEL_ID_INVALID" });
     }
+    const requestedContextWindow = capabilityTokenValue(input.contextWindow, 1024, "上下文窗口");
+    const requestedMaxOutputTokens = capabilityTokenValue(input.maxOutputTokens, 128, "最大输出");
+    const catalogCapabilities = await catalogModelCapabilities(this.db, provider, modelId);
+    const contextWindow = requestedContextWindow || catalogCapabilities.contextWindow;
+    const maxOutputTokens = requestedMaxOutputTokens || catalogCapabilities.maxOutputTokens;
+    const contextWindowSource = requestedContextWindow > 0 ? "manual" : contextWindow > 0 ? "catalog" : "";
+    const maxOutputTokensSource = requestedMaxOutputTokens > 0 ? "manual" : maxOutputTokens > 0 ? "catalog" : "";
     const result = await this.db.query(
       `
       INSERT INTO incircle_ai_models (
-        circle_id, provider_id, model_id, display_name, enabled, archived, supports_stream, context_window, source
-      ) VALUES ($1,$2,$3,$4,$5,false,$6,$7,'manual')
+        circle_id, provider_id, model_id, display_name, enabled, archived, supports_stream,
+        context_window, context_window_source, max_output_tokens, max_output_tokens_source, source
+      ) VALUES ($1,$2,$3,$4,$5,false,$6,$7,$8,$9,$10,'manual')
       ON CONFLICT (provider_id, model_id) DO UPDATE SET
         display_name = EXCLUDED.display_name, enabled = EXCLUDED.enabled, archived = false,
-        supports_stream = EXCLUDED.supports_stream, context_window = EXCLUDED.context_window, updated_at = now()
+        supports_stream = EXCLUDED.supports_stream,
+        context_window = EXCLUDED.context_window,
+        context_window_source = EXCLUDED.context_window_source,
+        max_output_tokens = EXCLUDED.max_output_tokens,
+        max_output_tokens_source = EXCLUDED.max_output_tokens_source,
+        updated_at = now()
       RETURNING *
       `,
       [
         ctx.circleId, provider.id, modelId, String(input.displayName || modelId).trim().slice(0, 120),
         typeof input.enabled === "boolean" ? input.enabled : true,
         typeof input.supportsStream === "boolean" ? input.supportsStream : true,
-        integerBetween(input.contextWindow, 0, 0, 2000000),
+        contextWindow,
+        contextWindowSource,
+        maxOutputTokens,
+        maxOutputTokensSource,
       ]
     );
     await this.core.logOperation(ctx.circleId, ctx.auth, "添加AI模型", "ai_model", result.rows[0].id, {
@@ -1060,7 +1502,8 @@ class AiService {
     const modelId = uuidOf(body.modelId, "模型");
     const result = await this.db.query(
       `SELECT model.*, provider.enabled AS provider_enabled, provider.archived AS provider_archived,
-        provider.credential_ciphertext AS provider_credential_ciphertext
+        provider.credential_ciphertext AS provider_credential_ciphertext,
+        provider.preset_key AS provider_preset_key
        FROM incircle_ai_models model
        JOIN incircle_ai_providers provider ON provider.id = model.provider_id AND provider.circle_id = model.circle_id
        WHERE model.id = $1 AND model.circle_id = $2 LIMIT 1`,
@@ -1071,11 +1514,53 @@ class AiService {
     const patch = body.patch || {};
     const enabled = typeof patch.enabled === "boolean" ? patch.enabled : !!model.enabled;
     const archived = typeof patch.archived === "boolean" ? patch.archived : !!model.archived;
+    const changesContextWindow = Object.prototype.hasOwnProperty.call(patch, "contextWindow");
+    const changesMaxOutputTokens = Object.prototype.hasOwnProperty.call(patch, "maxOutputTokens");
+    const catalogCapabilities = await catalogModelCapabilities(
+      this.db,
+      { preset_key: model.provider_preset_key },
+      model.model_id
+    );
+    const requestedContextWindow = changesContextWindow
+      ? capabilityTokenValue(patch.contextWindow, 1024, "上下文窗口")
+      : Number(model.context_window || 0);
+    const requestedMaxOutputTokens = changesMaxOutputTokens
+      ? capabilityTokenValue(patch.maxOutputTokens, 128, "最大输出")
+      : Number(model.max_output_tokens || 0);
+    const contextWindow = changesContextWindow
+      ? requestedContextWindow || catalogCapabilities.contextWindow
+      : Number(model.context_window || 0);
+    const maxOutputTokens = changesMaxOutputTokens
+      ? requestedMaxOutputTokens || catalogCapabilities.maxOutputTokens
+      : Number(model.max_output_tokens || 0);
+    const contextWindowSource = changesContextWindow
+      ? requestedContextWindow > 0 ? "manual" : contextWindow > 0 ? "catalog" : ""
+      : String(model.context_window_source || "");
+    const maxOutputTokensSource = changesMaxOutputTokens
+      ? requestedMaxOutputTokens > 0 ? "manual" : maxOutputTokens > 0 ? "catalog" : ""
+      : String(model.max_output_tokens_source || "");
     await this.db.withTransaction(async () => {
       await this.db.query(
         `UPDATE incircle_ai_models SET enabled = $3, archived = $4,
-          display_name = COALESCE(NULLIF($5, ''), display_name) WHERE id = $1 AND circle_id = $2`,
-        [model.id, ctx.circleId, enabled, archived, String(patch.displayName || "").trim().slice(0, 120)]
+          display_name = COALESCE(NULLIF($5, ''), display_name),
+          context_window = CASE WHEN $6 THEN $7 ELSE context_window END,
+          context_window_source = CASE WHEN $6 THEN $8 ELSE context_window_source END,
+          max_output_tokens = CASE WHEN $9 THEN $10 ELSE max_output_tokens END,
+          max_output_tokens_source = CASE WHEN $9 THEN $11 ELSE max_output_tokens_source END
+         WHERE id = $1 AND circle_id = $2`,
+        [
+          model.id,
+          ctx.circleId,
+          enabled,
+          archived,
+          String(patch.displayName || "").trim().slice(0, 120),
+          changesContextWindow,
+          contextWindow,
+          contextWindowSource,
+          changesMaxOutputTokens,
+          maxOutputTokens,
+          maxOutputTokensSource,
+        ]
       );
       if (patch.isDefault === true) {
         if (!enabled || archived) throw new AppError("停用的模型不能设为默认", { statusCode: 400, errCode: "AI_MODEL_DISABLED" });
@@ -1171,17 +1656,53 @@ class AiService {
     );
     const provider = providerResult.rows[0];
     if (!provider) throw new AppError("供应商不可用", { statusCode: 404, errCode: "AI_PROVIDER_NOT_FOUND" });
-    await this.db.query(
-      `
-      INSERT INTO incircle_ai_consents (
-        circle_id, user_id, provider_id, privacy_version, provider_domain, granted_at, revoked_at
-      ) VALUES ($1,$2,$3,$4,$5,now(),NULL)
-      ON CONFLICT (circle_id, user_id, provider_id) DO UPDATE SET
-        privacy_version = EXCLUDED.privacy_version, provider_domain = EXCLUDED.provider_domain,
-        granted_at = now(), revoked_at = NULL, updated_at = now()
-      `,
-      [ctx.circleId, ctx.auth.user.id, provider.id, provider.privacy_version, providerDomain(provider)]
-    );
+    const domain = providerDomain(provider);
+    await this.db.withTransaction(async () => {
+      await this.db.query(
+        `
+        INSERT INTO incircle_ai_consents (
+          circle_id, user_id, provider_id, privacy_version, provider_domain, granted_at, revoked_at
+        ) VALUES ($1,$2,$3,$4,$5,now(),NULL)
+        ON CONFLICT ON CONSTRAINT uq_incircle_ai_consent_scope DO UPDATE SET
+          privacy_version = EXCLUDED.privacy_version,
+          provider_domain = EXCLUDED.provider_domain,
+          granted_at = CASE
+            WHEN incircle_ai_consents.privacy_version IS DISTINCT FROM EXCLUDED.privacy_version
+              OR incircle_ai_consents.revoked_at IS NOT NULL
+            THEN now() ELSE incircle_ai_consents.granted_at
+          END,
+          revoked_at = NULL,
+          updated_at = CASE
+            WHEN incircle_ai_consents.privacy_version IS DISTINCT FROM EXCLUDED.privacy_version
+              OR incircle_ai_consents.provider_domain IS DISTINCT FROM EXCLUDED.provider_domain
+              OR incircle_ai_consents.revoked_at IS NOT NULL
+            THEN now() ELSE incircle_ai_consents.updated_at
+          END
+        `,
+        [ctx.circleId, ctx.auth.user.id, provider.id, provider.privacy_version, domain]
+      );
+      await this.db.query(
+        `
+        INSERT INTO incircle_ai_consent_acceptances (
+          subject_id, user_id, circle_id, circle_scope_id, provider_id, provider_scope_id,
+          provider_name_snapshot, provider_domain_snapshot, privacy_url_snapshot,
+          privacy_version, accepted_at
+        )
+        SELECT users.agreement_subject_id, users.id, $1, $1, $3, $3, $6, $5, $7, $4, now()
+        FROM incircle_users users WHERE users.id = $2
+        ON CONFLICT ON CONSTRAINT uq_incircle_ai_consent_acceptance_version DO NOTHING
+        `,
+        [
+          ctx.circleId,
+          ctx.auth.user.id,
+          provider.id,
+          provider.privacy_version,
+          domain,
+          provider.name,
+          provider.privacy_url,
+        ]
+      );
+    });
     return { granted: true, providerId: provider.id, privacyVersion: provider.privacy_version };
   }
 
@@ -1323,6 +1844,19 @@ class AiService {
   async cancelGeneration(body) {
     const ctx = await this.requireMember(body);
     const messageId = uuidOf(body.messageId, "回答");
+    const cancelled = await this.db.query(
+      `UPDATE incircle_ai_messages
+       SET status = 'cancelled', error_code = 'AI_CANCELLED',
+         generation_owner_id = '', generation_lease_expires_at = NULL
+       WHERE id = $1 AND circle_id = $2 AND user_id = $3
+         AND role = 'assistant' AND status = 'generating'
+       RETURNING id, status`,
+      [messageId, ctx.circleId, ctx.auth.user.id]
+    );
+    if (cancelled.rows[0]) {
+      cancelActiveGeneration(messageId);
+      return { cancelled: true, status: "cancelled", messageId };
+    }
     const result = await this.db.query(
       `SELECT id, status FROM incircle_ai_messages
        WHERE id = $1 AND circle_id = $2 AND user_id = $3 AND role = 'assistant'
@@ -1331,19 +1865,7 @@ class AiService {
     );
     const message = result.rows[0];
     if (!message) throw new AppError("回答不存在", { statusCode: 404, errCode: "AI_MESSAGE_NOT_FOUND" });
-    if (message.status !== "generating") {
-      return { cancelled: message.status === "cancelled", status: message.status, messageId };
-    }
-    const activeCount = cancelActiveGeneration(messageId);
-    if (!activeCount) {
-      await this.db.query(
-        `UPDATE incircle_ai_messages
-         SET status = 'cancelled', error_code = 'AI_CANCELLED'
-         WHERE id = $1 AND circle_id = $2 AND user_id = $3 AND status = 'generating'`,
-        [messageId, ctx.circleId, ctx.auth.user.id]
-      );
-    }
-    return { cancelled: true, status: "cancelled", messageId };
+    return { cancelled: message.status === "cancelled", status: message.status, messageId };
   }
 
   async reportMessage(body) {
@@ -1434,49 +1956,209 @@ class AiService {
     return this.listReports(body);
   }
 
-  async generationContext(conversationId, ctx, currentUserMessageId) {
+  generationBudget(settings, model, content, reasoningMode) {
+    const contextWindow = effectiveModelContextWindow(model && model.context_window);
+    const contextWindowSource = Number.isFinite(Number(model && model.context_window)) && Number(model.context_window) >= 1024
+      ? "model"
+      : "fallback";
+    const safetyMarginTokens = Math.max(
+      AI_CONTEXT_SAFETY_MARGIN_MIN_TOKENS,
+      Math.ceil(contextWindow * AI_CONTEXT_SAFETY_MARGIN_RATE)
+    );
+    const prompts = generationSystemPrompts(settings, reasoningMode);
+    const systemPromptTokens = estimatedAiMessageTokens({ role: "system", content: prompts.systemPrompt });
+    const retrySystemPromptTokens = estimatedAiMessageTokens({ role: "system", content: prompts.retrySystemPrompt });
+    const reservedSystemPromptTokens = Math.max(systemPromptTokens, retrySystemPromptTokens);
+    const currentMessageTokens = estimatedAiMessageTokens({ role: "user", content });
+    const minimumOutputTokens = minimumGenerationOutputTokens(reasoningMode);
+    const configuredMaxOutputTokens = integerBetween(
+      settings && settings.max_output_tokens,
+      DEFAULT_SETTINGS.maxOutputTokens,
+      AI_CONTEXT_MIN_OUTPUT_TOKENS,
+      AI_OUTPUT_PLATFORM_MAX_TOKENS
+    );
+    const rawModelMaxOutputTokens = Number(model && model.max_output_tokens || 0);
+    const modelMaxOutputTokens = Number.isInteger(rawModelMaxOutputTokens)
+      && rawModelMaxOutputTokens >= AI_CONTEXT_MIN_OUTPUT_TOKENS
+      ? rawModelMaxOutputTokens
+      : 0;
+    const outputCapabilityKnown = modelMaxOutputTokens > 0;
+    const outputCapabilitySource = outputCapabilityKnown
+      ? String(model && model.max_output_tokens_source || "sync")
+      : "unknown";
+    if (outputCapabilityKnown && modelMaxOutputTokens < minimumOutputTokens) {
+      throw new AppError("当前模型的输出能力不足以启用所选思考模式", {
+        statusCode: 400,
+        errCode: "AI_MODEL_OUTPUT_LIMIT_TOO_LOW",
+        details: { modelMaxOutputTokens, minimumOutputTokens },
+      });
+    }
+    const availableOutputTokens = contextWindow
+      - safetyMarginTokens
+      - reservedSystemPromptTokens
+      - currentMessageTokens;
+
+    if (availableOutputTokens < minimumOutputTokens) {
+      throw new AppError("当前问题超出模型上下文窗口，请缩短内容或选择上下文更大的模型", {
+        statusCode: 400,
+        errCode: "AI_CONTEXT_WINDOW_EXCEEDED",
+        details: {
+          contextWindow,
+          contextWindowSource,
+          estimatedRequiredTokens: reservedSystemPromptTokens
+            + currentMessageTokens
+            + safetyMarginTokens
+            + minimumOutputTokens,
+          minimumOutputTokens,
+        },
+      });
+    }
+
+    const requestedOutputTokens = Math.max(
+      outputCapabilityKnown
+        ? Math.min(configuredMaxOutputTokens, modelMaxOutputTokens)
+        : configuredMaxOutputTokens,
+      minimumOutputTokens
+    );
+    const maxOutputTokens = Math.min(requestedOutputTokens, Math.floor(availableOutputTokens));
+    const inputTokenBudget = contextWindow
+      - safetyMarginTokens
+      - reservedSystemPromptTokens
+      - maxOutputTokens;
+    return {
+      ...prompts,
+      contextWindow,
+      contextWindowSource,
+      safetyMarginTokens,
+      systemPromptTokens,
+      reservedSystemPromptTokens,
+      currentMessageTokens,
+      configuredMaxOutputTokens,
+      modelMaxOutputTokens,
+      outputCapabilityKnown,
+      outputCapabilitySource,
+      maxOutputTokens,
+      minimumOutputTokens,
+      inputTokenBudget,
+      historyTokenBudget: Math.max(0, inputTokenBudget - currentMessageTokens),
+    };
+  }
+
+  async buildGenerationPlan(options) {
+    const source = options || {};
+    const content = String(source.content || "");
+    const budget = this.generationBudget(
+      source.settings,
+      source.model,
+      content,
+      source.reasoningMode
+    );
+    const messages = source.conversationId
+      ? await this.generationContext(source.conversationId, source.ctx, {
+        currentUserMessageId: source.currentUserMessageId,
+        currentContent: content,
+        inputTokenBudget: budget.inputTokenBudget,
+      })
+      : [{ role: "user", content }];
+    const messageTokens = messages.reduce((total, message) => total + estimatedAiMessageTokens(message), 0);
+    if (messageTokens > budget.inputTokenBudget) {
+      throw new AppError("当前问题超出模型上下文窗口，请缩短内容或选择上下文更大的模型", {
+        statusCode: 400,
+        errCode: "AI_CONTEXT_WINDOW_EXCEEDED",
+        details: {
+          contextWindow: budget.contextWindow,
+          contextWindowSource: budget.contextWindowSource,
+          estimatedRequiredTokens: budget.reservedSystemPromptTokens
+            + messageTokens
+            + budget.safetyMarginTokens
+            + budget.minimumOutputTokens,
+          minimumOutputTokens: budget.minimumOutputTokens,
+        },
+      });
+    }
+    return {
+      ...budget,
+      messages,
+      estimatedInputTokens: budget.systemPromptTokens + messageTokens,
+      selectedHistoryMessages: Math.max(0, messages.length - 1),
+    };
+  }
+
+  async generationContext(conversationId, ctx, options) {
+    const source = options && typeof options === "object"
+      ? options
+      : { currentUserMessageId: options };
+    const currentUserMessageId = String(source.currentUserMessageId || "");
+    const inputTokenBudget = Number.isFinite(Number(source.inputTokenBudget))
+      ? Math.max(0, Math.floor(Number(source.inputTokenBudget)))
+      : AI_CONTEXT_WINDOW_FALLBACK_TOKENS;
     const result = await this.db.query(
       `
-      SELECT message.role, message.content FROM incircle_ai_messages message
+      SELECT message.id, message.role, message.content, message.reply_to_message_id,
+        message.created_at
+      FROM incircle_ai_messages message
       WHERE message.conversation_id = $1 AND message.circle_id = $2 AND message.user_id = $3
-        AND (
-          (message.role = 'assistant' AND message.status = 'complete') OR
-          (message.role = 'user' AND message.status = 'complete' AND (
-            message.id = $4 OR EXISTS (
-              SELECT 1 FROM incircle_ai_messages reply
-              WHERE reply.reply_to_message_id = message.id
-                AND reply.role = 'assistant' AND reply.status = 'complete'
-            )
-          ))
-        )
+        AND message.status = 'complete' AND message.role IN ('user', 'assistant')
       ORDER BY message.created_at DESC,
         CASE WHEN message.role = 'assistant' THEN 1 ELSE 0 END DESC,
         message.id DESC
-      LIMIT 20
+      LIMIT ${AI_CONTEXT_HISTORY_MESSAGE_LIMIT}
       `,
-      [conversationId, ctx.circleId, ctx.auth.user.id, currentUserMessageId]
+      [conversationId, ctx.circleId, ctx.auth.user.id]
     );
-    const reversed = result.rows.reverse();
-    let remaining = 24000;
-    const kept = [];
-    for (let index = reversed.length - 1; index >= 0; index -= 1) {
-      const content = String(reversed[index].content || "");
-      if (!content) continue;
-      const slice = content.slice(Math.max(0, content.length - remaining));
-      kept.unshift({ role: reversed[index].role, content: slice });
-      remaining -= slice.length;
-      if (remaining <= 0) break;
+    const rows = Array.isArray(result.rows) ? result.rows : [];
+    const currentRow = currentUserMessageId
+      ? rows.find((row) => String(row.id || "") === currentUserMessageId && row.role === "user")
+      : null;
+    const currentContent = Object.prototype.hasOwnProperty.call(source, "currentContent")
+      ? String(source.currentContent || "")
+      : String(currentRow && currentRow.content || "");
+    const currentMessage = { role: "user", content: currentContent };
+    const currentMessageTokens = estimatedAiMessageTokens(currentMessage);
+    if (currentMessageTokens > inputTokenBudget) {
+      throw new AppError("当前问题超出模型上下文窗口，请缩短内容或选择上下文更大的模型", {
+        statusCode: 400,
+        errCode: "AI_CONTEXT_WINDOW_EXCEEDED",
+      });
     }
-    return kept;
+
+    const usersById = new Map();
+    rows.forEach((row) => {
+      const id = String(row.id || "");
+      if (row.role === "user" && id && id !== currentUserMessageId) usersById.set(id, row);
+    });
+    let remainingTokens = inputTokenBudget - currentMessageTokens;
+    const newestFirstPairs = [];
+    const pairedUserIds = new Set();
+    for (const row of rows) {
+      if (row.role !== "assistant") continue;
+      const replyToMessageId = String(row.reply_to_message_id || "");
+      const userMessage = usersById.get(replyToMessageId);
+      if (!userMessage || pairedUserIds.has(replyToMessageId)) continue;
+      const userContent = String(userMessage.content || "");
+      const assistantContent = String(row.content || "");
+      if (!userContent || !assistantContent) continue;
+      const pair = [
+        { role: "user", content: userContent },
+        { role: "assistant", content: assistantContent },
+      ];
+      const pairTokens = pair.reduce((total, message) => total + estimatedAiMessageTokens(message), 0);
+      if (pairTokens > remainingTokens) break;
+      newestFirstPairs.push(pair);
+      pairedUserIds.add(replyToMessageId);
+      remainingTokens -= pairTokens;
+    }
+    return newestFirstPairs.reverse().flat().concat(currentMessage);
   }
 
   async failStaleGenerations(ctx, conversationId) {
     return this.db.query(
       `UPDATE incircle_ai_messages
-       SET status = 'failed', error_code = 'AI_STALE_GENERATION'
+       SET status = 'failed', error_code = 'AI_GENERATION_LEASE_EXPIRED',
+         generation_owner_id = '', generation_lease_expires_at = NULL
        WHERE circle_id = $1 AND role = 'assistant' AND status = 'generating'
          AND ($2::uuid IS NULL OR conversation_id = $2::uuid)
-         AND updated_at < now() - interval '10 minutes'`,
+         AND (generation_lease_expires_at IS NULL OR generation_lease_expires_at < now())`,
       [ctx.circleId, conversationId || null]
     );
   }
@@ -1488,6 +2170,8 @@ class AiService {
         assistant.reasoning_content AS assistant_reasoning_content,
         assistant.reasoning_duration_ms AS assistant_reasoning_duration_ms,
         assistant.created_at AS assistant_created_at,
+        assistant.generation_owner_id AS assistant_generation_owner_id,
+        assistant.generation_lease_expires_at AS assistant_generation_lease_expires_at,
         assistant.status AS assistant_status, assistant.error_code AS assistant_error_code,
         conversation.title AS conversation_title
       FROM incircle_ai_messages user_message
@@ -1510,6 +2194,12 @@ class AiService {
     const timeoutMs = Math.min(10 * 60 * 1000, Math.max(30000, Number(this.config.aiProviderTimeoutMs || 300000) + 30000));
     const deadline = Date.now() + timeoutMs;
     let row = prepared.replay;
+
+    const recoverExpiredReplay = async () => {
+      if (!generationLeaseExpired(row)) return;
+      await this.failStaleGenerations(prepared.ctx, row.conversation_id);
+      row = await this.existingRequest(prepared.ctx, prepared.requestId);
+    };
 
     const emitSnapshot = async () => {
       if (!row) return;
@@ -1548,6 +2238,7 @@ class AiService {
       }
     };
 
+    await recoverExpiredReplay();
     while (row && row.assistant_status === "generating" && Date.now() < deadline) {
       await emitSnapshot();
       if (signal && signal.aborted) {
@@ -1555,19 +2246,27 @@ class AiService {
       }
       await new Promise((resolve) => setTimeout(resolve, EXISTING_GENERATION_POLL_MS));
       row = await this.existingRequest(prepared.ctx, prepared.requestId);
+      await recoverExpiredReplay();
     }
     await emitSnapshot();
     return row;
   }
 
   async prepareGeneration(body) {
+    if (aiRuntimeClosing) {
+      throw new AppError("AI 服务正在重启，请稍后再试", {
+        statusCode: 503,
+        errCode: "AI_SERVER_RESTARTED",
+      });
+    }
     const { ctx, settings } = await this.requireEnabledAi(body);
     const content = String(body.content || "").trim();
     if (!content) throw new AppError("请输入问题", { statusCode: 400, errCode: "AI_CONTENT_REQUIRED" });
     if (content.length > 4000) throw new AppError("单次输入不能超过 4000 个字", { statusCode: 400, errCode: "AI_CONTENT_TOO_LONG" });
     const requestId = requestIdOf(body.requestId);
     const model = await this.modelForChat(ctx, settings, body.modelId);
-    assertReasoningModeSupported(resolveReasoningMode(model, model, requestedReasoningMode(body)));
+    const reasoningMode = resolveReasoningMode(model, model, requestedReasoningMode(body));
+    assertReasoningModeSupported(reasoningMode);
     await this.assertConsent(ctx, model);
     const already = await this.existingRequest(ctx, requestId);
     if (already) {
@@ -1577,15 +2276,33 @@ class AiService {
           errCode: "AI_REQUEST_ALREADY_USED",
         });
       }
-      return { replay: already, ctx, settings, model, requestId };
+      return { replay: already, ctx, settings, model, reasoningMode, requestId };
     }
+    const conversationId = body.conversationId ? uuidOf(body.conversationId, "对话") : "";
+    if (conversationId) {
+      const existingConversation = await this.db.query(
+        `SELECT id FROM incircle_ai_conversations
+         WHERE id = $1 AND circle_id = $2 AND user_id = $3 LIMIT 1`,
+        [conversationId, ctx.circleId, ctx.auth.user.id]
+      );
+      if (!existingConversation.rows[0]) {
+        throw new AppError("对话不存在", { statusCode: 404, errCode: "AI_CONVERSATION_NOT_FOUND" });
+      }
+    }
+    const generationPlan = await this.buildGenerationPlan({
+      conversationId,
+      ctx,
+      settings,
+      model,
+      content,
+      reasoningMode,
+    });
     await this.checkContentSecurity({ content, openid: ctx.auth.user.openid });
 
     try {
       return await this.db.withTransaction(async () => {
         let conversation;
-        if (body.conversationId) {
-          const conversationId = uuidOf(body.conversationId, "对话");
+        if (conversationId) {
           const result = await this.db.query(
             `SELECT * FROM incircle_ai_conversations
              WHERE id = $1 AND circle_id = $2 AND user_id = $3 FOR UPDATE`,
@@ -1657,11 +2374,18 @@ class AiService {
           `
           INSERT INTO incircle_ai_messages (
             circle_id, conversation_id, user_id, role, status, reply_to_message_id,
-            model_id_snapshot, model_name_snapshot, provider_name_snapshot
-          ) VALUES ($1,$2,$3,'assistant','generating',$4,$5,$6,$7)
+            model_id_snapshot, model_name_snapshot, provider_name_snapshot,
+            generation_owner_id, generation_lease_expires_at
+          ) VALUES ($1,$2,$3,'assistant','generating',$4,$5,$6,$7,$8,
+            now() + ($9::int * interval '1 millisecond'))
           RETURNING *
           `,
-          [ctx.circleId, conversation.id, ctx.auth.user.id, userMessageResult.rows[0].id, model.model_id, model.display_name || model.model_id, model.provider_name]
+          [
+            ctx.circleId, conversation.id, ctx.auth.user.id, userMessageResult.rows[0].id,
+            model.model_id, model.display_name || model.model_id, model.provider_name,
+            generationOwnerId,
+            GENERATION_LEASE_MS,
+          ]
         );
         await this.db.query(
           `UPDATE incircle_ai_conversations SET model_id = $2,
@@ -1671,14 +2395,14 @@ class AiService {
           [conversation.id, model.id, titleFromContent(content), model.display_name || model.model_id, model.provider_name]
         );
         return {
-          ctx, settings, model, requestId, conversation,
+          ctx, settings, model, reasoningMode, generationPlan, requestId, conversation,
           userMessage: userMessageResult.rows[0], assistantMessage: assistantResult.rows[0], content,
         };
       });
     } catch (error) {
       if (error && error.code === "23505") {
         const replay = await this.existingRequest(ctx, requestId);
-        if (replay) return { replay, ctx, settings, model, requestId };
+        if (replay) return { replay, ctx, settings, model, reasoningMode, requestId };
         throw new AppError("当前对话正在生成回答", { statusCode: 409, errCode: "AI_CONVERSATION_BUSY" });
       }
       throw error;
@@ -1689,8 +2413,10 @@ class AiService {
     return this.db.query(
       `UPDATE incircle_ai_messages
        SET content = $2, reasoning_content = $3,
-         reasoning_duration_ms = GREATEST(reasoning_duration_ms, $4)
-       WHERE id = $1 AND circle_id = $5 AND user_id = $6 AND status = 'generating'`,
+         reasoning_duration_ms = GREATEST(reasoning_duration_ms, $4),
+         generation_lease_expires_at = now() + ($8::int * interval '1 millisecond')
+       WHERE id = $1 AND circle_id = $5 AND user_id = $6 AND status = 'generating'
+         AND generation_owner_id = $7`,
       [
         prepared.assistantMessage.id,
         content || "",
@@ -1698,6 +2424,8 @@ class AiService {
         Math.min(3600000, Math.max(0, Number(reasoningDurationMs || 0))),
         prepared.ctx.circleId,
         prepared.ctx.auth.user.id,
+        generationOwnerId,
+        GENERATION_LEASE_MS,
       ]
     );
   }
@@ -1708,29 +2436,54 @@ class AiService {
     const outputTokens = Number(options.outputTokens || 0);
     const reasoningContent = normalizedReasoningContent(options.reasoningContent);
     const reasoningDurationMs = Math.min(3600000, Math.max(0, Number(options.reasoningDurationMs || 0)));
-    await this.db.withTransaction(async () => {
+    return this.db.withTransaction(async () => {
       const conversation = await this.db.query(
         "SELECT id FROM incircle_ai_conversations WHERE id = $1 AND circle_id = $2 AND user_id = $3 FOR UPDATE",
         [prepared.conversation.id, prepared.ctx.circleId, prepared.ctx.auth.user.id]
       );
-      if (!conversation.rows[0]) return;
-      await this.db.query(
+      if (!conversation.rows[0]) return { status: "failed", messageStatus: "missing", errorCode: "AI_CONVERSATION_NOT_FOUND" };
+      const messageStatus = status === "success" ? "complete" : status;
+      const updated = await this.db.query(
         `
         UPDATE incircle_ai_messages SET content = $2, reasoning_content = $3,
           reasoning_duration_ms = $4, status = $5, input_tokens = $6,
-          output_tokens = $7, error_code = $8 WHERE id = $1
+          output_tokens = $7, error_code = $8,
+          generation_owner_id = '', generation_lease_expires_at = NULL
+        WHERE id = $1 AND circle_id = $9 AND user_id = $10
+          AND status = 'generating' AND generation_owner_id = $11
+        RETURNING status, error_code
         `,
         [
           prepared.assistantMessage.id,
           options.content || "",
           reasoningContent,
           reasoningDurationMs,
-          status === "success" ? "complete" : status,
+          messageStatus,
           inputTokens,
           outputTokens,
           options.errorCode || "",
+          prepared.ctx.circleId,
+          prepared.ctx.auth.user.id,
+          generationOwnerId,
         ]
       );
+      let terminal = updated.rows[0] || null;
+      if (!terminal) {
+        const current = await this.db.query(
+          `SELECT status, error_code FROM incircle_ai_messages
+           WHERE id = $1 AND circle_id = $2 AND user_id = $3 LIMIT 1`,
+          [prepared.assistantMessage.id, prepared.ctx.circleId, prepared.ctx.auth.user.id]
+        );
+        terminal = current.rows[0] || null;
+      }
+      if (!terminal) {
+        return { status: "failed", messageStatus: "missing", errorCode: "AI_MESSAGE_NOT_FOUND" };
+      }
+      if (terminal.status === "generating") {
+        return { status: "generating", messageStatus: "generating", errorCode: "AI_CONVERSATION_BUSY" };
+      }
+      const persistedStatus = terminal.status === "complete" ? "success" : terminal.status;
+      const persistedErrorCode = terminal.error_code || options.errorCode || "";
       await this.db.query(
         "UPDATE incircle_ai_conversations SET last_message_at = now() WHERE id = $1",
         [prepared.conversation.id]
@@ -1746,10 +2499,29 @@ class AiService {
         [
           prepared.ctx.circleId, prepared.ctx.auth.user.id, prepared.conversation.id,
           prepared.model.provider_id, prepared.model.id, prepared.requestId, beijingDateKey(),
-          status, inputTokens, outputTokens, Number(options.latencyMs || 0), options.errorCode || "",
+          persistedStatus, inputTokens, outputTokens, Number(options.latencyMs || 0), persistedErrorCode,
         ]
       );
+      return {
+        status: persistedStatus,
+        messageStatus: terminal.status,
+        errorCode: persistedErrorCode,
+      };
     });
+  }
+
+  async rememberCompatibleOutputLimit(prepared, maxOutputTokens) {
+    const limit = Math.max(
+      AI_CONTEXT_MIN_OUTPUT_TOKENS,
+      Math.min(AI_OUTPUT_PLATFORM_MAX_TOKENS, Number(maxOutputTokens || 0))
+    );
+    await this.db.query(
+      `UPDATE incircle_ai_models
+       SET max_output_tokens = $3, max_output_tokens_source = 'compatibility', updated_at = now()
+       WHERE id = $1 AND circle_id = $2
+         AND max_output_tokens = 0 AND max_output_tokens_source = ''`,
+      [prepared.model.id, prepared.ctx.circleId, limit]
+    );
   }
 
   async chatStream(body, emit, signal) {
@@ -1758,7 +2530,8 @@ class AiService {
     await emit({ type: "ping" });
     const reasoningRequested = requestedReasoningMode(body);
     const prepared = await this.prepareGeneration(body);
-    const reasoningMode = resolveReasoningMode(prepared.model, prepared.model, reasoningRequested);
+    const reasoningMode = prepared.reasoningMode
+      || resolveReasoningMode(prepared.model, prepared.model, reasoningRequested);
     assertReasoningModeSupported(reasoningMode);
     const reasoningEnabled = reasoningMode.enabled;
     if (prepared.replay) {
@@ -1840,11 +2613,16 @@ class AiService {
       reasoningMode: reasoningMode.selection,
       startedAt: prepared.assistantMessage.created_at || null,
     });
-    const context = await this.generationContext(
-      prepared.conversation.id,
-      prepared.ctx,
-      prepared.userMessage.id
-    );
+    const generationPlan = prepared.generationPlan || await this.buildGenerationPlan({
+      conversationId: prepared.conversation.id,
+      currentUserMessageId: prepared.userMessage.id,
+      ctx: prepared.ctx,
+      settings: prepared.settings,
+      model: prepared.model,
+      content: prepared.content || String(body && body.content || ""),
+      reasoningMode,
+    });
+    const context = generationPlan.messages;
     const apiKey = decryptCredential(this.config, prepared.model.credential_ciphertext);
     const started = Date.now();
     let pending = "";
@@ -1859,6 +2637,9 @@ class AiService {
     let answerStartedAt = 0;
     let firstOutputAt = 0;
     let directAnswerRetryAttempted = false;
+    let outputCompatibilityFallbackAttempted = false;
+    let outputCompatibilityFallbackSucceeded = false;
+    let outputCompatibilityInitialStatus = 0;
     let outputSecurityChecks = 0;
     let emittedTextFrames = 0;
     let emittedReasoningFrames = 0;
@@ -1882,10 +2663,7 @@ class AiService {
       parseErrors: 0,
       doneSeen: false,
     };
-    const configuredMaxOutputTokens = Math.min(
-      8192,
-      Math.max(128, Number(prepared.settings.max_output_tokens || DEFAULT_SETTINGS.maxOutputTokens))
-    );
+    let providerMaxOutputTokens = generationPlan.maxOutputTokens;
     const currentReasoningDurationMs = () => {
       if (!reasoningEnabled || (!reasoningObservedVisibleChars && !hasVisibleReasoning(reasoningAccepted))) return 0;
       const finishedAt = answerStartedAt || Date.now();
@@ -2089,61 +2867,94 @@ class AiService {
         partialFlushTimers[kind].unref();
       }
     };
+    const runPrimaryCompletion = (maxTokens, stats) => this.runProviderCompletion({
+      provider: prepared.model,
+      model: prepared.model,
+      apiKey,
+      messages: context,
+      systemPrompt: generationPlan.systemPrompt,
+      maxTokens,
+      reasoningMode: reasoningMode.selection,
+      timeoutMs: this.config.aiProviderTimeoutMs,
+      signal,
+      stats,
+      onReasoning: async (delta) => {
+        if (outputFailure) throw outputFailure;
+        const reasoningDelta = String(delta || "");
+        reasoningObservedChars += reasoningDelta.length;
+        reasoningObservedVisibleChars += reasoningDelta.replace(/[\s\u200b-\u200d\u2060\ufeff]/g, "").length;
+        if (reasoningObservedChars > 48000) {
+          throw new AppError("模型思考内容过长，已停止生成", { statusCode: 502, errCode: "AI_OUTPUT_TOO_LONG" });
+        }
+        if (!reasoningEnabled) return;
+        reasoningPending += appendPendingFrame(reasoningPendingFrames, reasoningDelta);
+        maxQueuedOutputChars = Math.max(maxQueuedOutputChars, pending.length + reasoningPending.length);
+        if (reasoningAccepted.length + reasoningPending.length > 48000) {
+          throw new AppError("模型思考内容过长，已停止生成", { statusCode: 502, errCode: "AI_OUTPUT_TOO_LONG" });
+        }
+        requestOutputDrain("reasoning", false);
+        schedulePartialFlush("reasoning");
+        await applyOutputBackpressure();
+      },
+      onDelta: async (delta) => {
+        if (outputFailure) throw outputFailure;
+        if (!bodyStarted) {
+          bodyStarted = true;
+          clearPartialFlush("reasoning");
+          requestOutputDrain("reasoning", true);
+        }
+        pending += appendPendingFrame(pendingFrames, delta);
+        maxQueuedOutputChars = Math.max(maxQueuedOutputChars, pending.length + reasoningPending.length);
+        if (accepted.length + pending.length > 36000) {
+          throw new AppError("模型回答过长，已停止生成", { statusCode: 502, errCode: "AI_OUTPUT_TOO_LONG" });
+        }
+        requestOutputDrain("content", false);
+        schedulePartialFlush("content");
+        await applyOutputBackpressure();
+      },
+    });
     const heartbeatTimer = setInterval(() => {
       scheduleCheckpoint(0);
     }, this.generationHeartbeatMs);
     if (typeof heartbeatTimer.unref === "function") heartbeatTimer.unref();
     try {
-      usage = await this.runProviderCompletion({
-        provider: prepared.model,
-        model: prepared.model,
-        apiKey,
-        messages: context,
-        systemPrompt: `${prepared.settings.system_prompt || DEFAULT_SETTINGS.systemPrompt}${
-          reasoningMode.selection === "off"
-            ? "\n请直接给出最终答案，不要输出分析过程、思考标签或中间推理。"
-            : "\n完成分析后必须预留足够输出额度给出完整最终回答，不能只返回思考过程。"
-        }`,
-        maxTokens: configuredMaxOutputTokens,
-        reasoningMode: reasoningMode.selection,
-        timeoutMs: this.config.aiProviderTimeoutMs,
-        signal,
-        stats: providerStats,
-        onReasoning: async (delta) => {
-          if (outputFailure) throw outputFailure;
-          const reasoningDelta = String(delta || "");
-          reasoningObservedChars += reasoningDelta.length;
-          reasoningObservedVisibleChars += reasoningDelta.replace(/[\s\u200b-\u200d\u2060\ufeff]/g, "").length;
-          if (reasoningObservedChars > 48000) {
-            throw new AppError("模型思考内容过长，已停止生成", { statusCode: 502, errCode: "AI_OUTPUT_TOO_LONG" });
-          }
-          if (!reasoningEnabled) return;
-          reasoningPending += appendPendingFrame(reasoningPendingFrames, reasoningDelta);
-          maxQueuedOutputChars = Math.max(maxQueuedOutputChars, pending.length + reasoningPending.length);
-          if (reasoningAccepted.length + reasoningPending.length > 48000) {
-            throw new AppError("模型思考内容过长，已停止生成", { statusCode: 502, errCode: "AI_OUTPUT_TOO_LONG" });
-          }
-          requestOutputDrain("reasoning", false);
-          schedulePartialFlush("reasoning");
-          await applyOutputBackpressure();
-        },
-        onDelta: async (delta) => {
-          if (outputFailure) throw outputFailure;
-          if (!bodyStarted) {
-            bodyStarted = true;
-            clearPartialFlush("reasoning");
-            requestOutputDrain("reasoning", true);
-          }
-          pending += appendPendingFrame(pendingFrames, delta);
-          maxQueuedOutputChars = Math.max(maxQueuedOutputChars, pending.length + reasoningPending.length);
-          if (accepted.length + pending.length > 36000) {
-            throw new AppError("模型回答过长，已停止生成", { statusCode: 502, errCode: "AI_OUTPUT_TOO_LONG" });
-          }
-          requestOutputDrain("content", false);
-          schedulePartialFlush("content");
-          await applyOutputBackpressure();
-        },
-      });
+      try {
+        usage = await runPrimaryCompletion(providerMaxOutputTokens, providerStats);
+      } catch (error) {
+        const canUseCompatibilityFallback = !generationPlan.outputCapabilityKnown
+          && providerMaxOutputTokens > AI_OUTPUT_COMPATIBILITY_FALLBACK_TOKENS
+          && error && error.errCode === "AI_PROVIDER_OUTPUT_LIMIT_UNSUPPORTED"
+          && !providerStats.events
+          && !providerStats.textDeltas
+          && !providerStats.reasoningDeltas
+          && !pending
+          && !reasoningPending
+          && !accepted
+          && !reasoningAccepted
+          && !reasoningObservedChars;
+        if (!canUseCompatibilityFallback) throw error;
+        outputCompatibilityFallbackAttempted = true;
+        outputCompatibilityInitialStatus = Number(providerStats.statusCode || (error.details && error.details.providerStatus) || 0);
+        providerMaxOutputTokens = Math.min(
+          AI_OUTPUT_COMPATIBILITY_FALLBACK_TOKENS,
+          generationPlan.maxOutputTokens
+        );
+        const fallbackStats = {
+          protocol: prepared.model.protocol || "",
+          statusCode: 0,
+          contentType: "",
+          responseBytes: 0,
+          events: 0,
+          textDeltas: 0,
+          reasoningDeltas: 0,
+          parseErrors: 0,
+          doneSeen: false,
+        };
+        usage = await runPrimaryCompletion(providerMaxOutputTokens, fallbackStats);
+        Object.assign(providerStats, fallbackStats);
+        outputCompatibilityFallbackSucceeded = true;
+        await this.rememberCompatibleOutputLimit(prepared, providerMaxOutputTokens).catch(() => {});
+      }
       clearPartialFlushes();
       requestOutputDrain("reasoning", true);
       requestOutputDrain("content", true);
@@ -2167,8 +2978,8 @@ class AiService {
           model: prepared.model,
           apiKey,
           messages: context,
-          systemPrompt: `${prepared.settings.system_prompt || DEFAULT_SETTINGS.systemPrompt}\n上一次生成只完成了分析。本次不要展示思考过程，直接给出完整、可独立阅读的最终回答。`,
-          maxTokens: Math.min(4096, configuredMaxOutputTokens),
+          systemPrompt: generationPlan.retrySystemPrompt,
+          maxTokens: Math.min(4096, providerMaxOutputTokens),
           reasoningMode: "off",
           timeoutMs: Math.min(120000, Math.max(10000, Number(this.config.aiProviderTimeoutMs || 300000))),
           signal,
@@ -2229,14 +3040,23 @@ class AiService {
         });
       }
       if (!accepted.trim()) throw new AppError("模型没有返回内容，请重试", { statusCode: 502, errCode: "AI_EMPTY_RESPONSE" });
-      const inputTokens = usage.inputTokens || usageEstimate(context.map((message) => message.content).join("\n"));
+      const inputTokens = usage.inputTokens
+        || generationPlan.estimatedInputTokens
+        || usageEstimate(context.map((message) => message.content).join("\n"));
       const outputTokens = usage.outputTokens || usageEstimate(accepted) + Math.ceil(reasoningObservedChars / 4);
       const savedReasoning = reasoningEnabled ? normalizedReasoningContent(reasoningAccepted) : "";
       const reasoningDurationMs = currentReasoningDurationMs();
-      await this.saveGenerationResult(prepared, {
+      const finalState = await this.saveGenerationResult(prepared, {
         status: "success", content: accepted, reasoningContent: savedReasoning,
         reasoningDurationMs, inputTokens, outputTokens, latencyMs: Date.now() - started,
       });
+      if (finalState && finalState.status !== "success") {
+        const wasCancelled = finalState.status === "cancelled";
+        throw new AppError(wasCancelled ? "回答已停止" : "回答生成状态已结束，请重新生成", {
+          statusCode: wasCancelled ? 409 : 503,
+          errCode: finalState.errorCode || (wasCancelled ? "AI_CANCELLED" : "AI_GENERATION_STATE_CHANGED"),
+        });
+      }
       if (this.request && this.request.log && typeof this.request.log.info === "function") {
         this.request.log.info({
           aiStream: {
@@ -2249,6 +3069,19 @@ class AiService {
             firstProviderChunkMs: providerStats.firstChunkAt ? providerStats.firstChunkAt - started : null,
             firstProviderDeltaMs: providerStats.firstDeltaAt ? providerStats.firstDeltaAt - started : null,
             firstClientOutputMs: firstOutputAt ? firstOutputAt - started : null,
+            contextWindow: generationPlan.contextWindow,
+            contextWindowSource: generationPlan.contextWindowSource,
+            inputTokenBudget: generationPlan.inputTokenBudget,
+            estimatedInputTokens: generationPlan.estimatedInputTokens,
+            configuredMaxOutputTokens: generationPlan.configuredMaxOutputTokens,
+            modelMaxOutputTokens: generationPlan.modelMaxOutputTokens,
+            outputCapabilitySource: generationPlan.outputCapabilitySource,
+            plannedMaxOutputTokens: generationPlan.maxOutputTokens,
+            providerMaxOutputTokens,
+            outputCompatibilityFallbackAttempted,
+            outputCompatibilityFallbackSucceeded,
+            outputCompatibilityInitialStatus,
+            selectedHistoryMessages: generationPlan.selectedHistoryMessages,
             outputSecurityChecks,
             emittedTextFrames,
             emittedReasoningFrames,
@@ -2270,8 +3103,11 @@ class AiService {
       clearPartialFlushes();
       await drainOutput().catch(() => {});
       const cancelled = !!(
-        signal && signal.aborted && signal.reason &&
-        (signal.reason.code === "AI_USER_CANCELLED" || signal.reason.errCode === "AI_CANCELLED")
+        (error && error.errCode === "AI_CANCELLED") ||
+        (
+          signal && signal.aborted && signal.reason &&
+          (signal.reason.code === "AI_USER_CANCELLED" || signal.reason.errCode === "AI_CANCELLED")
+        )
       );
       if (outputFailure && !cancelled) error = outputFailure;
       const blocked = error.errCode === "CONTENT_SECURITY_BLOCKED";
@@ -2301,6 +3137,19 @@ class AiService {
           directAnswerRetryAttempted,
           retryStatusCode: providerStats.retryStatusCode || 0,
           retryFinishReason: providerStats.retryFinishReason || "",
+          contextWindow: generationPlan.contextWindow,
+          contextWindowSource: generationPlan.contextWindowSource,
+          inputTokenBudget: generationPlan.inputTokenBudget,
+          estimatedInputTokens: generationPlan.estimatedInputTokens,
+          configuredMaxOutputTokens: generationPlan.configuredMaxOutputTokens,
+          modelMaxOutputTokens: generationPlan.modelMaxOutputTokens,
+          outputCapabilitySource: generationPlan.outputCapabilitySource,
+          plannedMaxOutputTokens: generationPlan.maxOutputTokens,
+          providerMaxOutputTokens,
+          outputCompatibilityFallbackAttempted,
+          outputCompatibilityFallbackSucceeded,
+          outputCompatibilityInitialStatus,
+          selectedHistoryMessages: generationPlan.selectedHistoryMessages,
           outputSecurityChecks,
           emittedTextFrames,
           emittedReasoningFrames,
@@ -2335,9 +3184,11 @@ class AiService {
 module.exports = {
   aiAccessFlags,
   AiService,
+  beginAiShutdown,
   DEFAULT_SETTINGS,
   MAX_CONVERSATIONS_PER_MEMBER,
   publicModel,
   publicProvider,
+  recoverExpiredAiGenerations,
   registerActiveGeneration,
 };

@@ -2,6 +2,10 @@ const { AppError } = require("../../errors");
 const { StringDecoder } = require("string_decoder");
 const { parseHttpsUrl, readResponseText, safeHttpsRequest, validateProviderBaseUrl } = require("./network");
 
+const PROVIDER_RAW_FALLBACK_MAX_BYTES = 4 * 1024 * 1024;
+const PROVIDER_STREAM_MAX_BYTES = 8 * 1024 * 1024;
+const PROVIDER_EVENT_MAX_CHARS = 512 * 1024;
+
 const PROVIDER_PRESETS = Object.freeze({
   openai: {
     key: "openai",
@@ -798,10 +802,24 @@ function providerFinishReason(protocol, payload) {
 async function consumeEventStream(response, protocol, onDelta, stats, onReasoning) {
   const decoder = new StringDecoder("utf8");
   let pending = "";
+  let sseDataLines = [];
+  let sseDataChars = 0;
   let usage = { inputTokens: 0, outputTokens: 0 };
   const metrics = stats || {};
   const rawChunks = [];
   let rawBytes = 0;
+  let totalBytes = 0;
+  const clearRawFallback = () => {
+    rawChunks.length = 0;
+    rawBytes = 0;
+  };
+  const streamTooLarge = () => {
+    if (response && typeof response.destroy === "function") response.destroy();
+    throw new AppError("供应商流式响应过大", {
+      statusCode: 502,
+      errCode: "AI_PROVIDER_RESPONSE_TOO_LARGE",
+    });
+  };
   const consumePayload = async (payload) => {
     metrics.events = Number(metrics.events || 0) + 1;
     if (payload && payload.error) {
@@ -817,6 +835,7 @@ async function consumeEventStream(response, protocol, onDelta, stats, onReasonin
     const done = providerStreamDone(protocol, payload);
     if (delta.text || delta.reasoning || delta.usage || done) {
       metrics.recognizedEvents = Number(metrics.recognizedEvents || 0) + 1;
+      clearRawFallback();
     }
     if (delta.usage) usage = normalizedUsage(protocol, delta.usage);
     if (finishReason) metrics.finishReason = finishReason.slice(0, 120);
@@ -834,13 +853,8 @@ async function consumeEventStream(response, protocol, onDelta, stats, onReasonin
     }
     return false;
   };
-  const consumeLine = async (line) => {
-    const value = String(line || "").trim();
-    if (!value || value.startsWith(":")) return;
-    let data = "";
-    if (/^data\s*:/i.test(value)) data = value.replace(/^data\s*:/i, "").trim();
-    else if (value.startsWith("{") || value.startsWith("[")) data = value;
-    else return;
+  const consumeData = async (value) => {
+    const data = String(value || "").trim();
     if (!data) return;
     if (data === "[DONE]") {
       metrics.doneSeen = true;
@@ -855,18 +869,66 @@ async function consumeEventStream(response, protocol, onDelta, stats, onReasonin
     }
     return consumePayload(payload);
   };
+  const completeJsonData = (value) => {
+    const data = String(value || "").trim();
+    if (data === "[DONE]") return true;
+    if (!data || (!data.startsWith("{") && !data.startsWith("["))) return false;
+    try {
+      JSON.parse(data);
+      return true;
+    } catch (error) {
+      return false;
+    }
+  };
+  const flushSseEvent = async () => {
+    if (!sseDataLines.length) return false;
+    const data = sseDataLines.join("\n");
+    sseDataLines = [];
+    sseDataChars = 0;
+    return consumeData(data);
+  };
+  const consumeLine = async (line) => {
+    const rawLine = String(line || "").replace(/\r$/, "");
+    if (!rawLine) return flushSseEvent();
+    if (rawLine.startsWith(":")) return false;
+    const colon = rawLine.indexOf(":");
+    const field = (colon >= 0 ? rawLine.slice(0, colon) : rawLine).trim().toLowerCase();
+    if (field === "data") {
+      if (sseDataLines.length && completeJsonData(sseDataLines.join("\n"))) {
+        if (await flushSseEvent()) return true;
+      }
+      let value = colon >= 0 ? rawLine.slice(colon + 1) : "";
+      if (value.startsWith(" ")) value = value.slice(1);
+      sseDataChars += value.length + (sseDataLines.length ? 1 : 0);
+      if (sseDataChars > PROVIDER_EVENT_MAX_CHARS) streamTooLarge();
+      sseDataLines.push(value);
+      return false;
+    }
+    if (["event", "id", "retry"].includes(field)) return false;
+    const value = rawLine.trim();
+    if (!sseDataLines.length && (value.startsWith("{") || value.startsWith("["))) {
+      return consumeData(value);
+    }
+    return false;
+  };
   for await (const chunk of response) {
     const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
     metrics.networkChunks = Number(metrics.networkChunks || 0) + 1;
     if (!metrics.firstChunkAt) metrics.firstChunkAt = Date.now();
     metrics.responseBytes = Number(metrics.responseBytes || 0) + buffer.length;
-    if (rawBytes + buffer.length <= 4 * 1024 * 1024) {
+    totalBytes += buffer.length;
+    if (totalBytes > PROVIDER_STREAM_MAX_BYTES) streamTooLarge();
+    if (!metrics.recognizedEvents && rawBytes + buffer.length > PROVIDER_RAW_FALLBACK_MAX_BYTES) {
+      streamTooLarge();
+    }
+    if (!metrics.recognizedEvents) {
       rawChunks.push(buffer);
       rawBytes += buffer.length;
     }
     pending += decoder.write(buffer);
     const lines = pending.split(/\r?\n/);
     pending = lines.pop() || "";
+    if (pending.length > PROVIDER_EVENT_MAX_CHARS) streamTooLarge();
     for (const line of lines) {
       if (await consumeLine(line)) return usage;
     }
@@ -875,6 +937,7 @@ async function consumeEventStream(response, protocol, onDelta, stats, onReasonin
   for (const line of pending.split(/\r?\n/)) {
     if (await consumeLine(line)) return usage;
   }
+  if (await flushSseEvent()) return usage;
   if (!metrics.recognizedEvents && rawChunks.length) {
     let payload;
     try {
@@ -890,18 +953,77 @@ async function consumeEventStream(response, protocol, onDelta, stats, onReasonin
   return usage;
 }
 
-async function providerError(response) {
+function providerErrorFields(value) {
+  const sourceText = String(value || "").slice(0, 128 * 1024);
+  let payload = null;
+  try {
+    payload = JSON.parse(sourceText);
+  } catch (error) {
+    payload = null;
+  }
+  const source = payload && typeof payload === "object"
+    ? payload.error && typeof payload.error === "object" ? payload.error : payload
+    : {};
+  return {
+    code: String(source.code || source.type || "").slice(0, 120),
+    param: String(source.param || source.parameter || "").slice(0, 120),
+    message: String(source.message || source.error || sourceText).slice(0, 1000),
+  };
+}
+
+function providerOutputLimitRejected(statusCode, fields) {
+  if (![400, 422].includes(Number(statusCode))) return false;
+  const source = fields || {};
+  const parameter = `${source.code || ""} ${source.param || ""}`;
+  const message = String(source.message || "");
+  const tokenField = /(?:max[_\s-]?(?:output[_\s-]?|completion[_\s-]?)?tokens?|output[_\s-]?token[_\s-]?limit)/i;
+  const rejection = /(?:too\s+(?:large|high)|maximum|exceed|must\s+be|less\s+than|at\s+most|out\s+of\s+range|unsupported|invalid|limit|不能|不得|超过|最大|上限|范围)/i;
+  return tokenField.test(parameter) || (tokenField.test(message) && rejection.test(message));
+}
+
+function providerOutputTokenLimit(fields, requestedMaxTokens) {
+  const source = fields || {};
+  const message = String(source.message || "").replace(/,/g, "");
+  const patterns = [
+    /(?:maximum|max(?:imum)?|limit|at\s+most|less\s+than\s+or\s+equal\s+to|上限|最大|最多|不超过)[^\d]{0,60}(\d{3,7})/i,
+    /(?:max[_\s-]?(?:output[_\s-]?|completion[_\s-]?)?tokens?)[^\d]{0,60}(\d{3,7})/i,
+  ];
+  for (const pattern of patterns) {
+    const matched = pattern.exec(message);
+    const value = Number(matched && matched[1]);
+    if (Number.isInteger(value) && value >= 128 && value <= 2000000) return value;
+  }
+  const requested = Number(requestedMaxTokens || 0);
+  const candidates = Array.from(message.matchAll(/\b\d{3,7}\b/g))
+    .map((matched) => Number(matched[0]))
+    .filter((value) => Number.isInteger(value) && value >= 128 && value <= 2000000 && value !== requested);
+  return candidates.length ? Math.min(...candidates) : 0;
+}
+
+async function providerError(response, options) {
   const statusCode = Number(response.statusCode || 502);
-  response.resume();
+  const responseText = await readResponseText(response, 128 * 1024);
+  const fields = providerErrorFields(responseText);
   let code = "AI_PROVIDER_FAILED";
   if (statusCode === 401 || statusCode === 403) code = "AI_PROVIDER_AUTH_FAILED";
   else if (statusCode === 404) code = "AI_MODEL_NOT_FOUND";
   else if (statusCode === 429) code = "AI_PROVIDER_RATE_LIMITED";
+  else if (providerOutputLimitRejected(statusCode, fields)) code = "AI_PROVIDER_OUTPUT_LIMIT_UNSUPPORTED";
   throw new AppError(
     code === "AI_PROVIDER_AUTH_FAILED" ? "供应商拒绝了 API Key，请检查配置" :
       code === "AI_MODEL_NOT_FOUND" ? "供应商没有找到这个模型" :
-        code === "AI_PROVIDER_RATE_LIMITED" ? "供应商请求过于频繁，请稍后再试" : "AI 供应商暂时不可用",
-    { statusCode: 502, errCode: code, details: { providerStatus: statusCode } }
+        code === "AI_PROVIDER_RATE_LIMITED" ? "供应商请求过于频繁，请稍后再试" :
+          code === "AI_PROVIDER_OUTPUT_LIMIT_UNSUPPORTED" ? "供应商不支持当前输出额度" : "AI 供应商暂时不可用",
+    {
+      statusCode: 502,
+      errCode: code,
+      details: {
+        providerStatus: statusCode,
+        providerErrorCode: fields.code,
+        providerParameter: fields.param,
+        providerTokenLimit: providerOutputTokenLimit(fields, options && options.requestedMaxTokens),
+      },
+    }
   );
 }
 
@@ -946,7 +1068,9 @@ async function streamProviderCompletion(options) {
       });
       stats.statusCode = Number(response.statusCode || 0);
     }
-    if (response.statusCode < 200 || response.statusCode >= 300) return providerError(response);
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      return providerError(response, { requestedMaxTokens: options.maxTokens });
+    }
     const contentType = String(response.headers["content-type"] || "").toLowerCase();
     stats.contentType = contentType.slice(0, 120);
     return await consumeEventStream(response, options.provider.protocol, options.onDelta, stats, options.onReasoning);
@@ -999,6 +1123,54 @@ function providerModelMetadata(item) {
   return metadata;
 }
 
+function positiveModelTokenLimit(values) {
+  const sources = Array.isArray(values) ? values : [];
+  for (const value of sources) {
+    const parsed = Number(value);
+    if (Number.isInteger(parsed) && parsed > 0 && parsed <= 2000000) return parsed;
+  }
+  return 0;
+}
+
+function providerModelTokenCapabilities(item) {
+  const source = item && typeof item === "object" ? item : {};
+  const limits = source.limits && typeof source.limits === "object" ? source.limits : {};
+  const topProvider = source.top_provider && typeof source.top_provider === "object" ? source.top_provider : {};
+  const architecture = source.architecture && typeof source.architecture === "object" ? source.architecture : {};
+  return {
+    contextWindow: positiveModelTokenLimit([
+      source.context_window,
+      source.contextWindow,
+      source.context_length,
+      source.contextLength,
+      source.max_context_length,
+      source.maxContextLength,
+      source.inputTokenLimit,
+      source.input_token_limit,
+      source.max_input_tokens,
+      source.max_model_len,
+      limits.context_window,
+      limits.contextWindow,
+      limits.input_tokens,
+      topProvider.context_length,
+      architecture.context_length,
+    ]),
+    maxOutputTokens: positiveModelTokenLimit([
+      source.max_output_tokens,
+      source.maxOutputTokens,
+      source.outputTokenLimit,
+      source.output_token_limit,
+      source.max_completion_tokens,
+      source.maxCompletionTokens,
+      limits.max_output_tokens,
+      limits.maxOutputTokens,
+      limits.output_tokens,
+      topProvider.max_completion_tokens,
+      topProvider.max_output_tokens,
+    ]),
+  };
+}
+
 async function listProviderModels(provider, apiKey, options) {
   if (provider.protocol === "azure") {
     throw new AppError("Azure OpenAI 请手动添加部署名称", {
@@ -1025,10 +1197,14 @@ async function listProviderModels(provider, apiKey, options) {
   return rows
     .map((item) => {
       const rawId = String((item && (item.id || item.name)) || "").replace(/^models\//, "").trim();
+      const tokenCapabilities = providerModelTokenCapabilities(item);
       return rawId ? {
         modelId: rawId,
         displayName: String(item.displayName || item.display_name || rawId).slice(0, 120),
-        contextWindow: Number(item.context_window || item.inputTokenLimit || 0),
+        contextWindow: tokenCapabilities.contextWindow,
+        contextWindowSource: tokenCapabilities.contextWindow ? "sync" : "",
+        maxOutputTokens: tokenCapabilities.maxOutputTokens,
+        maxOutputTokensSource: tokenCapabilities.maxOutputTokens ? "sync" : "",
         metadata: providerModelMetadata(item),
       } : null;
     })
@@ -1048,6 +1224,9 @@ module.exports = {
   normalizedUsage,
   normalizeProviderDraft,
   providerModelMetadata,
+  providerModelTokenCapabilities,
+  providerOutputLimitRejected,
+  providerOutputTokenLimit,
   providerFinishReason,
   reasoningCapability,
   resolveReasoningMode,

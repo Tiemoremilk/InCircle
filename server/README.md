@@ -77,11 +77,35 @@ Circle AI is disabled by default for every circle. A circle owner, circle super 
 - Provider requests reject HTTP, credentials in URLs, loopback, private, link-local, metadata, unsafe DNS, and unsafe redirects.
 - Text input and buffered model output use WeChat `msg_sec_check` when `AI_CONTENT_SECURITY_ENABLED=true`.
 - Chat requests use `reasoningMode=auto|on|off`. `auto` omits provider reasoning parameters, while `on` and `off` use the selected provider's native controls; unsupported explicit modes are rejected instead of being silently simulated.
+- Context windows and output limits are separate model capabilities. Context configuration supports up to 2,000,000 tokens; the circle output target defaults to 8,192 and can be set from 128 to 32,768 tokens.
+- Model capability sources are ordered as `manual > provider sync > confirmed probe/compatibility > database catalog`. Sources are persisted as `manual`, `sync`, `probe`, `compatibility`, or `catalog`, and lower-confidence sources never replace higher-confidence values.
+- Model testing never sends huge prompts to discover 128K or 1M context windows. Unknown contexts remain conservative until provider metadata, an exact database-catalog match, or a manual value is available.
+- The effective output limit is bounded by the circle target, a known model output limit, and the remaining context budget. Unknown output capability is tried optimistically; an explicit pre-stream parameter rejection may retry once at 8,192 tokens and records that compatible value.
 - Leaving or being removed from a circle physically deletes that member's AI conversations for the circle.
+
+### Model capability catalog
+
+The runtime catalog is stored in `incircle_ai_model_capability_catalog`; immutable import metadata is stored in `incircle_ai_model_catalog_releases`. The bundled `db/catalog/model-capabilities.json` release `2026-07-18.1` contains 689 text-model records across ten supported provider keys. It is a reviewed community seed based on `models.dev`, not an assertion that every entry is official or that every model in existence is covered. Runtime production processes do not scrape the internet.
+
+Catalog matching is limited to an exact built-in provider key and normalized model ID or an explicitly stored alias. Custom providers and user-defined deployment names are not guessed. Manual database rows (`source_kind=manual`) and `official`/`verified` rows are protected from lower-confidence community imports.
+
+To prepare a new release on a development machine:
+
+```powershell
+npm run ai:catalog:refresh -- --catalog-version 2026-07-18.2
+npm test
+npm run check
+```
+
+Always use a new catalog version after a release has been deployed. `npm run db:migrate` imports a new bundle transactionally. The same version and checksum is a no-op; the same version with a different checksum fails deployment instead of silently changing production data. `npm run db:catalog:import` can retry only the catalog import when needed.
 
 Before enabling AI in a public Mini Program version, update the WeChat privacy protection guide to disclose that user-entered chat content and current conversation context are sent to the selected AI provider. The first-use consent screen in the Mini Program does not replace this platform declaration.
 
 `AI_PROVIDER_TIMEOUT_MS` is an upstream idle timeout, not a total generation limit. Each provider chunk resets it, so long answers are not cut off while data is still arriving.
+
+Each generating assistant message carries a 30-second database lease owned by the current API process. Checkpoints renew the lease, expired work is recovered as failed, and `SIGTERM`/`SIGINT` marks owned work as interrupted before shutdown. Docker grants the API 30 seconds for this shutdown path.
+
+Operational provider consent remains in `incircle_ai_consents`. Immutable per-version evidence is appended to `incircle_ai_consent_acceptances`; deleting an account clears its user foreign key while retaining only the random agreement subject, provider/circle scope IDs, provider snapshots, version, and acceptance time.
 
 The production stream uses guarded output: provider deltas are read continuously, reviewed in contextual batches, and then released with their original delta boundaries. Do not disable `AI_CONTENT_SECURITY_ENABLED` in production; removing it would allow unchecked user prompts and model output to reach the Mini Program.
 

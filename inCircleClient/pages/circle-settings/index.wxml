@@ -111,39 +111,50 @@
   </view>
 
   <view class="section" wx:if="{{platformAiEnabled && aiStatus && aiStatus.canManage}}">
-    <view class="settings-card card ai-settings-card motion-section">
+    <view class="settings-card card ai-settings-card motion-section {{aiStatus.enabled ? 'is-active' : ''}}">
       <view class="section-head ai-section-head">
         <view class="ai-card-heading">
-          <view class="ai-section-icon">AI</view>
-          <view>
+          <view class="ai-section-icon">
+            <image src="/images/ui-icons/sparkles.svg" mode="aspectFit"></image>
+          </view>
+          <view class="ai-card-main">
             <view class="ai-card-title">圈内 AI 助手</view>
             <view class="ai-section-sub">{{aiStatus.enabled ? (aiStatus.configured ? "已开启 · 成员可独立对话" : "已开启 · 等待接入模型") : "当前已关闭"}}</view>
           </view>
         </view>
-        <switch
-          checked="{{aiStatus.enabled}}"
-          disabled="{{aiBusy}}"
-          color="{{themePrimary}}"
-          bindchange="toggleAi"
-        />
+        <view class="ai-switch-wrap">
+          <switch
+            class="ai-toggle"
+            checked="{{aiStatus.enabled}}"
+            disabled="{{aiBusy}}"
+            color="{{themePrimary}}"
+            bindchange="toggleAi"
+          />
+        </view>
       </view>
-      <view class="ai-setting-rows" bindtap="openAiManage">
-        <view class="ai-setting-row">
+      <view class="ai-setting-summary" bindtap="openAiManage">
+        <view class="ai-setting-metric ai-model-metric">
           <text class="ai-setting-label">默认模型</text>
           <text class="ai-setting-value">{{aiStatus.defaultModel ? aiStatus.defaultModel.displayName : "尚未配置"}}</text>
         </view>
-        <view class="ai-setting-row">
+        <view class="ai-setting-metric">
           <text class="ai-setting-label">可用模型</text>
-          <text class="ai-setting-value">{{aiStatus.modelCount}} 个</text>
+          <view class="ai-setting-value-line"><text class="ai-setting-value">{{aiStatus.modelCount}}</text><text class="ai-setting-unit">个</text></view>
         </view>
-        <view class="ai-setting-row">
-          <text class="ai-setting-label">本圈今日用量</text>
+        <view class="ai-setting-metric">
+          <text class="ai-setting-label">本圈今日</text>
           <text class="ai-setting-value">{{aiStatus.usage.circleUsed}} / {{aiStatus.circleDailyLimit}}</text>
         </view>
       </view>
       <view class="ai-manage-link" bindtap="openAiManage">
-        <text>{{aiStatus.configured ? "管理供应商、模型与额度" : aiStatus.enabled ? "功能已开启，继续接入模型" : "配置 AI 模型"}}</text>
-        <view class="ai-manage-arrow"></view>
+        <view class="ai-manage-main">
+          <view class="ai-manage-icon"><image src="/images/ui-icons/layers.svg" mode="aspectFit"></image></view>
+          <view class="ai-manage-copy-wrap">
+            <text class="ai-manage-title">模型与额度</text>
+            <text class="ai-manage-copy">{{aiStatus.configured ? "管理供应商连接与默认模型" : aiStatus.enabled ? "继续接入可用模型" : "配置后再开启圈内助手"}}</text>
+          </view>
+        </view>
+        <image class="ai-manage-arrow" src="/images/ui-icons/arrow-right.svg" mode="aspectFit"></image>
       </view>
     </view>
   </view>

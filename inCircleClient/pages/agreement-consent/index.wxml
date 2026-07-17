@@ -1,6 +1,6 @@
 <page-meta page-style="{{themeStyle}}"></page-meta>
 
-<view class="page consent-page {{themeClass}}" wx:if="{{!loading && !errorMessage}}">
+<view class="page consent-page {{themeClass}}" wx:if="{{!loading && !loadError}}">
   <view class="consent-shell">
     <view class="consent-hero">
       <view class="consent-hero-head">
@@ -69,6 +69,11 @@
           </view>
         </view>
 
+        <view class="consent-action-error" wx:if="{{actionError}}">
+          <image src="/images/ui-icons/alert.svg" mode="aspectFit"></image>
+          <text>{{actionError}}</text>
+        </view>
+
         <view class="consent-button-grid">
           <button class="consent-decline" disabled="{{submitting || leaving}}" bindtap="declineAndLogout">
             {{leaving ? '正在退出...' : '暂不同意并退出账号'}}
@@ -88,7 +93,7 @@
 <view class="page consent-state {{themeClass}}" wx:elif="{{!loading}}">
   <view class="state-icon">!</view>
   <view class="state-title">协议状态暂时无法读取</view>
-  <view class="state-copy">{{errorMessage}}</view>
+  <view class="state-copy">{{loadError}}</view>
   <button class="primary-btn state-action" bindtap="retryLoad">重新加载</button>
 </view>
 

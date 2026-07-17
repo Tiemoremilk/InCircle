@@ -81,6 +81,20 @@
           <view class="ai-ui-label-row"><view class="ai-ui-label">显示名称</view><view class="ai-ui-field-meta">选填</view></view>
           <input class="ai-ui-control" adjust-position="{{true}}" cursor-spacing="24" value="{{draft.displayName}}" data-field="displayName" bindinput="onDraftInput" placeholder="留空则使用模型 ID" />
         </view>
+        <view class="manual-capability-head">
+          <view class="manual-capability-title">模型能力</view>
+          <view class="manual-capability-copy">留空时由模型同步或测试识别，支持 1M 上下文</view>
+        </view>
+        <view class="capability-input-grid">
+          <view class="capability-input-field">
+            <view class="ai-ui-label-row"><view class="ai-ui-label">上下文窗口</view><view class="ai-ui-field-meta">Token</view></view>
+            <input class="ai-ui-control capability-input" type="number" maxlength="7" adjust-position="{{true}}" cursor-spacing="24" value="{{draft.contextWindow}}" data-field="contextWindow" bindinput="onDraftInput" placeholder="自动识别" />
+          </view>
+          <view class="capability-input-field">
+            <view class="ai-ui-label-row"><view class="ai-ui-label">最大输出</view><view class="ai-ui-field-meta">Token</view></view>
+            <input class="ai-ui-control capability-input" type="number" maxlength="7" adjust-position="{{true}}" cursor-spacing="24" value="{{draft.maxOutputTokens}}" data-field="maxOutputTokens" bindinput="onDraftInput" placeholder="自动识别" />
+          </view>
+        </view>
         <view class="primary-btn add-model {{addBusy || testingModelId || modelBusyId ? 'disabled' : ''}}" bindtap="addModel">{{addBusy ? "添加中..." : "添加模型"}}</view>
       </view>
     </view>
@@ -131,10 +145,66 @@
           </view>
         </view>
 
+        <view class="model-capability-section {{editingModelId == item.id ? 'editing' : ''}}">
+          <view class="model-capability-head">
+            <view class="model-capability-title">模型能力</view>
+            <view class="capability-edit {{editingModelId == item.id ? 'active' : ''}} {{modelBusyId || testingModelId ? 'disabled' : ''}}" data-id="{{item.id}}" bindtap="openCapabilityEditor">{{editingModelId == item.id ? "编辑中" : "编辑"}}</view>
+          </view>
+          <view class="model-capability-metrics">
+            <view class="model-capability-item">
+              <view class="model-capability-label-row">
+                <text class="model-capability-label">上下文窗口</text>
+                <text class="model-capability-source {{item.contextWindow ? '' : 'pending'}}">{{item.contextWindowSourceText}}</text>
+              </view>
+              <view class="model-capability-value-row">
+                <text class="model-capability-value {{item.contextWindow ? '' : 'pending'}}">{{item.contextWindowText}}</text>
+                <text class="model-capability-unit" wx:if="{{item.contextWindow}}">Token</text>
+              </view>
+            </view>
+            <view class="model-capability-item">
+              <view class="model-capability-label-row">
+                <text class="model-capability-label">最大输出</text>
+                <text class="model-capability-source {{item.maxOutputTokens ? '' : 'pending'}}">{{item.maxOutputTokensSourceText}}</text>
+              </view>
+              <view class="model-capability-value-row">
+                <text class="model-capability-value {{item.maxOutputTokens ? '' : 'pending'}}">{{item.maxOutputTokensText}}</text>
+                <text class="model-capability-unit" wx:if="{{item.maxOutputTokens}}">Token</text>
+              </view>
+            </view>
+          </view>
+
+          <view class="model-capability-editor" wx:if="{{editingModelId == item.id}}">
+            <view class="capability-editor-head">
+              <view class="capability-editor-title">校准能力参数</view>
+              <view class="capability-editor-mode">留空由系统识别</view>
+            </view>
+            <view class="capability-input-grid editor-grid">
+              <view class="capability-input-field">
+                <view class="capability-field-label">上下文窗口</view>
+                <view class="capability-input-shell">
+                  <input class="capability-input" type="number" maxlength="7" adjust-position="{{true}}" cursor-spacing="24" value="{{capabilityDraft.contextWindow}}" data-field="contextWindow" bindinput="onCapabilityInput" placeholder="自动识别" />
+                  <text class="capability-input-unit">Token</text>
+                </view>
+              </view>
+              <view class="capability-input-field">
+                <view class="capability-field-label">最大输出</view>
+                <view class="capability-input-shell">
+                  <input class="capability-input" type="number" maxlength="7" adjust-position="{{true}}" cursor-spacing="24" value="{{capabilityDraft.maxOutputTokens}}" data-field="maxOutputTokens" bindinput="onCapabilityInput" placeholder="自动识别" />
+                  <text class="capability-input-unit">Token</text>
+                </view>
+              </view>
+            </view>
+            <view class="capability-editor-actions">
+              <view class="capability-cancel {{modelBusyId === item.id ? 'disabled' : ''}}" bindtap="closeCapabilityEditor">取消</view>
+              <view class="capability-save {{modelBusyId === item.id ? 'disabled' : ''}}" bindtap="saveModelCapabilities">{{modelBusyId === item.id ? "保存中..." : "保存设置"}}</view>
+            </view>
+          </view>
+        </view>
+
         <view class="model-actions">
           <view class="model-test-button {{testingModelId === item.id ? 'working' : ''}} {{!selectedProvider.enabled || modelBusyId || (testingModelId && testingModelId !== item.id) ? 'disabled' : ''}}" data-id="{{item.id}}" bindtap="testModel">
             <view class="model-test-icon"><view></view></view>
-            <text>{{testingModelId === item.id ? "正在测试..." : "测试此模型"}}</text>
+            <text>{{testingModelId === item.id ? "识别测试中..." : "测试并识别"}}</text>
           </view>
           <view class="model-link {{item.isDefault || item.lastTestStatus !== 'success' || !item.enabled || !selectedProvider.enabled || modelBusyId || testingModelId ? 'disabled' : ''}}" data-id="{{item.id}}" data-enabled="{{item.enabled}}" data-default="{{item.isDefault}}" bindtap="setDefault">{{item.isDefault ? "当前默认" : item.lastTestStatus === "success" ? "设为默认" : "测试后设置"}}</view>
           <view class="action-divider"></view>
@@ -143,7 +213,7 @@
       </view>
     </view>
 
-    <view class="models-note">模型测试只发送固定短提示，不占用成员额度，也不会保存为聊天记录。</view>
+    <view class="models-note">测试使用固定短提示，并在供应商允许时轻量识别输出能力；不会探测超长上下文，也不会保存为聊天记录。</view>
   </block>
 </view>
 

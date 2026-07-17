@@ -1,10 +1,12 @@
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
 const path = require("node:path");
 const test = require("node:test");
 
 const { InCircleService } = require("../src/services/incircle");
 
 const apiPath = path.resolve(__dirname, "../../inCircleClient/utils/api.js");
+const loginPath = path.resolve(__dirname, "../../inCircleClient/pages/login/index.js");
 const authPath = path.resolve(__dirname, "../../inCircleClient/utils/auth.js");
 
 function loadApi(responder) {
@@ -88,6 +90,44 @@ test("write requests are never replayed after a transient network failure", asyn
     (error) => error.errCode === "HTTP_RESPONSE_TIMEOUT"
   );
   assert.deepEqual(harness.calls, ["incircleCreateActivity"]);
+});
+
+test("database-idempotent agreement acceptance is safely retried once", async () => {
+  const harness = loadApi((options, count) => {
+    if (count === 1) {
+      options.fail({ errMsg: "request:fail timeout" });
+      return;
+    }
+    options.success({
+      statusCode: 200,
+      data: {
+        success: true,
+        data: {
+          loggedIn: true,
+          agreementsAccepted: true,
+          agreements: { termsVersion: "terms-v2", privacyVersion: "privacy-v2" },
+        },
+      },
+    });
+  });
+
+  const session = await harness.api.acceptAgreements({
+    accepted: true,
+    termsVersion: "terms-v2",
+    privacyVersion: "privacy-v2",
+  });
+  assert.equal(session.agreementsAccepted, true);
+  assert.deepEqual(harness.calls, ["incircleAcceptAgreements", "incircleAcceptAgreements"]);
+});
+
+test("ordinary HTTP requests rely on WeChat native timeout without a competing JS timer", () => {
+  const source = fs.readFileSync(apiPath, "utf8");
+  const loginSource = fs.readFileSync(loginPath, "utf8");
+  assert.match(source, /wx\.request\(\{[\s\S]*?timeout,/);
+  assert.doesNotMatch(source, /function withTimeout|Promise\.race\(\[request, timeout\]\)/);
+  assert.doesNotMatch(source, /timeout \+ 1000/);
+  assert.match(loginSource, /return api\.getSession\(\{ force: true \}\)/);
+  assert.doesNotMatch(loginSource, /sessionTimer|sessionTimeout|Promise\.race\(\[sessionCheck/);
 });
 
 test("member reads do not run initialization writes", async () => {

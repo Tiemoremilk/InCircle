@@ -14,6 +14,12 @@ const ANONYMOUS_TYPES = {
   incirclePublicLegalProfile: true,
 };
 
+// These mutations have a database-level idempotency contract and are safe to
+// replay when the transport cannot tell whether the first response arrived.
+const IDEMPOTENT_WRITE_TYPES = {
+  incircleAcceptAgreements: true,
+};
+
 const REQUEST_TIMEOUT_BY_TYPE = {
   incircleAiTestProvider: 30000,
   incircleAiSyncModels: 35000,
@@ -198,23 +204,6 @@ function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, Math.max(0, Number(ms || 0))));
 }
 
-function withTimeout(promise, ms, message, errCode) {
-  let timer = null;
-  const timeout = new Promise((resolve, reject) => {
-    timer = setTimeout(() => reject(codedError(message, errCode || "HTTP_RESPONSE_TIMEOUT")), ms);
-  });
-  return Promise.race([promise, timeout]).then(
-    (data) => {
-      if (timer) clearTimeout(timer);
-      return data;
-    },
-    (error) => {
-      if (timer) clearTimeout(timer);
-      throw error;
-    }
-  );
-}
-
 function sendHttpRequest(type, data, options) {
   if (!shouldUseHttpBackend()) {
     return Promise.reject(new Error("HTTP 后端未启用：请检查 backendMode、baseUrl 和 request 合法域名"));
@@ -237,11 +226,10 @@ function sendHttpRequest(type, data, options) {
     : forceWechatCode || !accessToken
       ? auth.getWechatLoginCode()
       : Promise.resolve("");
-  let requestTask = null;
   const request = loginCodePromise.then(
     (wechatLoginCode) =>
       new Promise((resolve, reject) => {
-        requestTask = wx.request({
+        wx.request({
           url: httpBackendUrl("/api/incircle"),
           method: "POST",
           timeout,
@@ -251,13 +239,13 @@ function sendHttpRequest(type, data, options) {
             const statusCode = response && response.statusCode;
             const result = normalizeHttpResponseBody(response && response.data);
             if (statusCode < 200 || statusCode >= 300) {
-              const error = makeHttpError(result, `HTTP 后端 ${type} 调用失败 (${statusCode})`);
+              const error = makeHttpError(result, `服务请求失败 (${statusCode})`);
               error.statusCode = Number(statusCode || 0);
               reject(error);
               return;
             }
             if (!result || result.success === false) {
-              reject(makeHttpError(result, `HTTP 后端 ${type} 调用失败`));
+              reject(makeHttpError(result, "服务请求失败，请稍后重试"));
               return;
             }
             const responseData = typeof result.data === "undefined" ? null : result.data;
@@ -265,31 +253,21 @@ function sendHttpRequest(type, data, options) {
             resolve(responseData);
           },
           fail(error) {
-            const message = (error && error.errMsg) || `HTTP 后端 ${type} 请求失败`;
+            const rawMessage = (error && error.errMsg) || "";
+            const timedOut = /timeout/i.test(rawMessage);
             reject(codedError(
-              message,
-              /timeout/i.test(message) ? "HTTP_RESPONSE_TIMEOUT" : "HTTP_NETWORK_ERROR"
+              timedOut ? "网络响应超时，请稍后重试" : "网络连接暂时不可用，请稍后重试",
+              timedOut ? "HTTP_RESPONSE_TIMEOUT" : "HTTP_NETWORK_ERROR",
+              { requestType: type }
             ));
           },
         });
       })
   );
-
-  return withTimeout(
-    request,
-    timeout + 1000,
-    `HTTP 后端 ${type} 响应超时，请稍后重试`,
-    "HTTP_RESPONSE_TIMEOUT"
-  ).catch((error) => {
-    if (
-      error && error.errCode === "HTTP_RESPONSE_TIMEOUT" &&
-      requestTask && typeof requestTask.abort === "function"
-    ) requestTask.abort();
-    throw error;
-  });
+  return request;
 }
 
-function isTransientReadError(error) {
+function isTransientRequestError(error) {
   if (!error) return false;
   if (["HTTP_RESPONSE_TIMEOUT", "HTTP_NETWORK_ERROR"].includes(error.errCode)) return true;
   return [408, 425, 429, 502, 503, 504].includes(Number(error.statusCode || 0));
@@ -313,11 +291,22 @@ function callHttpBackend(type, data, options) {
         () => callHttpBackend(type, data, Object.assign({}, options, { authRetried: true }))
       );
     }
-    if (isRead(type) && isTransientReadError(error) && !(options && options.transientRetried)) {
+    if (isRead(type) && isTransientRequestError(error) && !(options && options.transientRetried)) {
       return delay(280).then(() => callHttpBackend(
         type,
         data,
         Object.assign({}, options, { transientRetried: true })
+      ));
+    }
+    if (
+      IDEMPOTENT_WRITE_TYPES[type]
+      && isTransientRequestError(error)
+      && !(options && options.idempotentRetried)
+    ) {
+      return delay(280).then(() => callHttpBackend(
+        type,
+        data,
+        Object.assign({}, options, { idempotentRetried: true })
       ));
     }
     throw error;

@@ -767,8 +767,68 @@ CREATE TABLE IF NOT EXISTS incircle_ai_settings (
   updated_at timestamptz NOT NULL DEFAULT now(),
   CONSTRAINT chk_incircle_ai_settings_member_limit CHECK (member_daily_limit BETWEEN 1 AND 200),
   CONSTRAINT chk_incircle_ai_settings_circle_limit CHECK (circle_daily_limit BETWEEN 1 AND 5000),
-  CONSTRAINT chk_incircle_ai_settings_output_tokens CHECK (max_output_tokens BETWEEN 128 AND 8192)
+  CONSTRAINT chk_incircle_ai_settings_output_tokens CHECK (max_output_tokens BETWEEN 128 AND 32768)
 );
+
+CREATE TABLE IF NOT EXISTS incircle_ai_model_catalog_releases (
+  version text PRIMARY KEY,
+  checksum text NOT NULL,
+  source_name text NOT NULL DEFAULT '',
+  source_url text NOT NULL DEFAULT '',
+  observed_at timestamptz,
+  entry_count integer NOT NULL DEFAULT 0,
+  imported_at timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT chk_incircle_ai_catalog_release_checksum
+    CHECK (checksum ~ '^[0-9a-f]{64}$'),
+  CONSTRAINT chk_incircle_ai_catalog_release_count
+    CHECK (entry_count >= 0)
+);
+
+CREATE TABLE IF NOT EXISTS incircle_ai_model_capability_catalog (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  provider_key text NOT NULL,
+  model_id text NOT NULL,
+  model_id_normalized text NOT NULL,
+  canonical_model_id text NOT NULL DEFAULT '',
+  display_name text NOT NULL DEFAULT '',
+  aliases text[] NOT NULL DEFAULT '{}'::text[],
+  aliases_normalized text[] NOT NULL DEFAULT '{}'::text[],
+  context_window integer NOT NULL DEFAULT 0,
+  max_output_tokens integer NOT NULL DEFAULT 0,
+  supports_reasoning boolean,
+  confidence text NOT NULL DEFAULT 'community',
+  source_kind text NOT NULL DEFAULT '',
+  source_url text NOT NULL DEFAULT '',
+  provider_doc_url text NOT NULL DEFAULT '',
+  catalog_version text NOT NULL REFERENCES incircle_ai_model_catalog_releases(version) ON DELETE RESTRICT,
+  release_date date,
+  source_updated_at date,
+  last_verified_at timestamptz,
+  status text NOT NULL DEFAULT 'active',
+  metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT uq_incircle_ai_model_catalog_provider_model
+    UNIQUE (provider_key, model_id_normalized),
+  CONSTRAINT chk_incircle_ai_model_catalog_provider_key
+    CHECK (provider_key ~ '^[a-z0-9][a-z0-9_-]{0,63}$'),
+  CONSTRAINT chk_incircle_ai_model_catalog_model_id
+    CHECK (char_length(model_id) BETWEEN 1 AND 240),
+  CONSTRAINT chk_incircle_ai_model_catalog_context
+    CHECK (context_window = 0 OR context_window BETWEEN 1024 AND 2000000),
+  CONSTRAINT chk_incircle_ai_model_catalog_output
+    CHECK (max_output_tokens = 0 OR max_output_tokens BETWEEN 128 AND 2000000),
+  CONSTRAINT chk_incircle_ai_model_catalog_confidence
+    CHECK (confidence IN ('official', 'verified', 'community')),
+  CONSTRAINT chk_incircle_ai_model_catalog_status
+    CHECK (status IN ('active', 'deprecated'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_incircle_ai_model_catalog_active
+  ON incircle_ai_model_capability_catalog(provider_key, status, model_id_normalized);
+
+CREATE INDEX IF NOT EXISTS idx_incircle_ai_model_catalog_aliases
+  ON incircle_ai_model_capability_catalog USING gin(aliases_normalized);
 
 CREATE TABLE IF NOT EXISTS incircle_ai_providers (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -807,6 +867,9 @@ CREATE TABLE IF NOT EXISTS incircle_ai_models (
   archived boolean NOT NULL DEFAULT false,
   supports_stream boolean NOT NULL DEFAULT true,
   context_window integer NOT NULL DEFAULT 0,
+  context_window_source text NOT NULL DEFAULT '',
+  max_output_tokens integer NOT NULL DEFAULT 0,
+  max_output_tokens_source text NOT NULL DEFAULT '',
   source text NOT NULL DEFAULT 'manual',
   metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
   last_test_status text NOT NULL DEFAULT '',
@@ -819,6 +882,12 @@ CREATE TABLE IF NOT EXISTS incircle_ai_models (
     FOREIGN KEY (provider_id, circle_id)
     REFERENCES incircle_ai_providers(id, circle_id)
     ON DELETE CASCADE,
+  CONSTRAINT chk_incircle_ai_model_context_source
+    CHECK (context_window_source IN ('', 'sync', 'catalog', 'manual')),
+  CONSTRAINT chk_incircle_ai_model_output_tokens
+    CHECK (max_output_tokens = 0 OR max_output_tokens BETWEEN 128 AND 2000000),
+  CONSTRAINT chk_incircle_ai_model_output_source
+    CHECK (max_output_tokens_source IN ('', 'sync', 'catalog', 'probe', 'manual', 'compatibility')),
   CONSTRAINT uq_incircle_ai_model_provider_model UNIQUE (provider_id, model_id),
   CONSTRAINT uq_incircle_ai_model_id_circle UNIQUE (id, circle_id)
 );
@@ -872,6 +941,8 @@ CREATE TABLE IF NOT EXISTS incircle_ai_messages (
   input_tokens integer NOT NULL DEFAULT 0,
   output_tokens integer NOT NULL DEFAULT 0,
   error_code text NOT NULL DEFAULT '',
+  generation_owner_id text NOT NULL DEFAULT '',
+  generation_lease_expires_at timestamptz,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now(),
   CONSTRAINT fk_incircle_ai_message_conversation_scope
@@ -879,8 +950,13 @@ CREATE TABLE IF NOT EXISTS incircle_ai_messages (
     REFERENCES incircle_ai_conversations(id, circle_id, user_id)
     ON DELETE CASCADE,
   CONSTRAINT chk_incircle_ai_message_role CHECK (role IN ('user', 'assistant')),
-  CONSTRAINT chk_incircle_ai_message_status CHECK (status IN ('pending', 'generating', 'complete', 'failed', 'cancelled', 'blocked'))
+  CONSTRAINT chk_incircle_ai_message_status CHECK (status IN ('pending', 'generating', 'complete', 'failed', 'cancelled', 'blocked')),
+  CONSTRAINT chk_incircle_ai_generation_owner_length CHECK (char_length(generation_owner_id) <= 128)
 );
+
+ALTER TABLE incircle_ai_messages
+  ADD COLUMN IF NOT EXISTS generation_owner_id text NOT NULL DEFAULT '',
+  ADD COLUMN IF NOT EXISTS generation_lease_expires_at timestamptz;
 
 CREATE TABLE IF NOT EXISTS incircle_ai_usage_events (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -918,6 +994,24 @@ CREATE TABLE IF NOT EXISTS incircle_ai_consents (
   CONSTRAINT uq_incircle_ai_consent_scope UNIQUE (circle_id, user_id, provider_id)
 );
 
+CREATE TABLE IF NOT EXISTS incircle_ai_consent_acceptances (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  subject_id uuid NOT NULL,
+  user_id uuid REFERENCES incircle_users(id) ON DELETE SET NULL,
+  circle_id uuid REFERENCES incircle_circles(id) ON DELETE SET NULL,
+  circle_scope_id uuid NOT NULL,
+  provider_id uuid REFERENCES incircle_ai_providers(id) ON DELETE SET NULL,
+  provider_scope_id uuid NOT NULL,
+  provider_name_snapshot text NOT NULL DEFAULT '',
+  provider_domain_snapshot text NOT NULL DEFAULT '',
+  privacy_url_snapshot text NOT NULL DEFAULT '',
+  privacy_version integer NOT NULL CHECK (privacy_version >= 1),
+  accepted_at timestamptz NOT NULL DEFAULT now(),
+  created_at timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT uq_incircle_ai_consent_acceptance_version
+    UNIQUE (subject_id, circle_scope_id, provider_scope_id, privacy_version)
+);
+
 CREATE TABLE IF NOT EXISTS incircle_ai_reports (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   circle_id uuid NOT NULL REFERENCES incircle_circles(id) ON DELETE CASCADE,
@@ -940,6 +1034,8 @@ CREATE INDEX IF NOT EXISTS idx_incircle_ai_messages_page ON incircle_ai_messages
 CREATE INDEX IF NOT EXISTS idx_incircle_ai_usage_circle_date ON incircle_ai_usage_events(circle_id, beijing_date, status);
 CREATE INDEX IF NOT EXISTS idx_incircle_ai_usage_user_date ON incircle_ai_usage_events(circle_id, user_id, beijing_date, status);
 CREATE INDEX IF NOT EXISTS idx_incircle_ai_usage_created ON incircle_ai_usage_events(circle_id, user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_incircle_ai_consent_acceptances_subject
+  ON incircle_ai_consent_acceptances(subject_id, accepted_at DESC);
 CREATE INDEX IF NOT EXISTS idx_incircle_ai_reports_status ON incircle_ai_reports(status, created_at DESC);
 DELETE FROM incircle_ai_reports older
 USING incircle_ai_reports newer
@@ -957,6 +1053,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_incircle_ai_usage_request
   WHERE request_id <> '';
 CREATE UNIQUE INDEX IF NOT EXISTS uq_incircle_ai_conversation_generating
   ON incircle_ai_messages(conversation_id)
+  WHERE role = 'assistant' AND status = 'generating';
+CREATE INDEX IF NOT EXISTS idx_incircle_ai_messages_generation_lease
+  ON incircle_ai_messages(generation_lease_expires_at)
   WHERE role = 'assistant' AND status = 'generating';
 
 DROP TRIGGER IF EXISTS trg_incircle_ai_settings_touch ON incircle_ai_settings;

@@ -5,6 +5,7 @@ const crypto = require("crypto");
 const { loadConfig } = require("./config");
 const { createDatabase } = require("./db");
 const { reconcilePublicLegalProfile } = require("./legal-profile");
+const { importBundledModelCatalog } = require("./model-catalog");
 const { reconcileDefaultSystemDocs } = require("./system-docs");
 
 const OPERATOR_TYPE_MIGRATION_ID = "0025_legal_consent_and_operator_type.sql";
@@ -79,6 +80,11 @@ async function main() {
       }
       if (!appliedChecksum) await applyVersionedMigration(db, migration);
     }
+    const modelCatalog = await importBundledModelCatalog(db);
+    console.log(
+      `Model catalog ${modelCatalog.version}: ${modelCatalog.status} `
+      + `(${modelCatalog.entryCount} entries).`
+    );
     const legalProfile = await db.withTransaction(() => reconcilePublicLegalProfile(db, config, {
       initializeOperatorType,
     }));

@@ -256,6 +256,8 @@ test("login uses one primary flow with themed legal consent and no auth theme gr
   assert.doesNotMatch(template, /先授权，再连接|同意前不会向后端校验微信身份|你的数据仍在原处/);
   assert.match(consentTemplate, /协议已更新|请确认以下协议|暂不同意并退出账号/);
   assert.match(consentTemplate, /disabled="\{\{!accepted \|\| submitting \|\| leaving\}\}"/);
+  assert.match(consentTemplate, /!loading && !loadError/);
+  assert.match(consentTemplate, /consent-action-error[\s\S]*actionError/);
   assert.match(consentScript, /api\.acceptAgreements/);
   assert.match(consentScript, /api\.logout\(\)/);
   assert.match(consentScript, /reason === "updated"/);
@@ -264,6 +266,9 @@ test("login uses one primary flow with themed legal consent and no auth theme gr
   assert.match(consentScript, /已确认/);
   assert.doesNotMatch(consentScript, /"一并确认"|"有新版本"/);
   assert.match(consentScript, /baseStatus:[\s\S]*!needsConfirmation/);
+  assert.match(consentScript, /onShow\(\)[\s\S]*this\.data\.loadError \|\| this\.data\.actionError[\s\S]*this\.loadData\(\)/);
+  assert.match(consentScript, /loadError:[\s\S]*actionError:/);
+  assert.doesNotMatch(consentScript, /errorMessage/);
   assert.match(consentScript, /checked && baseStatus \? "已确认" : baseStatus/);
   assert.match(consentScript, /toggleDocument\(e\)[\s\S]*documents\.every\(\(item\) => item\.checked\)/);
   assert.match(consentScript, /toggleAccepted\(\)[\s\S]*withDocumentCheck\(item, accepted\)/);

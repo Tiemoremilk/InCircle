@@ -345,6 +345,28 @@
   padding-top: 30rpx;
 }
 
+.consent-action-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 10rpx;
+  margin-top: 14rpx;
+  padding: 13rpx 16rpx;
+  border: 1rpx solid var(--theme-card-active-border, rgba(47, 125, 80, 0.14));
+  border-radius: 10rpx;
+  background: var(--theme-soft, #eaf5ed);
+  color: var(--theme-primary-dark, #1c5638);
+  font-size: 21rpx;
+  line-height: 1.45;
+}
+
+.consent-action-error image {
+  width: 25rpx;
+  height: 25rpx;
+  margin-top: 2rpx;
+  flex-shrink: 0;
+  filter: var(--theme-icon-filter, brightness(0) saturate(100%) invert(40%) sepia(22%) saturate(1023%) hue-rotate(93deg) brightness(96%) contrast(94%));
+}
+
 .consent-check-row {
   align-items: flex-start;
   gap: 13rpx;

@@ -30,7 +30,9 @@
 .surface-label-row,
 .field-label-line,
 .quota-heading,
-.output-limit-row,
+.output-config-head,
+.output-custom-panel,
+.output-capability-note,
 .report-head,
 .ai-privacy-note {
   display: flex;
@@ -570,8 +572,7 @@
 }
 
 .field-label-line,
-.quota-heading,
-.output-limit-row {
+.quota-heading {
   justify-content: space-between;
   gap: 18rpx;
 }
@@ -686,12 +687,25 @@
   white-space: nowrap;
 }
 
-.output-limit-row {
-  margin-top: 14rpx;
-  padding: 17rpx 16rpx;
-  border: 1rpx solid #e5eae7;
-  border-radius: 12rpx;
-  background: #f7f9f8;
+.output-config {
+  margin-top: 24rpx;
+  padding-top: 24rpx;
+  border-top: 1rpx solid #e6ebe8;
+}
+
+.output-config-head {
+  align-items: center;
+  justify-content: space-between;
+  gap: 20rpx;
+}
+
+.output-config-main {
+  min-width: 0;
+  flex: 1;
+}
+
+.output-config-head .quota-label {
+  margin-bottom: 0;
 }
 
 .output-limit-copy {
@@ -701,9 +715,157 @@
   line-height: 1.4;
 }
 
-.output-number-field {
-  width: 220rpx;
+.output-current-value {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 164rpx;
+  height: 58rpx;
+  padding: 0 13rpx;
   flex-shrink: 0;
+  border: 1rpx solid var(--theme-card-active-border, rgba(47, 125, 80, 0.18));
+  border-radius: 10rpx;
+  background: var(--theme-soft, #eaf5ed);
+  color: var(--theme-primary-dark, #1c5638);
+  text-align: center;
+  box-sizing: border-box;
+}
+
+.output-current-number {
+  font-size: 28rpx;
+  line-height: 1;
+  font-weight: 850;
+}
+
+.output-current-unit {
+  margin-left: 7rpx;
+  color: var(--theme-primary, #2f7d50);
+  font-size: 19rpx;
+  line-height: 1;
+  font-weight: 700;
+}
+
+.output-mode-tabs {
+  display: flex;
+  align-items: center;
+  height: 58rpx;
+  margin-top: 13rpx;
+  gap: 12rpx;
+  border-bottom: 1rpx solid #e8edea;
+}
+
+.output-mode-option {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 58rpx;
+  padding: 0 14rpx;
+  flex-shrink: 0;
+  color: #727d78;
+  font-size: 22rpx;
+  font-weight: 750;
+  box-sizing: border-box;
+}
+
+.output-mode-option.selected {
+  color: var(--theme-primary-dark, #1c5638);
+}
+
+.output-mode-option.selected::after {
+  position: absolute;
+  right: 14rpx;
+  bottom: -1rpx;
+  left: 14rpx;
+  height: 4rpx;
+  border-radius: 4rpx 4rpx 0 0;
+  background: var(--theme-primary, #2f7d50);
+  content: "";
+}
+
+.output-preset-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  height: 72rpx;
+  margin-top: 12rpx;
+  padding: 5rpx;
+  gap: 5rpx;
+  border: 1rpx solid #e2e8e5;
+  border-radius: 11rpx;
+  background: #f3f6f4;
+  box-sizing: border-box;
+}
+
+.output-preset {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  border-radius: 8rpx;
+  color: #68746f;
+  font-size: 23rpx;
+  font-weight: 750;
+}
+
+.output-preset.selected {
+  background: linear-gradient(135deg, var(--theme-primary, #2f7d50), var(--theme-primary-dark, #1c5638));
+  color: #ffffff;
+  box-shadow: 0 4rpx 10rpx var(--theme-soft-shadow, rgba(47, 125, 80, 0.13));
+}
+
+.output-custom-panel {
+  align-items: center;
+  justify-content: space-between;
+  min-height: 96rpx;
+  margin-top: 12rpx;
+  padding: 14rpx 16rpx;
+  gap: 18rpx;
+  border: 1rpx solid #e2e8e5;
+  border-radius: 11rpx;
+  background: #f8faf9;
+  box-sizing: border-box;
+}
+
+.output-custom-copy {
+  min-width: 0;
+  flex: 1;
+}
+
+.output-custom-title {
+  color: #46514d;
+  font-size: 24rpx;
+  font-weight: 750;
+}
+
+.output-custom-help {
+  margin-top: 4rpx;
+  color: #929a97;
+  font-size: 21rpx;
+}
+
+.output-number-field {
+  width: 252rpx;
+  flex-shrink: 0;
+  border-color: #dfe6e2;
+  background: #ffffff;
+}
+
+.output-capability-note {
+  align-items: center;
+  margin-top: 13rpx;
+  padding-top: 14rpx;
+  border-top: 1rpx solid #edf1ef;
+  color: #69756f;
+  font-size: 21rpx;
+  line-height: 1.5;
+}
+
+.output-note-icon {
+  width: 25rpx;
+  height: 25rpx;
+  margin-right: 10rpx;
+  flex-shrink: 0;
+  filter: var(--theme-icon-filter, brightness(0) saturate(100%) invert(40%) sepia(22%) saturate(1023%) hue-rotate(93deg) brightness(96%) contrast(94%));
 }
 
 .save-settings {

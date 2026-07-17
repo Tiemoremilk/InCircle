@@ -38,7 +38,8 @@ Page({
     submitting: false,
     leaving: false,
     accepted: false,
-    errorMessage: "",
+    loadError: "",
+    actionError: "",
     title: "请补充协议确认",
     copy: "你的账号尚未留存当前协议的确认记录，请阅读后完成确认。",
     profile: null,
@@ -64,17 +65,49 @@ Page({
     this.loadData();
   },
 
+  onShow() {
+    if (!this.hasShownOnce) {
+      this.hasShownOnce = true;
+      return;
+    }
+    if (
+      !this.data.loading
+      && !this.data.submitting
+      && !this.data.leaving
+      && (this.data.loadError || this.data.actionError)
+    ) {
+      this.loadData();
+    }
+  },
+
+  onUnload() {
+    this.loadGeneration = Number(this.loadGeneration || 0) + 1;
+    this.submitGeneration = Number(this.submitGeneration || 0) + 1;
+  },
+
   loadData() {
     if (!auth.getAccessToken()) {
       this.returnToLogin();
       return;
     }
-    this.setData({ loading: true, errorMessage: "", accepted: false, documents: [] });
+    const generation = Number(this.loadGeneration || 0) + 1;
+    this.loadGeneration = generation;
+    this.setData({
+      loading: true,
+      loadError: "",
+      actionError: "",
+      accepted: false,
+      profile: null,
+      session: null,
+      user: null,
+      documents: [],
+    });
     Promise.all([
       api.getPublicLegalProfile({ force: true }),
       api.getSession({ force: true }),
     ])
       .then(([profileSource, session]) => {
+        if (generation !== this.loadGeneration) return;
         const profile = legal.normalizePublicLegalProfile(profileSource);
         if (!legal.isPublicLegalProfileComplete(profile)) throw new Error("协议信息尚未配置完整");
         if (!session || !session.loggedIn) {
@@ -102,6 +135,7 @@ Page({
         });
       })
       .catch((error) => {
+        if (generation !== this.loadGeneration) return;
         if (error && ["TOKEN_INVALID", "TOKEN_EXPIRED", "TOKEN_REVOKED", "LOGIN_REQUIRED"].includes(error.errCode)) {
           auth.clearAccessToken();
           this.returnToLogin();
@@ -109,7 +143,7 @@ Page({
         }
         this.setData({
           loading: false,
-          errorMessage: (error && error.message) || "协议状态读取失败，请稍后重试",
+          loadError: (error && error.message) || "协议状态读取失败，请稍后重试",
         });
       });
   },
@@ -142,22 +176,29 @@ Page({
 
   submitAcceptance() {
     if (!this.data.accepted || this.data.submitting || !this.data.profile) return;
-    this.setData({ submitting: true, errorMessage: "" });
+    const generation = Number(this.submitGeneration || 0) + 1;
+    this.submitGeneration = generation;
+    this.setData({ submitting: true, actionError: "" });
     api.acceptAgreements(legal.acceptancePayload(true, this.data.profile))
-      .then((session) => this.goNext(session || this.data.session))
+      .then((session) => {
+        if (generation === this.submitGeneration) this.goNext(session || this.data.session);
+      })
       .catch((error) => {
+        if (generation !== this.submitGeneration) return;
         if (error && error.errCode === "AGREEMENT_ACCEPTANCE_REQUIRED") {
           this.loadData();
           return;
         }
-        this.setData({ errorMessage: (error && error.message) || "协议确认失败，请重试" });
+        this.setData({ actionError: (error && error.message) || "协议确认失败，请重试" });
       })
-      .finally(() => this.setData({ submitting: false }));
+      .finally(() => {
+        if (generation === this.submitGeneration) this.setData({ submitting: false });
+      });
   },
 
   declineAndLogout() {
     if (this.data.submitting || this.data.leaving) return;
-    this.setData({ leaving: true, errorMessage: "" });
+    this.setData({ leaving: true, actionError: "" });
     api.logout()
       .catch(() => null)
       .finally(() => {

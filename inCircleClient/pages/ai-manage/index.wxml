@@ -147,14 +147,43 @@
           </view>
         </view>
       </view>
-      <view class="output-limit-row">
-        <view class="output-limit-main">
-          <view class="quota-label">单次最大输出</view>
-          <view class="output-limit-copy">推理模型建议 8192，避免思考占满正文额度</view>
+      <view class="output-config">
+        <view class="output-config-head">
+          <view class="output-config-main">
+            <view class="quota-label">单次最大输出</view>
+            <view class="output-limit-copy">系统会按模型能力与剩余上下文自动收敛</view>
+          </view>
+          <view class="output-current-value">
+            <text class="output-current-number">{{draft.maxOutputTokens || '--'}}</text>
+            <text class="output-current-unit">Token</text>
+          </view>
         </view>
-        <view class="number-field output-number-field">
-          <input type="number" maxlength="4" adjust-position="{{true}}" cursor-spacing="24" value="{{draft.maxOutputTokens}}" data-field="maxOutputTokens" bindinput="onDraftInput" />
-          <text>Token</text>
+        <view class="output-mode-tabs">
+          <view class="output-mode-option {{outputLimitMode == 'preset' ? 'selected' : ''}}" data-mode="preset" bindtap="selectOutputMode">常用档位</view>
+          <view class="output-mode-option {{outputLimitMode == 'custom' ? 'selected' : ''}}" data-mode="custom" bindtap="selectOutputMode">自定义</view>
+        </view>
+        <view class="output-preset-grid" wx:if="{{outputLimitMode == 'preset'}}">
+          <view
+            class="output-preset {{draft.maxOutputTokens == item ? 'selected' : ''}}"
+            wx:for="{{outputTokenPresets}}"
+            wx:key="*this"
+            data-value="{{item}}"
+            bindtap="selectOutputLimit"
+          >{{item == 4096 ? '4K' : item == 8192 ? '8K' : item == 16384 ? '16K' : '32K'}}</view>
+        </view>
+        <view class="output-custom-panel" wx:else>
+          <view class="output-custom-copy">
+            <view class="output-custom-title">自定义输出额度</view>
+            <view class="output-custom-help">输入 128–32768 的整数</view>
+          </view>
+          <view class="number-field output-number-field">
+            <input type="number" maxlength="5" adjust-position="{{true}}" cursor-spacing="24" value="{{draft.maxOutputTokens}}" data-field="maxOutputTokens" bindinput="onDraftInput" />
+            <text>Token</text>
+          </view>
+        </view>
+        <view class="output-capability-note">
+          <image class="output-note-icon" src="/images/ui-icons/sparkles.svg" mode="aspectFit"></image>
+          <text>{{outputCapabilityHint}}</text>
         </view>
       </view>
 

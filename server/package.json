@@ -8,9 +8,11 @@
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
     "db:migrate": "node src/migrate.js",
+    "db:catalog:import": "node src/import-model-catalog.js",
+    "ai:catalog:refresh": "node scripts/refresh-model-catalog.js",
     "db:backfill-actions": "node src/backfill-normalized-actions.js",
     "test": "node --test test/*.test.js",
-    "check": "node --check src/server.js && node --check src/app.js && node --check src/auth.js && node --check src/config.js && node --check src/db.js && node --check src/errors.js && node --check src/legal.js && node --check src/legal-profile.js && node --check src/agreement-store.js && node --check src/member-role.js && node --check src/member-number.js && node --check src/system-docs.js && node --check src/theme.js && node --check src/migrate.js && node --check src/backfill-normalized-actions.js && node --check src/routes/incircle.js && node --check src/routes/media.js && node --check src/routes/ai.js && node --check src/services/incircle.js && node --check src/services/ai.js && node --check src/services/ai/credentials.js && node --check src/services/ai/network.js && node --check src/services/ai/providers.js && node --check src/services/wechat.js && node --check src/time.js"
+    "check": "node --check src/server.js && node --check src/app.js && node --check src/auth.js && node --check src/config.js && node --check src/db.js && node --check src/errors.js && node --check src/legal.js && node --check src/legal-profile.js && node --check src/model-catalog.js && node --check src/import-model-catalog.js && node --check src/agreement-store.js && node --check src/member-role.js && node --check src/member-number.js && node --check src/system-docs.js && node --check src/theme.js && node --check src/migrate.js && node --check src/backfill-normalized-actions.js && node --check src/routes/incircle.js && node --check src/routes/media.js && node --check src/routes/ai.js && node --check src/services/incircle.js && node --check src/services/ai.js && node --check src/services/ai/credentials.js && node --check src/services/ai/model-capabilities.js && node --check src/services/ai/network.js && node --check src/services/ai/providers.js && node --check src/services/wechat.js && node --check src/time.js && node --check scripts/refresh-model-catalog.js"
   },
   "engines": {
     "node": ">=20"

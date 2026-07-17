@@ -14,6 +14,7 @@ const {
   maskedCredential,
 } = require("../src/services/ai/credentials");
 const { blockedIp, parseHttpsUrl, requestOnce } = require("../src/services/ai/network");
+const { catalogModelCapabilities } = require("../src/services/ai/model-capabilities");
 const {
   completionRequest,
   consumeEventStream,
@@ -21,13 +22,23 @@ const {
   listProviderPresets,
   normalizeProviderStreamError,
   providerModelMetadata,
+  providerModelTokenCapabilities,
+  providerOutputLimitRejected,
+  providerOutputTokenLimit,
   providerFinishReason,
   reasoningCapability,
   resolveReasoningMode,
   streamProviderCompletion,
 } = require("../src/services/ai/providers");
 const { validEncryptionKey } = require("../src/config");
-const { aiAccessFlags, AiService, publicModel, publicProvider, registerActiveGeneration } = require("../src/services/ai");
+const {
+  aiAccessFlags,
+  AiService,
+  publicModel,
+  publicProvider,
+  recoverExpiredAiGenerations,
+  registerActiveGeneration,
+} = require("../src/services/ai");
 const { exchangeWechatLoginCode } = require("../src/services/wechat");
 const { AppError } = require("../src/errors");
 const { streamFrame, watchClientDisconnect } = require("../src/routes/ai");
@@ -285,7 +296,8 @@ test("validated provider saves discovered models without exposing internal model
       models: [{
         modelId: "gpt-test",
         displayName: "GPT Test",
-        contextWindow: 8192,
+        contextWindow: 1000000,
+        maxOutputTokens: 32768,
         metadata: { supportedParameters: ["reasoning_effort"] },
       }],
     });
@@ -296,7 +308,13 @@ test("validated provider saves discovered models without exposing internal model
     });
     const modelInsert = queries.find((entry) => entry.sql.includes("INSERT INTO incircle_ai_models"));
     assert.equal(!!modelInsert, true);
-    assert.deepEqual(JSON.parse(modelInsert.params[2])[0].metadata, { supportedParameters: ["reasoning_effort"] });
+    const storedModel = JSON.parse(modelInsert.params[2])[0];
+    assert.deepEqual(storedModel.metadata, { supportedParameters: ["reasoning_effort"] });
+    assert.equal(storedModel.context_window, 1000000);
+    assert.equal(storedModel.context_window_source, "sync");
+    assert.equal(storedModel.max_output_tokens, 32768);
+    assert.equal(storedModel.max_output_tokens_source, "sync");
+    assert.match(modelInsert.sql, /max_output_tokens_source = 'manual' THEN incircle_ai_models\.max_output_tokens/);
     assert.equal(result.testResult.modelsSynced, 1);
     assert.equal(Object.prototype.hasOwnProperty.call(result.testResult, "models"), false);
     assert.equal(JSON.stringify(result).includes("valid-secret"), false);
@@ -329,6 +347,7 @@ test("model tests call the selected model and persist model-level health", async
     circle_id: "22222222-2222-4222-8222-222222222222",
     provider_id: "11111111-1111-4111-8111-111111111111",
     provider_name: "Custom AI",
+    preset_key: "custom",
     protocol: "openai",
     base_url: "https://api.example.com/v1",
     api_version: "",
@@ -339,6 +358,10 @@ test("model tests call the selected model and persist model-level health", async
     model_id: "selected-model",
     display_name: "Selected Model",
     archived: false,
+    context_window: 0,
+    context_window_source: "",
+    max_output_tokens: 0,
+    max_output_tokens_source: "",
   };
   const writes = [];
   const db = {
@@ -353,15 +376,16 @@ test("model tests call the selected model and persist model-level health", async
     },
     async withTransaction(callback) { return callback(); },
   };
-  const service = new AiService({ db, config }, {});
+  const service = new AiService({ db, config }, { listProviderModels: async () => [] });
   service.requireManager = async () => ({
     circleId: model.circle_id,
     isSuperAdmin: false,
     auth: { user: { id: "33333333-3333-4333-8333-333333333333" } },
   });
+  const requestedLimits = [];
   service.runProviderCompletion = async (options) => {
     assert.equal(options.model.model_id, "selected-model");
-    assert.equal(options.maxTokens, 16);
+    requestedLimits.push(options.maxTokens);
     await options.onDelta("OK");
     return { inputTokens: 4, outputTokens: 1 };
   };
@@ -371,9 +395,83 @@ test("model tests call the selected model and persist model-level health", async
   assert.equal(result.ok, true);
   assert.equal(result.modelId, model.id);
   assert.equal(result.reply, "OK");
+  assert.deepEqual(requestedLimits, [16, 32768]);
+  assert.equal(result.capabilities.maxOutputTokens, 32768);
+  assert.equal(result.capabilities.maxOutputTokensSource, "probe");
+  assert.deepEqual(result.capabilityDetection.updatedFields, ["maxOutputTokens"]);
   assert.equal(writes.length, 2);
   assert.equal(writes[0].params[2], "success");
+  assert.equal(writes[0].params[7], 32768);
+  assert.equal(writes[0].params[8], "probe");
   assert.equal(writes[1].params[2], "success");
+});
+
+test("model tests refresh provider metadata without overwriting manual capabilities", async () => {
+  const config = { aiCredentialsEncryptionKey: crypto.randomBytes(32).toString("hex") };
+  const model = {
+    id: "44444444-4444-4444-8444-444444444444",
+    circle_id: "22222222-2222-4222-8222-222222222222",
+    provider_id: "11111111-1111-4111-8111-111111111111",
+    provider_name: "OpenAI",
+    preset_key: "openai",
+    protocol: "openai",
+    base_url: "https://api.openai.com/v1",
+    credential_ciphertext: encryptCredential(config, "model-test-secret"),
+    provider_enabled: true,
+    provider_archived: false,
+    model_id: "gpt-4.1-mini",
+    display_name: "GPT-4.1 mini",
+    archived: false,
+    context_window: 200000,
+    context_window_source: "manual",
+    max_output_tokens: 0,
+    max_output_tokens_source: "",
+  };
+  let modelUpdateParams = null;
+  const db = {
+    async query(text, params) {
+      const sql = String(text);
+      if (sql.includes("SELECT model.*") && sql.includes("credential_ciphertext")) return { rows: [model] };
+      if (sql.includes("UPDATE incircle_ai_models")) {
+        modelUpdateParams = params;
+        return { rows: [] };
+      }
+      if (sql.includes("UPDATE incircle_ai_providers")) return { rows: [] };
+      throw new Error(`unexpected query: ${sql}`);
+    },
+    async withTransaction(callback) { return callback(); },
+  };
+  const service = new AiService({ db, config }, {
+    listProviderModels: async () => [{
+      modelId: model.model_id,
+      contextWindow: 1000000,
+      contextWindowSource: "sync",
+      maxOutputTokens: 65536,
+      maxOutputTokensSource: "sync",
+    }],
+  });
+  service.requireManager = async () => ({
+    circleId: model.circle_id,
+    auth: { user: { id: "33333333-3333-4333-8333-333333333333" } },
+  });
+  const requestedLimits = [];
+  service.runProviderCompletion = async (options) => {
+    requestedLimits.push(options.maxTokens);
+    await options.onDelta("OK");
+  };
+  service.core.logOperation = async () => {};
+
+  const result = await service.testModel({ circleId: model.circle_id, modelId: model.id });
+  assert.deepEqual(requestedLimits, [16]);
+  assert.equal(result.capabilities.contextWindow, 200000);
+  assert.equal(result.capabilities.contextWindowSource, "manual");
+  assert.equal(result.capabilities.maxOutputTokens, 65536);
+  assert.equal(result.capabilities.maxOutputTokensSource, "sync");
+  assert.deepEqual(result.capabilityDetection.updatedFields, ["maxOutputTokens"]);
+  assert.equal(modelUpdateParams[5], 200000);
+  assert.equal(modelUpdateParams[6], "manual");
+  assert.equal(modelUpdateParams[7], 65536);
+  assert.equal(modelUpdateParams[8], "sync");
 });
 
 test("failed model tests persist failure without exposing credentials", async () => {
@@ -405,7 +503,7 @@ test("failed model tests persist failure without exposing credentials", async ()
     },
     async withTransaction(callback) { return callback(); },
   };
-  const service = new AiService({ db, config }, {});
+  const service = new AiService({ db, config }, { listProviderModels: async () => [] });
   service.requireManager = async () => ({
     circleId: model.circle_id,
     auth: { user: { id: "33333333-3333-4333-8333-333333333333" } },
@@ -430,10 +528,18 @@ test("model API responses expose persisted test status", () => {
     last_test_error_code: "",
     last_test_latency_ms: 321,
     last_tested_at: "2026-07-12T00:00:00.000Z",
+    context_window: 1000000,
+    context_window_source: "manual",
+    max_output_tokens: 32768,
+    max_output_tokens_source: "sync",
   });
   assert.equal(model.lastTestStatus, "success");
   assert.equal(model.lastTestLatencyMs, 321);
   assert.equal(model.lastTestedAt, "2026-07-12T00:00:00.000Z");
+  assert.equal(model.contextWindow, 1000000);
+  assert.equal(model.contextWindowSource, "manual");
+  assert.equal(model.maxOutputTokens, 32768);
+  assert.equal(model.maxOutputTokensSource, "sync");
 });
 
 test("all four provider protocols build isolated text completion requests", () => {
@@ -651,6 +757,132 @@ test("provider model capability metadata is normalized before it reaches Postgre
   );
 });
 
+test("provider token metadata recognizes 1M contexts and independent output limits", () => {
+  assert.deepEqual(
+    providerModelTokenCapabilities({ inputTokenLimit: 1000000, outputTokenLimit: 65536 }),
+    { contextWindow: 1000000, maxOutputTokens: 65536 }
+  );
+  assert.deepEqual(
+    providerModelTokenCapabilities({ limits: { context_window: 1048576, max_output_tokens: 32768 } }),
+    { contextWindow: 1048576, maxOutputTokens: 32768 }
+  );
+  assert.deepEqual(
+    providerModelTokenCapabilities({
+      context_length: 1000000,
+      top_provider: { max_completion_tokens: 65536 },
+    }),
+    { contextWindow: 1000000, maxOutputTokens: 65536 }
+  );
+  assert.deepEqual(providerModelTokenCapabilities({ id: "opaque-model" }), {
+    contextWindow: 0,
+    maxOutputTokens: 0,
+  });
+});
+
+test("only explicit pre-stream output parameter rejections qualify for compatibility fallback", () => {
+  assert.equal(providerOutputLimitRejected(422, {
+    param: "max_output_tokens",
+    message: "max_output_tokens must be less than 8193",
+  }), true);
+  assert.equal(providerOutputLimitRejected(400, {
+    message: "maximum context length exceeded because max_tokens is too high",
+  }), true);
+  assert.equal(providerOutputLimitRejected(500, {
+    param: "max_tokens",
+    message: "temporary error",
+  }), false);
+  assert.equal(providerOutputLimitRejected(400, {
+    message: "reasoning_effort is unsupported",
+  }), false);
+  assert.equal(providerOutputTokenLimit({
+    param: "max_tokens",
+    message: "Requested 32768 tokens, but the maximum is 8192 tokens",
+  }, 32768), 8192);
+});
+
+test("database model catalog matches trusted presets without guessing custom aliases", async () => {
+  const calls = [];
+  const db = {
+    async query(sql, params) {
+      calls.push({ sql, params });
+      if (params[0] === "openai" && params[1].includes("gpt-4.1-mini")) {
+        return {
+          rows: [{
+            model_id: "gpt-4.1-mini",
+            model_id_normalized: "gpt-4.1-mini",
+            aliases_normalized: [],
+            context_window: 1047576,
+            max_output_tokens: 32768,
+            supports_reasoning: false,
+            catalog_version: "2026-07-18.1",
+            confidence: "community",
+            provider_doc_url: "https://platform.openai.com/docs/models",
+          }],
+        };
+      }
+      return { rows: [] };
+    },
+  };
+  const official = await catalogModelCapabilities(db, { preset_key: "openai" }, "gpt-4.1-mini");
+  assert.equal(official.contextWindow, 1047576);
+  assert.equal(official.maxOutputTokens, 32768);
+  assert.equal(official.catalogVersion, "2026-07-18.1");
+
+  const queryCount = calls.length;
+  const customAlias = await catalogModelCapabilities(db, { preset_key: "custom" }, "gpt-4.1-mini");
+  assert.equal(customAlias.matched, false);
+  assert.equal(customAlias.contextWindow, 0);
+  assert.equal(calls.length, queryCount);
+
+  const unknownVersion = await catalogModelCapabilities(db, { preset_key: "openai" }, "gpt-5.6");
+  assert.equal(unknownVersion.matched, false);
+});
+
+test("lightweight output probing records only accepted or explicitly reported limits", async () => {
+  const service = new AiService({ db: {}, config: {} }, {});
+  const calls = [];
+  service.runProviderCompletion = async (options) => {
+    calls.push(options.maxTokens);
+    if (options.maxTokens === 32768) {
+      throw new AppError("unsupported output limit", {
+        statusCode: 502,
+        errCode: "AI_PROVIDER_OUTPUT_LIMIT_UNSUPPORTED",
+        details: { providerTokenLimit: 12288 },
+      });
+    }
+    await options.onDelta("OK");
+  };
+  const detected = await service.probeModelOutputCapability({
+    provider: { protocol: "openai", preset_key: "custom" },
+    model: { model_id: "opaque-model" },
+    apiKey: "secret",
+    reasoning: { control: "toggle" },
+  });
+  assert.deepEqual(calls, [32768]);
+  assert.equal(detected.value, 12288);
+  assert.equal(detected.source, "probe");
+  assert.equal(detected.status, "provider_reported_limit");
+
+  service.runProviderCompletion = async () => {
+    throw new AppError("temporary timeout", { statusCode: 504, errCode: "AI_PROVIDER_TIMEOUT" });
+  };
+  const unavailable = await service.probeModelOutputCapability({
+    provider: { protocol: "openai", preset_key: "custom" },
+    model: { model_id: "opaque-model" },
+    apiKey: "secret",
+    reasoning: { control: "toggle" },
+  });
+  assert.equal(unavailable.value, 0);
+  assert.equal(unavailable.status, "unavailable");
+
+  calls.length = 0;
+  const skipped = await service.probeModelOutputCapability({
+    provider: {}, model: {}, apiKey: "", reasoning: { control: "always" },
+  });
+  assert.equal(skipped.status, "reasoning_required");
+  assert.deepEqual(calls, []);
+});
+
 test("fixed and non-reasoning models reject incompatible explicit modes", () => {
   const reasoner = { protocol: "openai", preset_key: "deepseek", model_id: "deepseek-reasoner" };
   const chat = { protocol: "openai", preset_key: "deepseek", model_id: "deepseek-chat" };
@@ -797,6 +1029,39 @@ test("provider event streams preserve UTF-8 text split across network chunks", a
   assert.equal(output, "你好");
 });
 
+test("provider event streams assemble standard multi-line SSE data fields", async () => {
+  const response = Readable.from([Buffer.from([
+    "event: message",
+    "data: {",
+    'data:   "choices": [{"delta":{"content":"多行事件"}}]',
+    "data: }",
+    "",
+    "data: [DONE]",
+    "",
+  ].join("\n"), "utf8")]);
+  const stats = {};
+  let output = "";
+  await consumeEventStream(response, "openai", async (delta) => { output += delta; }, stats);
+  assert.equal(output, "多行事件");
+  assert.equal(stats.parseErrors || 0, 0);
+  assert.equal(stats.doneSeen, true);
+});
+
+test("provider event streams reject an oversized unterminated event", async () => {
+  let destroyed = false;
+  const response = {
+    destroy() { destroyed = true; },
+    async *[Symbol.asyncIterator]() {
+      yield Buffer.alloc(512 * 1024 + 1, 0x61);
+    },
+  };
+  await assert.rejects(
+    () => consumeEventStream(response, "openai", async () => {}),
+    (error) => error.errCode === "AI_PROVIDER_RESPONSE_TOO_LARGE"
+  );
+  assert.equal(destroyed, true);
+});
+
 test("provider event streams accept compatible NDJSON and expose safe diagnostics", async () => {
   const response = {
     async *[Symbol.asyncIterator]() {
@@ -924,6 +1189,76 @@ function preparedGeneration(config) {
     assistantMessage: { id: "77777777-7777-4777-8777-777777777777" },
   };
 }
+
+test("a terminal cancellation cannot be overwritten by a late generation result", async () => {
+  const config = { aiCredentialsEncryptionKey: crypto.randomBytes(32).toString("hex") };
+  const prepared = preparedGeneration(config);
+  let terminalUpdate = "";
+  let usageStatus = "";
+  const db = {
+    withTransaction: async (callback) => callback(),
+    query: async (sql, params) => {
+      if (/SELECT id FROM incircle_ai_conversations/.test(sql)) return { rows: [{ id: prepared.conversation.id }] };
+      if (/UPDATE incircle_ai_messages SET content/.test(sql)) {
+        terminalUpdate = sql;
+        return { rows: [] };
+      }
+      if (/SELECT status, error_code FROM incircle_ai_messages/.test(sql)) {
+        return { rows: [{ status: "cancelled", error_code: "AI_CANCELLED" }] };
+      }
+      if (/UPDATE incircle_ai_conversations SET last_message_at/.test(sql)) return { rows: [] };
+      if (/INSERT INTO incircle_ai_usage_events/.test(sql)) {
+        usageStatus = params[7];
+        return { rows: [] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    },
+  };
+  const service = new AiService({ db, config }, {});
+  const saved = await service.saveGenerationResult(prepared, {
+    status: "success",
+    content: "晚到的完整回答",
+    inputTokens: 10,
+    outputTokens: 20,
+  });
+  assert.equal(saved.status, "cancelled");
+  assert.equal(saved.errorCode, "AI_CANCELLED");
+  assert.equal(usageStatus, "cancelled");
+  assert.match(terminalUpdate, /status = 'generating' AND generation_owner_id = \$11/);
+});
+
+test("AI consent acceptance is append-only per provider privacy version", async () => {
+  const acceptanceQueries = [];
+  const acceptanceVersions = [];
+  let privacyVersion = 1;
+  const providerId = "11111111-1111-4111-8111-111111111111";
+  const db = {
+    withTransaction: async (callback) => callback(),
+    query: async (sql, params) => {
+      if (/SELECT \* FROM incircle_ai_providers/.test(sql)) {
+        return { rows: [providerRow({ id: providerId, privacy_version: privacyVersion })] };
+      }
+      if (/INSERT INTO incircle_ai_consent_acceptances/.test(sql)) {
+        acceptanceQueries.push(sql);
+        acceptanceVersions.push(params[3]);
+        return { rows: [] };
+      }
+      if (/INSERT INTO incircle_ai_consents\s*\(/.test(sql)) return { rows: [] };
+      throw new Error(`unexpected query: ${sql}`);
+    },
+  };
+  const service = new AiService({ db, config: {} }, {});
+  service.requireMember = async () => ({
+    circleId: "22222222-2222-4222-8222-222222222222",
+    auth: { user: { id: "33333333-3333-4333-8333-333333333333" } },
+  });
+  await service.grantConsent({ providerId });
+  privacyVersion = 2;
+  await service.grantConsent({ providerId });
+  assert.deepEqual(acceptanceVersions, [1, 2]);
+  assert.match(acceptanceQueries[0], /uq_incircle_ai_consent_acceptance_version DO NOTHING/);
+  assert.doesNotMatch(acceptanceQueries[0], /DO UPDATE|accepted_at = now/);
+});
 
 test("idempotent AI retries skip duplicate input moderation and reject changed content", async () => {
   const service = new AiService({ db: {}, config: {} }, {});
@@ -1438,34 +1773,416 @@ test("reasoning metrics migration raises the default budget and persists per-mes
   assert.match(migration, /SET max_output_tokens = 8192/);
 });
 
-test("conversation context excludes prompts whose assistant reply failed", async () => {
-  let query = "";
-  let params = null;
+test("generation leases, graceful shutdown, and versioned AI consent are deployed together", async () => {
+  const root = path.resolve(__dirname, "../..");
+  const schema = fs.readFileSync(path.join(root, "server/db/schema.sql"), "utf8");
+  const migration = fs.readFileSync(
+    path.join(root, "server/db/migrations/0027_ai_generation_lease_and_consent_history.sql"),
+    "utf8"
+  );
+  const serverSource = fs.readFileSync(path.join(root, "server/src/server.js"), "utf8");
+  const compose = fs.readFileSync(path.join(root, "server/docker-compose.yml"), "utf8");
+  assert.match(schema, /generation_lease_expires_at timestamptz/);
+  assert.match(schema, /CREATE TABLE IF NOT EXISTS incircle_ai_consent_acceptances/);
+  assert.match(migration, /AI_SERVER_RESTARTED/);
+  assert.match(migration, /uq_incircle_ai_consent_acceptance_version/);
+  assert.match(serverSource, /recoverExpiredAiGenerations/);
+  assert.match(serverSource, /beginAiShutdown/);
+  assert.match(compose, /stop_grace_period:\s*30s/);
+
+  let recoveryQuery = "";
+  const recovered = await recoverExpiredAiGenerations({
+    query: async (sql) => {
+      recoveryQuery = sql;
+      return { rowCount: 2, rows: [{ id: "one" }, { id: "two" }] };
+    },
+  });
+  assert.equal(recovered.rowCount, 2);
+  assert.match(recoveryQuery, /generation_lease_expires_at IS NULL OR generation_lease_expires_at < now\(\)/);
+  assert.match(recoveryQuery, /generation_owner_id = ''/);
+});
+
+test("model-aware 32K output settings and themed capability controls ship together", () => {
+  const root = path.resolve(__dirname, "../..");
+  const schema = fs.readFileSync(path.join(root, "server/db/schema.sql"), "utf8");
+  const migration = fs.readFileSync(
+    path.join(root, "server/db/migrations/0028_ai_model_token_capabilities.sql"),
+    "utf8"
+  );
+  const detectionMigration = fs.readFileSync(
+    path.join(root, "server/db/migrations/0029_ai_model_capability_detection.sql"),
+    "utf8"
+  );
+  const serviceSource = fs.readFileSync(path.join(root, "server/src/services/ai.js"), "utf8");
+  const manageJs = fs.readFileSync(path.join(root, "inCircleClient/pages/ai-manage/index.js"), "utf8");
+  const manageWxml = fs.readFileSync(path.join(root, "inCircleClient/pages/ai-manage/index.wxml"), "utf8");
+  const manageWxss = fs.readFileSync(path.join(root, "inCircleClient/pages/ai-manage/index.wxss"), "utf8");
+  const modelsJs = fs.readFileSync(path.join(root, "inCircleClient/pages/ai-models/index.js"), "utf8");
+  const modelsWxml = fs.readFileSync(path.join(root, "inCircleClient/pages/ai-models/index.wxml"), "utf8");
+
+  assert.match(schema, /max_output_tokens BETWEEN 128 AND 32768/);
+  assert.match(schema, /max_output_tokens_source text NOT NULL DEFAULT ''/);
+  assert.match(migration, /ADD COLUMN IF NOT EXISTS max_output_tokens/);
+  assert.match(migration, /compatibility/);
+  assert.match(detectionMigration, /'catalog'/);
+  assert.match(detectionMigration, /'probe'/);
+  assert.match(serviceSource, /AI_OUTPUT_COMPATIBILITY_FALLBACK_TOKENS = 8192/);
+  assert.match(serviceSource, /max_output_tokens = 0 AND max_output_tokens_source = ''/);
+  assert.match(manageJs, /OUTPUT_TOKEN_PRESETS = \[4096, 8192, 16384, 32768\]/);
+  assert.match(manageJs, /outputLimitMode: usesPreset \? "preset" : "custom"/);
+  assert.match(manageWxml, /maxlength="5"/);
+  assert.match(manageWxml, /output-preset-grid/);
+  assert.match(manageWxml, /outputLimitMode == 'preset'/);
+  assert.match(manageWxml, /data-mode="custom"/);
+  assert.match(manageWxss, /var\(--theme-primary/);
+  assert.match(modelsWxml, /maxlength="7"/);
+  assert.match(modelsWxml, /校准能力参数/);
+  assert.match(modelsWxml, /测试并识别/);
+  assert.match(manageJs, /能力库匹配/);
+  assert.match(modelsJs, /供应商识别/);
+  assert.match(modelsJs, /能力库匹配/);
+  assert.match(modelsJs, /兼容探测/);
+});
+
+test("generation plans clamp output to the model context window", async () => {
+  const service = new AiService({ db: {}, config: {} }, {});
+  const reasoningMode = { selection: "off", enabled: false, adapter: "none" };
+  const plan = await service.buildGenerationPlan({
+    ctx: { circleId: "circle-1", auth: { user: { id: "user-1" } } },
+    settings: { system_prompt: "system", max_output_tokens: 8192 },
+    model: { context_window: 8192 },
+    content: "hello",
+    reasoningMode,
+  });
+
+  assert.equal(plan.contextWindow, 8192);
+  assert.equal(plan.contextWindowSource, "model");
+  assert.equal(plan.maxOutputTokens < 8192, true);
+  assert.equal(plan.maxOutputTokens >= 128, true);
+  assert.equal(plan.inputTokenBudget, plan.currentMessageTokens);
+  assert.equal(
+    plan.reservedSystemPromptTokens + plan.inputTokenBudget + plan.maxOutputTokens + plan.safetyMarginTokens,
+    plan.contextWindow
+  );
+  assert.deepEqual(plan.messages, [{ role: "user", content: "hello" }]);
+});
+
+test("unknown model context windows use the conservative 16K fallback", async () => {
+  const service = new AiService({ db: {}, config: {} }, {});
+  const plan = await service.buildGenerationPlan({
+    ctx: { circleId: "circle-1", auth: { user: { id: "user-1" } } },
+    settings: { system_prompt: "system", max_output_tokens: 4096 },
+    model: { context_window: 0 },
+    content: "简短问题",
+    reasoningMode: { selection: "off", enabled: false, adapter: "none" },
+  });
+
+  assert.equal(plan.contextWindow, 16384);
+  assert.equal(plan.contextWindowSource, "fallback");
+  assert.equal(plan.maxOutputTokens, 4096);
+  assert.equal(plan.historyTokenBudget > 0, true);
+});
+
+test("1M context models keep context and output capabilities independent", async () => {
+  const service = new AiService({ db: {}, config: {} }, {});
+  const knownPlan = await service.buildGenerationPlan({
+    ctx: { circleId: "circle-1", auth: { user: { id: "user-1" } } },
+    settings: { system_prompt: "system", max_output_tokens: 32768 },
+    model: {
+      context_window: 1000000,
+      max_output_tokens: 16384,
+      max_output_tokens_source: "sync",
+    },
+    content: "整理这份长文",
+    reasoningMode: { selection: "off", enabled: false, adapter: "none" },
+  });
+  assert.equal(knownPlan.contextWindow, 1000000);
+  assert.equal(knownPlan.maxOutputTokens, 16384);
+  assert.equal(knownPlan.outputCapabilityKnown, true);
+  assert.equal(knownPlan.outputCapabilitySource, "sync");
+
+  const unknownPlan = await service.buildGenerationPlan({
+    ctx: { circleId: "circle-1", auth: { user: { id: "user-1" } } },
+    settings: { system_prompt: "system", max_output_tokens: 32768 },
+    model: { context_window: 1000000, max_output_tokens: 0 },
+    content: "整理这份长文",
+    reasoningMode: { selection: "off", enabled: false, adapter: "none" },
+  });
+  assert.equal(unknownPlan.maxOutputTokens, 32768);
+  assert.equal(unknownPlan.outputCapabilityKnown, false);
+  assert.equal(unknownPlan.outputCapabilitySource, "unknown");
+});
+
+test("chat generation sends the computed effective output limit to the provider", async () => {
+  const config = {
+    aiCredentialsEncryptionKey: Buffer.alloc(32, 23).toString("base64"),
+    aiProviderTimeoutMs: 300000,
+  };
+  let providerRequest = null;
+  const service = new AiService(
+    { db: {}, config },
+    {
+      checkTextSecurity: async () => ({ safe: true }),
+      streamProviderCompletion: async (options) => {
+        providerRequest = options;
+        await options.onDelta("完成");
+        return { inputTokens: 6, outputTokens: 2 };
+      },
+    }
+  );
+  const prepared = preparedGeneration(config);
+  prepared.content = "hello";
+  prepared.model = Object.assign({}, prepared.model, {
+    context_window: 8192,
+    preset_key: "openai",
+    model_id: "gpt-4o",
+  });
+  prepared.reasoningMode = resolveReasoningMode(prepared.model, prepared.model, "off");
+  prepared.generationPlan = await service.buildGenerationPlan({
+    ctx: prepared.ctx,
+    settings: Object.assign({}, prepared.settings, { max_output_tokens: 8192 }),
+    model: prepared.model,
+    content: prepared.content,
+    reasoningMode: prepared.reasoningMode,
+  });
+  prepared.settings.max_output_tokens = 8192;
+  service.prepareGeneration = async () => prepared;
+  service.generationContext = async () => {
+    throw new Error("prepared generation plans must not rebuild context during streaming");
+  };
+  service.checkpointGeneration = async () => {};
+  service.saveGenerationResult = async () => ({ status: "success" });
+
+  await service.chatStream({ reasoningMode: "off" }, async () => {}, new AbortController().signal);
+
+  assert.equal(providerRequest.maxTokens, prepared.generationPlan.maxOutputTokens);
+  assert.equal(providerRequest.maxTokens < 8192, true);
+  assert.equal(providerRequest.systemPrompt, prepared.generationPlan.systemPrompt);
+  assert.deepEqual(providerRequest.messages, prepared.generationPlan.messages);
+});
+
+test("unknown output capability retries once at 8K only before any provider output", async () => {
+  const config = {
+    aiCredentialsEncryptionKey: Buffer.alloc(32, 29).toString("base64"),
+    aiProviderTimeoutMs: 300000,
+  };
+  const attemptedLimits = [];
+  let rememberedLimit = 0;
+  const service = new AiService(
+    { db: {}, config },
+    {
+      checkTextSecurity: async () => ({ safe: true }),
+      streamProviderCompletion: async (options) => {
+        attemptedLimits.push(options.maxTokens);
+        if (attemptedLimits.length === 1) {
+          options.stats.statusCode = 422;
+          throw new AppError("供应商不支持当前输出额度", {
+            statusCode: 502,
+            errCode: "AI_PROVIDER_OUTPUT_LIMIT_UNSUPPORTED",
+            details: { providerStatus: 422 },
+          });
+        }
+        await options.onDelta("兼容回答");
+        return { inputTokens: 8, outputTokens: 4 };
+      },
+    }
+  );
+  const prepared = preparedGeneration(config);
+  prepared.content = "hello";
+  prepared.model = Object.assign({}, prepared.model, {
+    context_window: 1000000,
+    max_output_tokens: 0,
+    max_output_tokens_source: "",
+    preset_key: "openai",
+    model_id: "gpt-4o",
+  });
+  prepared.settings.max_output_tokens = 32768;
+  prepared.reasoningMode = resolveReasoningMode(prepared.model, prepared.model, "off");
+  prepared.generationPlan = await service.buildGenerationPlan({
+    ctx: prepared.ctx,
+    settings: prepared.settings,
+    model: prepared.model,
+    content: prepared.content,
+    reasoningMode: prepared.reasoningMode,
+  });
+  service.prepareGeneration = async () => prepared;
+  service.checkpointGeneration = async () => {};
+  service.saveGenerationResult = async () => ({ status: "success" });
+  service.rememberCompatibleOutputLimit = async (_prepared, limit) => { rememberedLimit = limit; };
+  const events = [];
+
+  await service.chatStream({ reasoningMode: "off" }, async (event) => events.push(event), new AbortController().signal);
+
+  assert.deepEqual(attemptedLimits, [32768, 8192]);
+  assert.equal(rememberedLimit, 8192);
+  assert.equal(events.filter((event) => event.type === "delta").map((event) => event.content).join(""), "兼容回答");
+  assert.equal(events.at(-1).type, "done");
+});
+
+test("output compatibility never retries after a provider emits content", async () => {
+  const config = {
+    aiCredentialsEncryptionKey: Buffer.alloc(32, 31).toString("base64"),
+    aiProviderTimeoutMs: 300000,
+  };
+  let attempts = 0;
+  const service = new AiService(
+    { db: {}, config },
+    {
+      checkTextSecurity: async () => ({ safe: true }),
+      streamProviderCompletion: async (options) => {
+        attempts += 1;
+        await options.onDelta("已经开始");
+        throw new AppError("供应商不支持当前输出额度", {
+          statusCode: 502,
+          errCode: "AI_PROVIDER_OUTPUT_LIMIT_UNSUPPORTED",
+          details: { providerStatus: 422 },
+        });
+      },
+    }
+  );
+  const prepared = preparedGeneration(config);
+  prepared.content = "hello";
+  prepared.model = Object.assign({}, prepared.model, {
+    context_window: 1000000,
+    max_output_tokens: 0,
+    preset_key: "openai",
+    model_id: "gpt-4o",
+  });
+  prepared.settings.max_output_tokens = 32768;
+  prepared.reasoningMode = resolveReasoningMode(prepared.model, prepared.model, "off");
+  prepared.generationPlan = await service.buildGenerationPlan({
+    ctx: prepared.ctx,
+    settings: prepared.settings,
+    model: prepared.model,
+    content: prepared.content,
+    reasoningMode: prepared.reasoningMode,
+  });
+  service.prepareGeneration = async () => prepared;
+  service.checkpointGeneration = async () => {};
+  service.saveGenerationResult = async () => ({ status: "failed" });
+
+  await assert.rejects(
+    () => service.chatStream({ reasoningMode: "off" }, async () => {}, new AbortController().signal),
+    (error) => error.errCode === "AI_PROVIDER_OUTPUT_LIMIT_UNSUPPORTED"
+  );
+  assert.equal(attempts, 1);
+});
+
+test("an oversized current prompt is rejected before moderation or message inserts", async () => {
+  let moderationChecks = 0;
+  let transactions = 0;
+  const service = new AiService({
+    db: {
+      withTransaction: async () => {
+        transactions += 1;
+        throw new Error("transaction should not start");
+      },
+    },
+    config: {},
+  }, {});
+  service.requireEnabledAi = async () => ({
+    ctx: { circleId: "circle-1", auth: { user: { id: "user-1", openid: "openid-1" } } },
+    settings: { system_prompt: "system", max_output_tokens: 8192 },
+  });
+  service.modelForChat = async () => ({
+    context_window: 1024,
+    protocol: "openai",
+    preset_key: "openai",
+    model_id: "plain-model",
+  });
+  service.assertConsent = async () => {};
+  service.existingRequest = async () => null;
+  service.checkContentSecurity = async () => { moderationChecks += 1; };
+
+  await assert.rejects(
+    () => service.prepareGeneration({ content: "中".repeat(400), requestId: "context_limit_123" }),
+    (error) => error.errCode === "AI_CONTEXT_WINDOW_EXCEEDED"
+      && error.details.contextWindow === 1024
+  );
+  assert.equal(moderationChecks, 0);
+  assert.equal(transactions, 0);
+});
+
+test("conversation context keeps newest complete question-answer pairs without slicing", async () => {
+  let contextQuery = "";
+  let contextParams = null;
+  const newestUserId = "user-new";
+  const olderUserId = "user-old";
   const service = new AiService({
     db: {
       query: async (sql, values) => {
+        contextQuery = sql;
+        contextParams = values;
+        return {
+          rows: [
+            { id: "assistant-new", role: "assistant", content: "aaa", reply_to_message_id: newestUserId, created_at: "2026-07-18T03:00:00Z" },
+            { id: newestUserId, role: "user", content: "uuu", reply_to_message_id: null, created_at: "2026-07-18T03:00:00Z" },
+            { id: "failed-user", role: "user", content: "must-not-appear", reply_to_message_id: null, created_at: "2026-07-18T02:30:00Z" },
+            { id: "assistant-old", role: "assistant", content: "bbb", reply_to_message_id: olderUserId, created_at: "2026-07-18T02:00:00Z" },
+            { id: olderUserId, role: "user", content: "vvv", reply_to_message_id: null, created_at: "2026-07-18T02:00:00Z" },
+          ],
+        };
+      },
+    },
+    config: {},
+  }, {});
+  const context = await service.generationContext(
+    "55555555-5555-4555-8555-555555555555",
+    { circleId: "11111111-1111-4111-8111-111111111111", auth: { user: { id: "22222222-2222-4222-8222-222222222222" } } },
+    { currentContent: "now", inputTokenBudget: 27 }
+  );
+
+  assert.match(contextQuery, /message\.status = 'complete'/);
+  assert.match(contextQuery, /message\.reply_to_message_id/);
+  assert.match(contextQuery, /LIMIT 100/);
+  assert.equal(contextParams.length, 3);
+  assert.deepEqual(context, [
+    { role: "user", content: "uuu" },
+    { role: "assistant", content: "aaa" },
+    { role: "user", content: "now" },
+  ]);
+  assert.equal(context.some((message) => message.content === "must-not-appear"), false);
+});
+
+test("history trimming stops at an oversized newest pair instead of backfilling older turns", async () => {
+  const service = new AiService({
+    db: {
+      query: async () => ({
+        rows: [
+          { id: "assistant-new", role: "assistant", content: "a".repeat(90), reply_to_message_id: "user-new", created_at: "2026-07-18T03:00:00Z" },
+          { id: "user-new", role: "user", content: "u".repeat(90), reply_to_message_id: null, created_at: "2026-07-18T03:00:00Z" },
+          { id: "assistant-old", role: "assistant", content: "aaa", reply_to_message_id: "user-old", created_at: "2026-07-18T02:00:00Z" },
+          { id: "user-old", role: "user", content: "uuu", reply_to_message_id: null, created_at: "2026-07-18T02:00:00Z" },
+        ],
+      }),
+    },
+    config: {},
+  }, {});
+  const context = await service.generationContext(
+    "55555555-5555-4555-8555-555555555555",
+    { circleId: "11111111-1111-4111-8111-111111111111", auth: { user: { id: "22222222-2222-4222-8222-222222222222" } } },
+    { currentContent: "now", inputTokenBudget: 27 }
+  );
+  assert.deepEqual(context, [{ role: "user", content: "now" }]);
+});
+
+test("stale generation recovery still uses the generation lease", async () => {
+  let query = "";
+  const service = new AiService({
+    db: {
+      query: async (sql) => {
         query = sql;
-        params = values;
         return { rows: [] };
       },
     },
     config: {},
   }, {});
-  const currentUserMessageId = "88888888-8888-4888-8888-888888888888";
-  await service.generationContext(
-    "55555555-5555-4555-8555-555555555555",
-    { circleId: "11111111-1111-4111-8111-111111111111", auth: { user: { id: "22222222-2222-4222-8222-222222222222" } } },
-    currentUserMessageId
-  );
-  assert.match(query, /reply\.status = 'complete'/);
-  assert.match(query, /message\.id = \$4/);
-  assert.equal(params[3], currentUserMessageId);
   await service.failStaleGenerations(
     { circleId: "11111111-1111-4111-8111-111111111111" },
     "55555555-5555-4555-8555-555555555555"
   );
   assert.match(query, /SET status = 'failed'/);
-  assert.match(query, /interval '10 minutes'/);
+  assert.match(query, /generation_lease_expires_at < now\(\)/);
 });
 
 test("provider stream finishes at DONE without waiting for the upstream socket to close", async () => {
@@ -1517,6 +2234,7 @@ test("reconnected AI streams tail an in-progress answer instead of waiting for o
       conversation_id: "conversation-1",
       assistant_id: "assistant-1",
       assistant_status: "generating",
+      assistant_generation_lease_expires_at: "2099-01-01T00:00:00.000Z",
       assistant_content: "恢复",
       assistant_reasoning_content: "恢复后的",
     },
@@ -1536,6 +2254,37 @@ test("reconnected AI streams tail an in-progress answer instead of waiting for o
   assert.equal(events[4].content, "思考");
   assert.equal(events[5].content, "后的回答");
   assert.equal(events[6].replay, true);
+});
+
+test("an expired replay lease becomes a terminal failure instead of polling forever", async () => {
+  const service = new AiService({ db: {}, config: { aiProviderTimeoutMs: 300000 } }, {});
+  let staleRecoveries = 0;
+  service.prepareGeneration = async () => ({
+    ctx: { circleId: "circle-1", auth: { user: { id: "user-1" } } },
+    requestId: "request-expired",
+    replay: {
+      conversation_id: "conversation-1",
+      assistant_id: "assistant-1",
+      assistant_status: "generating",
+      assistant_generation_lease_expires_at: "2020-01-01T00:00:00.000Z",
+      assistant_content: "部分回答",
+      assistant_reasoning_content: "",
+    },
+  });
+  service.failStaleGenerations = async () => { staleRecoveries += 1; };
+  service.existingRequest = async () => ({
+    conversation_id: "conversation-1",
+    assistant_id: "assistant-1",
+    assistant_status: "failed",
+    assistant_error_code: "AI_GENERATION_LEASE_EXPIRED",
+    assistant_content: "部分回答",
+    assistant_reasoning_content: "",
+  });
+  await assert.rejects(
+    () => service.chatStream({}, async () => {}, new AbortController().signal),
+    (error) => error.errCode === "AI_GENERATION_LEASE_EXPIRED"
+  );
+  assert.equal(staleRecoveries, 1);
 });
 
 test("normal AI response close does not cancel generation", () => {
@@ -1570,10 +2319,12 @@ test("only the authenticated member cancel action aborts an active generation", 
   const messageId = "11111111-1111-4111-8111-111111111111";
   const controller = new AbortController();
   const unregister = registerActiveGeneration(messageId, controller);
+  let cancelQuery = "";
   const db = {
     query: async (sql) => {
+      cancelQuery = sql;
       assert.match(sql, /incircle_ai_messages/);
-      return { rows: [{ id: messageId, status: "generating" }] };
+      return { rows: [{ id: messageId, status: "cancelled" }] };
     },
   };
   const service = new AiService({ db, config: {} }, {});
@@ -1586,6 +2337,8 @@ test("only the authenticated member cancel action aborts an active generation", 
     assert.equal(result.cancelled, true);
     assert.equal(controller.signal.aborted, true);
     assert.equal(controller.signal.reason.code, "AI_USER_CANCELLED");
+    assert.match(cancelQuery, /AND role = 'assistant' AND status = 'generating'/);
+    assert.match(cancelQuery, /generation_lease_expires_at = NULL/);
   } finally {
     unregister();
   }

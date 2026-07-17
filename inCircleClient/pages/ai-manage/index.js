@@ -2,8 +2,31 @@ const api = require("../../utils/api");
 const time = require("../../utils/time");
 const dialog = require("../../utils/dialog");
 
+const OUTPUT_TOKEN_PRESETS = [4096, 8192, 16384, 32768];
+
 function promptText(value) {
   return (Array.isArray(value) ? value : []).join("\n");
+}
+
+function compactTokenCount(value) {
+  const count = Number(value || 0);
+  if (count >= 1000000) return `${Number((count / 1000000).toFixed(2))}M`;
+  if (count >= 1000) return `${Number((count / 1000).toFixed(1))}K`;
+  return String(count || 0);
+}
+
+function outputCapabilityHint(model) {
+  if (!model) return "选择默认模型后，将自动匹配实际输出上限";
+  const limit = Number(model.maxOutputTokens || 0);
+  if (!limit) return "模型输出能力待识别，高额度不兼容时会在输出前安全回退至 8K";
+  const source = ({
+    manual: "手动设置",
+    catalog: "能力库匹配",
+    probe: "兼容探测",
+    compatibility: "兼容探测",
+    sync: "供应商识别",
+  })[model.maxOutputTokensSource] || "供应商识别";
+  return `默认模型上限 ${compactTokenCount(limit)} · ${source}`;
 }
 
 Page({
@@ -19,6 +42,10 @@ Page({
     saveBusy: false,
     deletingProviderId: "",
     reportBusyId: "",
+    outputTokenPresets: OUTPUT_TOKEN_PRESETS,
+    outputLimitMode: "preset",
+    lastOutputPreset: 8192,
+    outputCapabilityHint: "",
     draft: {
       assistantName: "圈内 AI",
       systemPrompt: "",
@@ -48,6 +75,8 @@ Page({
       api.getAiUsage(this.data.circleId),
     ])
       .then(([settings, providerData, modelData, usage]) => {
+        const maxOutputTokens = Number(settings.maxOutputTokens || 8192);
+        const usesPreset = OUTPUT_TOKEN_PRESETS.includes(maxOutputTokens);
         this.setData({
           settings,
           providers: (providerData.providers || []).map((provider) =>
@@ -55,13 +84,16 @@ Page({
           ),
           models: modelData.models || [],
           usageDays: usage.days || [],
+          outputLimitMode: usesPreset ? "preset" : "custom",
+          lastOutputPreset: usesPreset ? maxOutputTokens : 8192,
+          outputCapabilityHint: outputCapabilityHint(settings.defaultModel),
           draft: {
             assistantName: settings.assistantName || "圈内 AI",
             systemPrompt: settings.systemPrompt || "",
             quickPromptsText: promptText(settings.quickPrompts),
             memberDailyLimit: settings.memberDailyLimit || 20,
             circleDailyLimit: settings.circleDailyLimit || 200,
-            maxOutputTokens: settings.maxOutputTokens || 8192,
+            maxOutputTokens,
           },
           loading: false,
         });
@@ -85,7 +117,37 @@ Page({
   },
 
   onDraftInput(e) {
-    this.setData({ [`draft.${e.currentTarget.dataset.field}`]: e.detail.value });
+    const field = e.currentTarget.dataset.field;
+    const patch = { [`draft.${field}`]: e.detail.value };
+    if (field === "maxOutputTokens") patch.outputLimitMode = "custom";
+    this.setData(patch);
+  },
+
+  selectOutputMode(e) {
+    if (this.data.saveBusy) return;
+    const mode = e.currentTarget.dataset.mode;
+    if (mode !== "preset" && mode !== "custom") return;
+    if (mode === "preset") {
+      const current = Number(this.data.draft.maxOutputTokens || 0);
+      const value = OUTPUT_TOKEN_PRESETS.includes(current)
+        ? current
+        : Number(this.data.lastOutputPreset || 8192);
+      this.setData({ outputLimitMode: mode, "draft.maxOutputTokens": value });
+      return;
+    }
+    this.setData({ outputLimitMode: mode });
+  },
+
+  selectOutputLimit(e) {
+    if (this.data.saveBusy) return;
+    const value = Number(e.currentTarget.dataset.value || 0);
+    if (OUTPUT_TOKEN_PRESETS.includes(value)) {
+      this.setData({
+        outputLimitMode: "preset",
+        lastOutputPreset: value,
+        "draft.maxOutputTokens": value,
+      });
+    }
   },
 
   saveSettings() {
@@ -95,6 +157,11 @@ Page({
       .split(/\r?\n/)
       .map((item) => item.trim())
       .filter(Boolean);
+    const maxOutputTokens = Number(draft.maxOutputTokens);
+    if (!Number.isInteger(maxOutputTokens) || maxOutputTokens < 128 || maxOutputTokens > 32768) {
+      wx.showToast({ title: "输出额度应为 128–32768", icon: "none" });
+      return;
+    }
     this.setData({ saveBusy: true });
     api
       .updateAiSettings(this.data.circleId, {
@@ -103,10 +170,14 @@ Page({
         quickPrompts,
         memberDailyLimit: Number(draft.memberDailyLimit),
         circleDailyLimit: Number(draft.circleDailyLimit),
-        maxOutputTokens: Number(draft.maxOutputTokens),
+        maxOutputTokens,
       })
       .then((settings) => {
-        this.setData({ settings });
+        this.setData({
+          settings,
+          "draft.maxOutputTokens": settings.maxOutputTokens || maxOutputTokens,
+          outputCapabilityHint: outputCapabilityHint(settings.defaultModel),
+        });
         wx.showToast({ title: "AI 设置已保存", icon: "success" });
       })
       .catch((error) => wx.showToast({ title: error.message || "保存失败", icon: "none" }))
