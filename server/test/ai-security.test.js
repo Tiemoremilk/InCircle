@@ -372,6 +372,7 @@ test("model tests call the selected model and persist model-level health", async
         writes.push({ sql, params });
         return { rows: [] };
       }
+      if (sql.includes("FROM incircle_ai_model_capability_catalog")) return { rows: [] };
       throw new Error(`unexpected query: ${sql}`);
     },
     async withTransaction(callback) { return callback(); },
@@ -800,14 +801,16 @@ test("only explicit pre-stream output parameter rejections qualify for compatibi
   }, 32768), 8192);
 });
 
-test("database model catalog matches trusted presets without guessing custom aliases", async () => {
+test("database model catalog keeps provider namespaces and supports exact custom IDs", async () => {
   const calls = [];
   const db = {
     async query(sql, params) {
       calls.push({ sql, params });
-      if (params[0] === "openai" && params[1].includes("gpt-4.1-mini")) {
+      const requestedIds = Array.isArray(params[0]) ? params[0] : params[1];
+      if (requestedIds.includes("gpt-4.1-mini")) {
         return {
           rows: [{
+            provider_key: "openai",
             model_id: "gpt-4.1-mini",
             model_id_normalized: "gpt-4.1-mini",
             aliases_normalized: [],
@@ -828,11 +831,14 @@ test("database model catalog matches trusted presets without guessing custom ali
   assert.equal(official.maxOutputTokens, 32768);
   assert.equal(official.catalogVersion, "2026-07-18.1");
 
-  const queryCount = calls.length;
-  const customAlias = await catalogModelCapabilities(db, { preset_key: "custom" }, "gpt-4.1-mini");
+  const customExact = await catalogModelCapabilities(db, { preset_key: "custom" }, "gpt-4.1-mini");
+  assert.equal(customExact.matched, true);
+  assert.equal(customExact.contextWindow, 1047576);
+  assert.doesNotMatch(calls.at(-1).sql, /aliases_normalized/);
+
+  const customAlias = await catalogModelCapabilities(db, { preset_key: "custom" }, "gpt-4.1-mini-alias");
   assert.equal(customAlias.matched, false);
   assert.equal(customAlias.contextWindow, 0);
-  assert.equal(calls.length, queryCount);
 
   const unknownVersion = await catalogModelCapabilities(db, { preset_key: "openai" }, "gpt-5.6");
   assert.equal(unknownVersion.matched, false);

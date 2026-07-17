@@ -87,7 +87,7 @@ Circle AI is disabled by default for every circle. A circle owner, circle super 
 
 The runtime catalog is stored in `incircle_ai_model_capability_catalog`; immutable import metadata is stored in `incircle_ai_model_catalog_releases`. The bundled `db/catalog/model-capabilities.json` release `2026-07-18.1` contains 689 text-model records across ten supported provider keys. It is a reviewed community seed based on `models.dev`, not an assertion that every entry is official or that every model in existence is covered. Runtime production processes do not scrape the internet.
 
-Catalog matching is limited to an exact built-in provider key and normalized model ID or an explicitly stored alias. Custom providers and user-defined deployment names are not guessed. Manual database rows (`source_kind=manual`) and `official`/`verified` rows are protected from lower-confidence community imports.
+Built-in providers match by exact provider key plus normalized model ID or an explicitly stored alias. Custom providers may use a global exact-ID fallback, but only when there is one candidate or every candidate has identical context, output, and reasoning capabilities. This fallback never uses aliases or fuzzy names; conflicting results and user-defined deployment names remain unknown. Manual database rows (`source_kind=manual`) and `official`/`verified` rows are protected from lower-confidence community imports.
 
 To prepare a new release on a development machine:
 

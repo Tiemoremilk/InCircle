@@ -830,6 +830,10 @@ CREATE INDEX IF NOT EXISTS idx_incircle_ai_model_catalog_active
 CREATE INDEX IF NOT EXISTS idx_incircle_ai_model_catalog_aliases
   ON incircle_ai_model_capability_catalog USING gin(aliases_normalized);
 
+CREATE INDEX IF NOT EXISTS idx_incircle_ai_model_catalog_global_active_model
+  ON incircle_ai_model_capability_catalog(model_id_normalized)
+  WHERE status = 'active';
+
 CREATE TABLE IF NOT EXISTS incircle_ai_providers (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   circle_id uuid NOT NULL REFERENCES incircle_circles(id) ON DELETE CASCADE,

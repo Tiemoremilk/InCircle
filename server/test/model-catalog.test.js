@@ -7,7 +7,10 @@ const {
   importBundledModelCatalog,
   readBundledModelCatalog,
 } = require("../src/model-catalog");
-const { enrichModelsWithCatalog } = require("../src/services/ai/model-capabilities");
+const {
+  catalogModelCapabilities,
+  enrichModelsWithCatalog,
+} = require("../src/services/ai/model-capabilities");
 
 function catalogDatabase(existingRelease) {
   const calls = [];
@@ -131,11 +134,64 @@ test("provider metadata wins while the database catalog fills only missing capab
   assert.equal(models[1].maxOutputTokensSource, "catalog");
 });
 
+test("custom providers accept only globally unambiguous exact model capabilities", async () => {
+  const rowsByModel = {
+    "shared-model": [{
+      provider_key: "openai",
+      model_id_normalized: "shared-model",
+      context_window: 1000000,
+      max_output_tokens: 32768,
+      supports_reasoning: true,
+      confidence: "official",
+    }, {
+      provider_key: "azure",
+      model_id_normalized: "shared-model",
+      context_window: 1000000,
+      max_output_tokens: 32768,
+      supports_reasoning: true,
+      confidence: "community",
+    }],
+    "ambiguous-model": [{
+      provider_key: "openai",
+      model_id_normalized: "ambiguous-model",
+      context_window: 1000000,
+      max_output_tokens: 32768,
+      supports_reasoning: true,
+    }, {
+      provider_key: "openrouter",
+      model_id_normalized: "ambiguous-model",
+      context_window: 200000,
+      max_output_tokens: 16384,
+      supports_reasoning: true,
+    }],
+  };
+  const db = {
+    async query(sql, params) {
+      assert.doesNotMatch(String(sql), /aliases_normalized/);
+      return { rows: (params[0] || []).flatMap((id) => rowsByModel[id] || []) };
+    },
+  };
+
+  const shared = await catalogModelCapabilities(db, { preset_key: "custom" }, "shared-model");
+  assert.equal(shared.matched, true);
+  assert.equal(shared.contextWindow, 1000000);
+  assert.equal(shared.maxOutputTokens, 32768);
+
+  const ambiguous = await catalogModelCapabilities(db, { preset_key: "custom" }, "ambiguous-model");
+  assert.equal(ambiguous.matched, false);
+  assert.equal(ambiguous.contextWindow, 0);
+  assert.equal(ambiguous.maxOutputTokens, 0);
+});
+
 test("database catalog schema, migration, and deploy importer stay wired together", () => {
   const root = path.resolve(__dirname, "../..");
   const schema = fs.readFileSync(path.join(root, "server/db/schema.sql"), "utf8");
   const migration = fs.readFileSync(
     path.join(root, "server/db/migrations/0030_database_model_capability_catalog.sql"),
+    "utf8"
+  );
+  const customLookupMigration = fs.readFileSync(
+    path.join(root, "server/db/migrations/0031_custom_model_catalog_lookup.sql"),
     "utf8"
   );
   const migrateSource = fs.readFileSync(path.join(root, "server/src/migrate.js"), "utf8");
@@ -150,6 +206,9 @@ test("database catalog schema, migration, and deploy importer stay wired togethe
   });
   assert.match(migrateSource, /await importBundledModelCatalog\(db\)/);
   assert.match(dockerfile, /COPY db \.\/db/);
+  assert.match(schema, /idx_incircle_ai_model_catalog_global_active_model/);
+  assert.match(customLookupMigration, /model_id_normalized/);
+  assert.match(customLookupMigration, /WHERE status = 'active'/);
   assert.equal(bundle.version, "2026-07-18.1");
   assert.ok(bundle.entries.length >= 600);
 });
