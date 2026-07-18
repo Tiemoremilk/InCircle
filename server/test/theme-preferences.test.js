@@ -45,7 +45,16 @@ test("eleven presets plus one custom theme stay distinct and accessible", () => 
   assert.deepEqual(THEME_KEYS, PRESET_THEME_KEYS.concat(["custom"]));
   const pickerOptions = miniTheme.getThemeOptions("custom", { includeCustom: true });
   assert.equal(pickerOptions.length, 12);
-  assert.equal(pickerOptions[pickerOptions.length - 1].key, "custom");
+  const customOption = pickerOptions[pickerOptions.length - 1];
+  assert.equal(customOption.key, "custom");
+  assert.equal(customOption.name, "自定义");
+  assert.ok(customOption.swatch);
+  const accountThemeData = miniTheme.getInitialPageThemeData({
+    allowCustomThemeOption: true,
+    themeOptions: [],
+  });
+  assert.equal(accountThemeData.themeOptions.length, 12);
+  assert.equal(accountThemeData.themeOptions[11].name, "自定义");
   assert.equal(pickerOptions.some((theme) => theme.key === "iris"), false);
   assert.equal(new Set(themes.map((theme) => theme.name)).size, themes.length);
   assert.equal(new Set(themes.map((theme) => theme.primary)).size, themes.length);
@@ -205,11 +214,18 @@ test("custom theme derives global variables and every page receives them", () =>
   });
 });
 
-test("circle switch offers a live RGBA picker and truncates long circle descriptions", () => {
-  const script = fs.readFileSync(path.join(root, "inCircleClient/pages/circle-switch/index.js"), "utf8");
-  const template = fs.readFileSync(path.join(root, "inCircleClient/pages/circle-switch/index.wxml"), "utf8");
+test("account settings offers a live RGBA picker and circle descriptions stay truncated", () => {
+  const script = fs.readFileSync(path.join(root, "inCircleClient/pages/account-settings/index.js"), "utf8");
+  const template = fs.readFileSync(path.join(root, "inCircleClient/pages/account-settings/index.wxml"), "utf8");
+  const accountStyles = fs.readFileSync(path.join(root, "inCircleClient/pages/account-settings/index.wxss"), "utf8");
   const styles = fs.readFileSync(path.join(root, "inCircleClient/pages/circle-switch/index.wxss"), "utf8");
 
+  assert.match(script, /allowCustomThemeOption:\s*true/);
+  assert.match(template, /class="account-hero-metric-value"/);
+  assert.match(template, /class="account-hero-metric-label"/);
+  assert.doesNotMatch(template, /class="metric-(?:value|label)/);
+  assert.match(accountStyles, /\.account-hero-metric-value\s*\{[^}]*color:\s*#ffffff;/s);
+  assert.match(accountStyles, /\.account-hero-metric-label\s*\{[^}]*rgba\(255,\s*255,\s*255,/s);
   assert.match(template, /custom-theme-mask/);
   ["r", "g", "b", "a"].forEach((channel) => {
     assert.match(template, new RegExp(`data-channel="${channel}"`));
@@ -453,7 +469,7 @@ test("theme consumers subscribe for their full cached lifetime", () => {
   const tabBarSource = fs.readFileSync(path.join(root, "inCircleClient/custom-tab-bar/index.js"), "utf8");
   const tabBarTemplate = fs.readFileSync(path.join(root, "inCircleClient/custom-tab-bar/index.wxml"), "utf8");
   const aiFabSource = fs.readFileSync(path.join(root, "inCircleClient/components/ai-fab/index.js"), "utf8");
-  const switchSource = fs.readFileSync(path.join(root, "inCircleClient/pages/circle-switch/index.js"), "utf8");
+  const switchSource = fs.readFileSync(path.join(root, "inCircleClient/pages/account-settings/index.js"), "utf8");
 
   assert.match(appSource, /registerPageDefinition\(config\.data\)/);
   assert.match(appSource, /installRouteThemeSync\(\)/);
@@ -469,7 +485,11 @@ test("theme consumers subscribe for their full cached lifetime", () => {
   assert.match(aiFabSource, /unregisterVisualConsumer\(this\)/);
   assert.match(switchSource, /beginPreferenceSave\(\)/);
   assert.match(switchSource, /theme\.whenThemeReady\(\)/);
-  assert.doesNotMatch(switchSource, /wx\.reLaunch/);
+  const themeSelect = switchSource.slice(
+    switchSource.indexOf("onThemeSelect(e)"),
+    switchSource.indexOf("openCustomTheme()")
+  );
+  assert.doesNotMatch(themeSelect, /wx\.reLaunch/);
   assert.doesNotMatch(switchSource, /已保存.*主题|自定义主题已应用/);
   assert.doesNotMatch(switchSource, /setTheme\([^\n]+\);\s*theme\.applyPageTheme\(this\)/);
 });

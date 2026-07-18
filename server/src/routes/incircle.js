@@ -79,6 +79,12 @@ async function dispatchInCircleType(fastify, body, request) {
       return service.acceptAgreements(body);
     case "incircleChangePassword":
       return service.changePassword(body);
+    case "incircleAccountSettings":
+      return service.accountSettings(body);
+    case "incircleUpdateWechatLoginVerification":
+      return service.updateWechatLoginVerification(body);
+    case "incircleRevokeLoginSession":
+      return service.revokeLoginSession(body);
     case "incircleUpdateTheme":
       return service.updateTheme(body);
     case "incircleLogout":

@@ -91,6 +91,7 @@ test("blocking a user revokes sessions without changing owned circle status", as
         return { rows: [{ id: "target-user", openid: "target-openid", status: "active", is_super_admin: false }] };
       }
       if (normalized.startsWith("UPDATE incircle_users")) return { rows: [], rowCount: 1 };
+      if (normalized.startsWith("UPDATE incircle_account_sessions")) return { rows: [], rowCount: 1 };
       throw new Error(`Unexpected query: ${normalized}`);
     },
   };
@@ -108,6 +109,7 @@ test("blocking a user revokes sessions without changing owned circle status", as
   assert.match(update.sql, /auth_version = auth_version \+ 1/);
   assert.equal(update.params[1], "blocked");
   assert.equal(queries.some((query) => /UPDATE incircle_circles/.test(query.sql)), false);
+  assert.equal(queries.some((query) => /UPDATE incircle_account_sessions/.test(query.sql)), true);
   assert.equal(result.user.status, "blocked");
 });
 
@@ -149,18 +151,18 @@ test("shared dialog renders only danger and primary tones", () => {
 
 test("management center uses one theme-aware monochrome icon", () => {
   const icon = read("inCircleClient/images/ui-icons/admin.svg");
-  const switchPage = read("inCircleClient/pages/circle-switch/index.wxml");
-  const switchStyles = read("inCircleClient/pages/circle-switch/index.wxss");
+  const accountPage = read("inCircleClient/pages/account-settings/index.wxml");
+  const accountStyles = read("inCircleClient/pages/account-settings/index.wxss");
   const usages = [
-    switchPage,
+    accountPage,
     read("inCircleClient/pages/index/index.wxml"),
     read("inCircleClient/pages/admin/index.wxml"),
     read("inCircleClient/pages/circle-settings/index.wxml"),
   ].join("\n");
   assert.match(icon, /stroke="#000000"/);
   assert.doesNotMatch(usages, /admin\.png/);
-  assert.equal((usages.match(/admin\.svg/g) || []).length, 4);
-  assert.match(switchStyles, /\.management-icon image\s*\{[^}]*filter:\s*var\(--theme-icon-filter/s);
+  assert.equal((usages.match(/admin\.svg/g) || []).length, 3);
+  assert.match(accountStyles, /\.management-icon image,[\s\S]*filter:\s*var\(--theme-icon-filter/s);
 });
 
 test("management pages are registered and the old member search is removed", () => {

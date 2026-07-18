@@ -81,8 +81,11 @@ InCircle 是一个面向熟人关系的小圈子协作微信小程序，用于�
 - 使用账号和密码注册、登录。
 - 注册或绑定时通过 <code>wx.login</code> 获取 code，由服务端调用微信 <code>jscode2session</code> 验证微信身份。
 - 支持账号绑定微信、修改密码、重置密码、退出登录和账号注销。
+- 独立账号设置页集中管理登录保护、最近设备、主题、协议、退出和注销；平台超管可从同一页面进入管理中心。
+- 默认登录时校验原绑定微信；用户输入当前密码确认后可关闭，关闭后仅校验账号密码，原微信绑定关系不变。
+- 每个小程序安装实例对应一条设备会话；同一设备再次登录会覆盖最近时间并轮换令牌，其他设备可单独退出，当前设备不能被误踢。
 - 旧版只依赖微信身份的快捷登录已下线，服务端返回 <code>LEGACY_LOGIN_DISABLED</code>。
-- JWT 默认有效期为 24 小时。账号封禁、解绑微信和关键登录状态变化会提升 <code>auth_version</code>，使旧令牌失效。
+- JWT 默认有效期为 24 小时，并绑定服务端设备会话 ID 与会话版本。普通登录只轮换当前设备；修改或重置密码、账号封禁、解绑微信等安全事件仍会撤销相关旧令牌。
 - 用户选择的主题和自定义 RGBA 颜色保存在服务端，重新登录后恢复。
 
 ### 2. 我的圈子
@@ -271,8 +274,8 @@ flowchart LR
 1. 小程序调用 <code>wx.login</code> 获取一次性 code。
 2. 登录、注册、绑定或重置场景把 code 发送到自建后端。
 3. 后端调用微信 <code>jscode2session</code> 获取并验证 OpenID。
-4. 账号登录成功后，后端签发自有 HS256 JWT。
-5. 后续请求通过 <code>Authorization: Bearer ...</code> 鉴权。
+4. 账号登录成功后，后端按本地随机安装标识更新设备会话，并签发带会话 ID 的自有 HS256 JWT。
+5. 后续请求同时校验 <code>Authorization: Bearer ...</code>、账号全局鉴权版本和设备会话版本。
 6. 业务写入 PostgreSQL，图片写入服务器挂载目录。
 7. AI 对话通过单独 SSE 接口分块返回，并支持断线恢复和幂等 requestId。
 
@@ -582,7 +585,7 @@ Authorization: Bearer <token>
 
 | 分组 | action |
 | --- | --- |
-| 账号 | <code>incircleSession</code>、账号登录/注册/绑定、重置/修改密码、退出和注销 |
+| 账号 | <code>incircleSession</code>、账号登录/注册/绑定、重置/修改密码、账号设置、微信登录校验、设备会话退出、当前设备退出和注销 |
 | 圈子 | 我的圈子、创建、切换、入圈预览、加入、设置、退出、解散、成员详情和移除 |
 | 活动 | 列表、详情、创建、编辑、删除、状态、结束和照片 |
 | AA | 详情、创建、编辑、删除、活动转账单、结清和提醒 |
@@ -731,6 +734,8 @@ InCircle 不自行研发、训练或部署生成式人工智能模型，也不�
 账号和圈子：
 
 - <code>incircle_users</code>
+- <code>incircle_account_sessions</code>：按安装实例保存哈希设备键、最近登录环境、服务端登录地址、令牌版本和撤销状态。
+- <code>incircle_account_agreement_acceptances</code>：按协议版本保存不可变签署记录，账号删除后保留匿名审计主体。
 - <code>incircle_circles</code>
 - <code>incircle_circle_members</code>
 - <code>incircle_member_cards</code>
@@ -873,6 +878,10 @@ powershell -ExecutionPolicy Bypass -File .\scripts\deploy-server.ps1 -HostName "
 location / {
     proxy_pass http://127.0.0.1:3000;
     proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
 }
 ~~~
 
@@ -882,6 +891,10 @@ AI SSE 必须关闭缓冲：
 location = /api/ai/chat/stream {
     proxy_pass http://127.0.0.1:3000;
     proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
     proxy_set_header Connection "";
     proxy_buffering off;
     proxy_request_buffering off;
@@ -983,7 +996,7 @@ npm test
 npm audit --omit=dev
 ~~~
 
-小程序提交前至少检查 27 个页面、五个 Tab、登录切圈和全部业务主链路，并在 Android 与 iPhone 真机检查键盘、安全区、主题和 Tabbar。
+小程序提交前至少检查 30 个已注册页面、五个 Tab、登录切圈和全部业务主链路，并在 Android 与 iPhone 真机检查键盘、安全区、主题和 Tabbar。
 
 ## 安全与隐私
 
@@ -991,6 +1004,8 @@ npm audit --omit=dev
 
 - 密码使用 PBKDF2-SHA256，310000 次迭代、32 字节派生密钥和独立随机盐。
 - JWT 使用 HS256 和常量时间签名比较。
+- JWT 必须匹配服务端仍有效的设备会话；踢出单台设备不影响其他设备，同一设备重新登录会让该设备旧令牌立即失效。
+- 设备安装标识只以 SHA-256 哈希落库；登录地址取自受信任反向代理后的服务端请求 IP，不请求额外定位权限，也不调用第三方地理位置接口。
 - 登录尝试 10 分钟最多 8 次。
 - 封禁、解绑和关键状态变化撤销旧令牌。
 - 生产环境隐藏未知内部异常。

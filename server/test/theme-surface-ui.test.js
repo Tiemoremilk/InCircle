@@ -102,9 +102,9 @@ test("member editor follows the shared form layout and hides the custom tabbar",
 });
 
 test("custom theme picker uses real derived colors and fixed actions", () => {
-  const template = read("inCircleClient/pages/circle-switch/index.wxml");
-  const styles = read("inCircleClient/pages/circle-switch/index.wxss");
-  const script = read("inCircleClient/pages/circle-switch/index.js");
+  const template = read("inCircleClient/pages/account-settings/index.wxml");
+  const styles = read("inCircleClient/pages/account-settings/index.wxss");
+  const script = read("inCircleClient/pages/account-settings/index.js");
   const closeIcon = read("inCircleClient/images/ui-icons/close.svg");
 
   const head = template.indexOf('<view class="custom-theme-head">');

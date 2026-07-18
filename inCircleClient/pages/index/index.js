@@ -42,7 +42,6 @@ Page({
   data: {
     loading: true,
     home: null,
-    isSuperAdmin: false,
   },
 
   onShow() {
@@ -56,13 +55,12 @@ Page({
         const decoratedHome = decorateHome(home);
         this.setData({
           home: decoratedHome,
-          isSuperAdmin: !!decoratedHome.isSuperAdmin,
           loading: false,
         });
       })
       .catch((error) => {
         const message = error.message || "读取失败";
-        if (["AUTH_REQUIRED", "TOKEN_INVALID", "TOKEN_EXPIRED", "TOKEN_REVOKED"].includes(error.errCode) || /登录|绑定/.test(message)) {
+        if (["AUTH_REQUIRED", "TOKEN_INVALID", "TOKEN_EXPIRED", "TOKEN_REVOKED", "ACCOUNT_SESSION_REVOKED", "ACCOUNT_SESSION_EXPIRED"].includes(error.errCode) || /登录|绑定/.test(message)) {
           wx.redirectTo({ url: "/pages/login/index" });
           return;
         }
@@ -155,9 +153,9 @@ Page({
     });
   },
 
-  openAdmin() {
+  openAccountSettings() {
     wx.navigateTo({
-      url: "/pages/admin/index",
+      url: "/pages/account-settings/index",
     });
   },
 

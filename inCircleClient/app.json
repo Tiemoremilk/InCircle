@@ -3,6 +3,7 @@
     "pages/login/index",
     "pages/agreement-consent/index",
     "pages/legal/index",
+    "pages/account-settings/index",
     "pages/circle-switch/index",
     "pages/my-circles/index",
     "pages/circle-join/index",

@@ -17,7 +17,8 @@ async function buildApp(options) {
   const config = (options && options.config) || loadConfig();
   const app = fastifyFactory({
     logger: config.nodeEnv !== "test",
-    trustProxy: ["127.0.0.1", "::1"],
+    // The loopback-published Docker API is reached through one host reverse proxy.
+    trustProxy: 1,
     bodyLimit: 1024 * 1024,
   });
 

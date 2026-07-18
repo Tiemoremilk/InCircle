@@ -111,12 +111,29 @@ The production stream uses guarded output: provider deltas are read continuously
 
 If the WeChat Gateway product is enabled with no-code interception, exclude `/api/ai/chat/stream` from its routing rules. That gateway can buffer or time out long chunked responses and then retry through `wx.request`. The endpoint sends two-second SSE heartbeats and the API can resume an idempotent retry, but neither can override a gateway's hard request-duration limit. Bypassing the gateway for this one endpoint is required for the lowest-latency stream; other `/api/` endpoints can continue to use the gateway.
 
-If the public API is behind Nginx, disable response buffering for the streaming endpoint and keep generous stream timeouts:
+If the public API is behind Nginx, forward the client address on ordinary requests:
+
+```nginx
+location / {
+    proxy_pass http://127.0.0.1:3000;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+}
+```
+
+The streaming endpoint declares its own proxy headers, disables response buffering, and keeps generous timeouts:
 
 ```nginx
 location = /api/ai/chat/stream {
     proxy_pass http://127.0.0.1:3000;
     proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
     proxy_set_header Connection "";
     proxy_buffering off;
     proxy_request_buffering off;
@@ -125,8 +142,6 @@ location = /api/ai/chat/stream {
     proxy_send_timeout 660s;
 }
 ```
-
-Keep the existing general `/api/` reverse-proxy rule for all other endpoints.
 
 If Docker permission fails on the server, run once:
 

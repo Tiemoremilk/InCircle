@@ -7,6 +7,10 @@
         <view class="overview-title">{{user.nickName}} 的圈子</view>
         <view class="overview-subtitle">选择一个熟人圈继续</view>
       </view>
+      <view class="overview-account" bindtap="openAccountSettings">
+        <image src="/images/ui-icons/account.svg" mode="aspectFit"></image>
+        <text>账号设置</text>
+      </view>
       <view class="overview-count motion-theme-mark">{{joinedCount}}</view>
     </view>
     <view class="overview-stats">
@@ -16,256 +20,57 @@
     </view>
   </view>
 
+  <view class="circle-launchpad">
+    <view class="page-actions">
+      <view class="circle-action join-action motion-state {{switchingCircle || creatingCircle ? 'disabled' : ''}}" bindtap="openJoin">
+        <view class="circle-action-icon"><image src="/images/ui-icons/qr-code.svg" mode="aspectFit"></image></view>
+        <view class="circle-action-copy"><text class="circle-action-title">加入圈子</text><text class="circle-action-hint">邀请码或扫码</text></view>
+      </view>
+      <view class="circle-action create-action motion-state {{!isSuperAdmin && !canCreateCircle ? 'at-limit' : ''}} {{switchingCircle || creatingCircle ? 'disabled' : ''}}" bindtap="createCircle">
+        <view class="circle-action-icon"><image src="/images/ui-icons/layers.svg" mode="aspectFit"></image></view>
+        <view class="circle-action-copy">
+          <text class="circle-action-title">{{creatingCircle ? '创建中...' : !isSuperAdmin && !canCreateCircle ? '已达创建上限' : '创建圈子'}}</text>
+          <text class="circle-action-hint" wx:if="{{!isSuperAdmin}}">已创建 {{ownedCircleCount}} / {{circleCreateLimit}}</text>
+          <text class="circle-action-hint" wx:else>建立新的熟人圈</text>
+        </view>
+      </view>
+    </view>
+  </view>
+
   <view class="section circle-section">
     <view class="section-head">
       <view class="section-title">常用圈子</view>
-      <view class="section-action {{switchingCircle || creatingCircle ? 'disabled' : ''}}" bindtap="loadCircles">
-        {{switchingCircle ? '正在进入' : creatingCircle ? '创建中' : '刷新'}}
-      </view>
+      <view class="section-action {{switchingCircle || creatingCircle ? 'disabled' : ''}}" bindtap="loadCircles">{{switchingCircle ? '正在进入' : creatingCircle ? '创建中' : '刷新'}}</view>
     </view>
 
-    <view class="switching-banner" wx:if="{{switchingCircle}}">
-      <view class="switching-spinner"></view>
-      <view class="switching-text">正在进入「{{switchingCircleName}}」...</view>
-    </view>
+    <view class="switching-banner" wx:if="{{switchingCircle}}"><view class="switching-spinner"></view><view class="switching-text">正在进入「{{switchingCircleName}}」...</view></view>
 
     <view class="circle-list-shell" wx:if="{{hasCircles}}">
       <view class="recent-circle-row motion-state {{circleIndex < 6 ? 'motion-list-item' : ''}} {{item.currentClass}} {{item.disabledClass}}" wx:for="{{circles}}" wx:key="id" wx:for-index="circleIndex" style="animation-delay: {{circleIndex * 35}}ms;">
         <view class="circle-top">
-          <view class="circle-main">
-            <view class="circle-title">{{item.name}}</view>
-            <view class="circle-copy">{{item.slogan || "这个圈子还没有填写介绍"}}</view>
-          </view>
+          <view class="circle-main"><view class="circle-title">{{item.name}}</view><view class="circle-copy">{{item.slogan || '这个圈子还没有填写介绍'}}</view></view>
           <view class="pill {{item.statusClass}}">{{item.displayStatusText}}</view>
         </view>
-        <view class="circle-meta-row">
-          <text>{{item.role}}</text><text>·</text><text>{{item.memberText}}</text><text>·</text><text>{{item.lastEnteredText}}</text>
-        </view>
+        <view class="circle-meta-row"><text>{{item.role}}</text><text>·</text><text>{{item.memberText}}</text><text>·</text><text>{{item.lastEnteredText}}</text></view>
         <view class="circle-actions">
-          <view class="primary-btn small-btn {{switchingCircle || creatingCircle || themeSaving ? 'disabled' : ''}}" data-id="{{item.id}}" bindtap="switchCircle" wx:if="{{item.canEnter}}">
-            {{switchingCircleId === item.id ? '正在进入...' : item.isCurrent || item.currentClass === 'active' ? '进入圈子' : '切换进入'}}
-          </view>
-          <view class="circle-settings-btn {{!item.canEnter ? 'only-action' : ''}} {{switchingCircle || creatingCircle || themeSaving ? 'disabled' : ''}}" data-id="{{item.id}}" bindtap="openSettings">
-            <image src="/images/ui-icons/settings.png" mode="aspectFit"></image><text>设置</text>
-          </view>
+          <view class="primary-btn small-btn {{switchingCircle || creatingCircle ? 'disabled' : ''}}" data-id="{{item.id}}" bindtap="switchCircle" wx:if="{{item.canEnter}}">{{switchingCircleId === item.id ? '正在进入...' : item.isCurrent || item.currentClass === 'active' ? '进入圈子' : '切换进入'}}</view>
+          <view class="circle-settings-btn {{!item.canEnter ? 'only-action' : ''}} {{switchingCircle || creatingCircle ? 'disabled' : ''}}" data-id="{{item.id}}" bindtap="openSettings"><image src="/images/ui-icons/settings.png" mode="aspectFit"></image><text>设置</text></view>
         </view>
       </view>
-      <view class="view-all-circles {{themeSaving ? 'disabled' : ''}}" wx:if="{{hasMoreCircles}}" bindtap="openAllCircles">
-        <text>查看全部 {{circleTotal}} 个圈子</text><text class="view-all-arrow">›</text>
-      </view>
+      <view class="view-all-circles" wx:if="{{hasMoreCircles}}" bindtap="openAllCircles"><text>查看全部 {{circleTotal}} 个圈子</text><text class="view-all-arrow">›</text></view>
     </view>
 
-    <empty-state
-      wx:else
-      kind="circle"
-      icon="/images/ui-icons/layers.svg"
-      eyebrow="先找到你的熟人圈"
-      title="还没有加入圈子"
-      description="输入邀请码，或从微信群里的分享卡片进入；也可以自己创建一个。"
-      compact="{{true}}"
-    />
+    <empty-state wx:else kind="circle" icon="/images/ui-icons/layers.svg" eyebrow="先找到你的熟人圈" title="还没有加入圈子" description="输入邀请码，或从微信群里的分享卡片进入；也可以自己创建一个。" compact="{{true}}" />
 
-    <view class="circle-launchpad">
-      <view class="page-actions">
-        <view class="circle-action join-action {{switchingCircle || creatingCircle || themeSaving ? 'disabled' : ''}}" bindtap="openJoin">
-          <view class="circle-action-icon"><image src="/images/ui-icons/qr-code.svg" mode="aspectFit"></image></view>
-          <text>加入圈子</text>
-        </view>
-        <view class="circle-action create-action {{!isSuperAdmin && !canCreateCircle ? 'at-limit' : ''}} {{switchingCircle || creatingCircle || themeSaving ? 'disabled' : ''}}" bindtap="createCircle">
-          <view class="circle-action-icon"><image src="/images/ui-icons/layers.svg" mode="aspectFit"></image></view>
-          <text>{{creatingCircle ? "创建中..." : !isSuperAdmin && !canCreateCircle ? "已达创建上限" : "创建圈子"}}</text>
-        </view>
-      </view>
-      <view class="create-quota" wx:if="{{!isSuperAdmin}}">
-        <view class="create-quota-dot"></view>
-        <text>已创建 {{ownedCircleCount}} / {{circleCreateLimit}}</text>
-      </view>
+    <view class="circle-home-entry motion-state {{switchingCircle || creatingCircle ? 'disabled' : ''}}" bindtap="openHome" wx:if="{{hasCurrentCircle}}">
+      <view class="circle-home-icon"><image src="/images/ui-icons/home.png" mode="aspectFit"></image></view>
+      <view class="circle-home-copy"><view class="circle-home-title">进入当前圈子首页</view><view class="circle-home-name">{{currentCircle.name || '当前圈子'}}</view></view>
+      <image class="circle-home-arrow" src="/images/ui-icons/arrow-right.svg" mode="aspectFit"></image>
     </view>
   </view>
-
-  <view class="section" wx:if="{{isSuperAdmin}}">
-    <view class="management-entry {{switchingCircle || creatingCircle || themeSaving ? 'disabled' : ''}}" bindtap="openAdmin">
-      <view class="management-icon"><image src="/images/ui-icons/admin.svg" mode="aspectFit"></image></view>
-      <view class="management-copy"><view class="admin-title">管理中心</view><view class="muted">圈子、用户与操作日志</view></view>
-      <view class="management-arrow">›</view>
-    </view>
-  </view>
-
-  <view class="section">
-    <view class="theme-card card">
-      <view class="section-head">
-        <view class="section-title with-icon">
-          <image class="section-icon" src="/images/ui-icons/palette.svg"></image>
-          <text>主题色</text>
-        </view>
-        <view class="section-action">{{themeSaving ? "保存中..." : "随手换"}}</view>
-      </view>
-      <view class="theme-picker">
-        <view
-          class="theme-swatch motion-state {{item.activeClass}} {{themeSaving ? 'disabled' : ''}}"
-          wx:for="{{themeOptions}}"
-          wx:key="key"
-          data-key="{{item.key}}"
-          bindtap="onThemeSelect"
-        >
-          <view class="swatch-dot {{item.key === 'custom' ? 'custom-dot' : ''}}" style="background: {{item.swatch}};"></view>
-          <view class="swatch-name">{{item.name}}</view>
-        </view>
-      </view>
-    </view>
-  </view>
-
-  <view class="section">
-    <view class="account-card card">
-      <view>
-        <view class="account-title with-icon">
-          <image class="section-icon" src="/images/ui-icons/account.svg"></image>
-          <text>账号管理</text>
-        </view>
-        <view class="account-copy">当前账号：{{user.accountName || "未绑定"}}。退出只结束当前登录；注销会退出所有圈子并清空账号资料。</view>
-        <view class="account-legal-links">
-          <view data-type="terms" bindtap="openLegal">用户服务协议</view>
-          <view class="account-legal-divider"></view>
-          <view data-type="privacy" bindtap="openLegal">隐私政策</view>
-        </view>
-      </view>
-      <view class="security-row">
-        <view class="ghost-btn security-btn {{passwordBusy || switchingCircle || creatingCircle ? 'disabled' : ''}}" bindtap="togglePasswordForm">
-          <text>{{showPasswordForm ? "收起修改密码" : "修改密码"}}</text>
-        </view>
-      </view>
-      <view class="password-form" wx:if="{{showPasswordForm}}">
-        <view class="field">
-          <view class="field-label">当前密码</view>
-          <input class="field-input" password="{{true}}" adjust-position="{{true}}" cursor-spacing="24" value="{{currentPassword}}" placeholder="输入当前密码" bindinput="onCurrentPasswordInput" />
-        </view>
-        <view class="field">
-          <view class="field-label">新密码</view>
-          <input class="field-input" password="{{true}}" adjust-position="{{true}}" cursor-spacing="24" value="{{newPassword}}" placeholder="8-64 位，包含字母和数字" bindinput="onNewPasswordInput" />
-        </view>
-        <view class="field">
-          <view class="field-label">确认新密码</view>
-          <input class="field-input" password="{{true}}" adjust-position="{{true}}" cursor-spacing="24" value="{{confirmNewPassword}}" placeholder="再次输入新密码" bindinput="onConfirmNewPasswordInput" />
-        </view>
-        <view class="primary-btn password-submit {{passwordBusy || switchingCircle || creatingCircle ? 'disabled' : ''}}" bindtap="changePassword">
-          <text>{{passwordBusy ? "修改中..." : "保存新密码"}}</text>
-        </view>
-      </view>
-      <view class="account-actions">
-        <view class="ghost-btn account-btn {{accountBusy || switchingCircle || creatingCircle ? 'disabled' : ''}}" bindtap="logoutAccount">
-          <text>退出登录</text>
-        </view>
-        <view class="danger-btn account-btn {{accountBusy || switchingCircle || creatingCircle ? 'disabled' : ''}}" bindtap="deleteAccount">
-          <text>注销账号</text>
-        </view>
-      </view>
-    </view>
-  </view>
-
-  <view class="custom-theme-mask" wx:if="{{customThemeOpen}}" bindtap="closeCustomTheme" catchtouchmove="stopEvent">
-    <view class="custom-theme-sheet" catchtap="stopEvent">
-      <view class="custom-theme-grabber"></view>
-      <view class="custom-theme-head">
-        <view class="custom-theme-heading">
-          <view class="custom-theme-heading-icon">
-            <image src="/images/ui-icons/palette.svg" mode="aspectFit"></image>
-          </view>
-          <view class="custom-theme-heading-copy">
-            <view class="custom-theme-title">自定义主题</view>
-            <view class="custom-theme-subtitle">RGB 与透明度</view>
-          </view>
-        </view>
-        <view class="custom-theme-close {{themeSaving ? 'disabled' : ''}}" bindtap="closeCustomTheme">
-          <image src="/images/ui-icons/close.svg" mode="aspectFit"></image>
-        </view>
-      </view>
-
-      <view class="custom-theme-body">
-        <view class="custom-theme-body-inner">
-          <view class="custom-theme-stage" style="{{customThemeHeroStyle}}">
-            <view class="custom-theme-stage-top">
-              <view class="custom-theme-stage-mark">
-                <image src="/images/ui-icons/palette.svg" mode="aspectFit"></image>
-              </view>
-              <view class="pill hero-pill custom-theme-stage-pill">预览</view>
-            </view>
-            <view class="custom-theme-stage-title">InCircle</view>
-            <view class="custom-theme-stage-copy">你的专属主题</view>
-            <view class="custom-theme-stage-samples">
-              <view class="custom-theme-stage-button" style="{{customThemeStageButtonStyle}}">进入圈子</view>
-              <view class="pill hero-pill custom-theme-stage-tag">进行中</view>
-            </view>
-          </view>
-
-          <view class="custom-theme-preview-meta">
-            <view class="custom-theme-preview-surface">
-              <view class="custom-theme-preview" style="{{customThemePreviewStyle}}"></view>
-            </view>
-            <view class="custom-theme-preview-copy">
-              <view class="custom-theme-preview-heading">
-                <text class="custom-theme-preview-hex">{{customThemePreviewHex}}</text>
-                <view class="custom-theme-alpha-chip" style="{{customThemeAlphaStyle}}">透明度 {{customThemeDraft.a}}%</view>
-              </view>
-              <text class="custom-theme-rgb-text">{{customThemeRgbText}}</text>
-            </view>
-            <view class="custom-theme-palette-strip">
-              <view style="{{customThemeDarkStyle}}"></view>
-              <view style="{{customThemePrimaryStyle}}"></view>
-              <view style="{{customThemeAccentStyle}}"></view>
-            </view>
-          </view>
-
-          <view class="custom-channel-panel">
-            <view class="custom-channel-head">
-              <view class="custom-channel-title">颜色通道</view>
-              <view class="custom-channel-hint">RGBA</view>
-            </view>
-            <view class="custom-channel-list">
-              <view class="custom-channel-row">
-                <view class="custom-channel-label red-channel">R</view>
-                <slider class="custom-channel-slider" min="0" max="255" value="{{customThemeDraft.r}}" activeColor="#d85b57" backgroundColor="#edf0ef" block-color="#d85b57" block-size="18" data-channel="r" bindchanging="onCustomThemeChannelChange" bindchange="onCustomThemeChannelChange" />
-                <view class="custom-channel-value">{{customThemeDraft.r}}</view>
-              </view>
-              <view class="custom-channel-row">
-                <view class="custom-channel-label green-channel">G</view>
-                <slider class="custom-channel-slider" min="0" max="255" value="{{customThemeDraft.g}}" activeColor="#32936f" backgroundColor="#edf0ef" block-color="#32936f" block-size="18" data-channel="g" bindchanging="onCustomThemeChannelChange" bindchange="onCustomThemeChannelChange" />
-                <view class="custom-channel-value">{{customThemeDraft.g}}</view>
-              </view>
-              <view class="custom-channel-row">
-                <view class="custom-channel-label blue-channel">B</view>
-                <slider class="custom-channel-slider" min="0" max="255" value="{{customThemeDraft.b}}" activeColor="#477fbd" backgroundColor="#edf0ef" block-color="#477fbd" block-size="18" data-channel="b" bindchanging="onCustomThemeChannelChange" bindchange="onCustomThemeChannelChange" />
-                <view class="custom-channel-value">{{customThemeDraft.b}}</view>
-              </view>
-              <view class="custom-channel-row">
-                <view class="custom-channel-label alpha-channel">A</view>
-                <slider class="custom-channel-slider" min="0" max="100" value="{{customThemeDraft.a}}" activeColor="{{customThemePreviewHex}}" backgroundColor="#edf0ef" block-color="{{customThemePreviewHex}}" block-size="18" data-channel="a" bindchanging="onCustomThemeChannelChange" bindchange="onCustomThemeChannelChange" />
-                <view class="custom-channel-value">{{customThemeDraft.a}}%</view>
-              </view>
-            </view>
-          </view>
-        </view>
-      </view>
-
-      <view class="custom-theme-actions">
-        <view class="custom-theme-button cancel {{themeSaving ? 'disabled' : ''}}" bindtap="closeCustomTheme">取消</view>
-        <view class="custom-theme-button confirm {{themeSaving ? 'disabled' : ''}}" style="{{customThemeActionStyle}}" bindtap="applyCustomTheme">{{themeSaving ? '应用中...' : '应用主题'}}</view>
-      </view>
-    </view>
-  </view>
-
-  <view class="home-link {{switchingCircle || creatingCircle || themeSaving ? 'disabled' : ''}}" bindtap="openHome" wx:if="{{hasCurrentCircle}}">进入当前圈子首页</view>
 </view>
 
 <view class="page loading-page {{themeClass}}" wx:else>
-  <view class="loading-panel">
-    <view class="loading-illustration">
-      <view class="loading-card-line first"></view>
-      <view class="loading-card-line second"></view>
-      <view class="loading-card-line third"></view>
-      <view class="loading-card-mark"></view>
-    </view>
-    <view class="loading-text">正在整理我的圈子...</view>
-    <view class="loading-dots"><view></view><view></view><view></view></view>
-  </view>
+  <view class="loading-panel"><view class="loading-illustration"><view class="loading-card-line first"></view><view class="loading-card-line second"></view><view class="loading-card-line third"></view><view class="loading-card-mark"></view></view><view class="loading-text">正在整理我的圈子...</view><view class="loading-dots"><view></view><view></view><view></view></view></view>
 </view>
 <theme-dialog id="incircle-theme-dialog" />

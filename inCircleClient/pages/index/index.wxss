@@ -99,7 +99,7 @@
   font-weight: 800;
 }
 
-.hero-action.admin {
+.hero-action.account {
   background: var(--theme-accent, #b8d966);
   color: var(--theme-primary-dark, #1c5638);
 }
@@ -115,7 +115,7 @@
   justify-content: center;
 }
 
-.hero-action.admin .hero-action-icon {
+.hero-action.account .hero-action-icon {
   background: rgba(255, 255, 255, 0.82);
 }
 

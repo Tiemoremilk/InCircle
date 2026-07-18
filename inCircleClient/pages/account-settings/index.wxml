@@ -1,0 +1,238 @@
+<page-meta page-style="{{themeStyle}} {{incircleKeyboardPageStyle}}"></page-meta>
+
+<view class="page account-settings-page {{themeClass}}" wx:if="{{!loading && !loadError}}">
+  <view class="account-hero motion-hero">
+    <view class="account-hero-head">
+      <image class="account-avatar" src="{{user.avatarUrl || '/images/avatar.png'}}" mode="aspectFill"></image>
+      <view class="account-hero-copy">
+        <view class="account-hero-kicker">账号与安全</view>
+        <view class="account-hero-title">{{user.nickName || 'InCircle 用户'}}</view>
+        <view class="account-hero-id">{{user.accountName || '账号信息暂不可用'}}</view>
+      </view>
+      <view class="account-security-badge">
+        <image src="/images/ui-icons/shield-check.svg" mode="aspectFit"></image>
+        <text>{{verifyWechatOnLogin ? '已保护' : '仅密码'}}</text>
+      </view>
+    </view>
+    <view class="account-hero-metrics">
+      <view class="account-hero-metric">
+        <view class="account-hero-metric-value">{{activeSessionCount}}</view>
+        <view class="account-hero-metric-label">登录设备</view>
+      </view>
+      <view class="account-hero-divider"></view>
+      <view class="account-hero-metric wide">
+        <view class="account-hero-metric-value compact">{{currentThemeName}}</view>
+        <view class="account-hero-metric-label">当前主题</view>
+      </view>
+    </view>
+  </view>
+
+  <view class="settings-section" wx:if="{{isSuperAdmin}}">
+    <view class="management-entry motion-state" bindtap="openAdmin">
+      <view class="management-icon"><image src="/images/ui-icons/admin.svg" mode="aspectFit"></image></view>
+      <view class="management-copy">
+        <view class="management-title">管理中心</view>
+        <view class="management-subtitle">平台圈子、用户与操作日志</view>
+      </view>
+      <view class="management-tag">超管</view>
+      <view class="management-arrow">›</view>
+    </view>
+  </view>
+
+  <view class="settings-section">
+    <view class="settings-heading">
+      <view class="settings-heading-main">
+        <view class="settings-heading-icon"><image src="/images/ui-icons/shield-check.svg" mode="aspectFit"></image></view>
+        <view><view class="settings-title">登录保护</view><view class="settings-caption">控制账号密码登录时的身份校验</view></view>
+      </view>
+    </view>
+    <view class="settings-surface security-surface">
+      <view class="security-setting-row">
+        <view class="security-setting-icon"><image src="/images/ui-icons/fingerprint.svg" mode="aspectFit"></image></view>
+        <view class="security-setting-copy">
+          <view class="security-setting-title">登录时校验绑定微信</view>
+          <view class="security-setting-desc">开启后，账号密码与原绑定微信必须同时匹配</view>
+        </view>
+        <switch
+          class="theme-switch"
+          checked="{{verifyWechatOnLogin}}"
+          disabled="{{verificationBusy}}"
+          color="{{themePrimary}}"
+          bindchange="onWechatVerificationChange"
+        />
+      </view>
+      <view class="security-state {{verifyWechatOnLogin ? 'protected' : 'password-only'}}">
+        <view class="security-state-dot"></view>
+        <text>{{verifyWechatOnLogin ? '当前为双重校验，建议保持开启' : '当前仅校验账号密码，其他微信也可以登录'}}</text>
+      </view>
+    </view>
+  </view>
+
+  <view class="settings-section">
+    <view class="settings-heading">
+      <view class="settings-heading-main">
+        <view class="settings-heading-icon"><image src="/images/ui-icons/history.svg" mode="aspectFit"></image></view>
+        <view><view class="settings-title">最近登录</view><view class="settings-caption">同一设备只保留最近一次记录</view></view>
+      </view>
+      <view class="settings-refresh" bindtap="refreshSettings">刷新</view>
+    </view>
+    <view class="session-list settings-surface" wx:if="{{sessions.length}}">
+      <view class="session-row {{item.statusClass}}" wx:for="{{sessions}}" wx:key="id">
+        <view class="session-device-icon">
+          <image src="{{item.current ? '/images/ui-icons/phone.svg' : '/images/ui-icons/log-in.svg'}}" mode="aspectFit"></image>
+        </view>
+        <view class="session-main">
+          <view class="session-title-line">
+            <view class="session-name">{{item.deviceName}}</view>
+            <view class="session-controls">
+              <view class="session-status {{item.statusClass}}">{{item.statusText}}</view>
+              <view
+                class="session-revoke {{sessionBusyId === item.id ? 'disabled' : ''}}"
+                wx:if="{{item.canRevoke}}"
+                data-id="{{item.id}}"
+                bindtap="revokeSession"
+              >{{sessionBusyId === item.id ? '处理中' : '退出'}}</view>
+            </view>
+          </view>
+          <view class="session-environment">{{item.environment}}</view>
+          <view class="session-meta">
+            <view><image src="/images/ui-icons/clock.svg" mode="aspectFit"></image><text>{{item.lastLoginText}}</text></view>
+            <view><image src="/images/ui-icons/link.svg" mode="aspectFit"></image><text>{{item.addressText}}</text></view>
+          </view>
+        </view>
+      </view>
+    </view>
+    <view class="session-empty settings-surface" wx:else>
+      <view class="session-empty-icon"><image src="/images/ui-icons/history.svg" mode="aspectFit"></image></view>
+      <view><view class="session-empty-title">暂无登录记录</view><view class="session-empty-copy">下一次账号登录后会在这里显示设备与环境。</view></view>
+    </view>
+  </view>
+
+  <view class="settings-section">
+    <view class="settings-heading">
+      <view class="settings-heading-main">
+        <view class="settings-heading-icon"><image src="/images/ui-icons/palette.svg" mode="aspectFit"></image></view>
+        <view><view class="settings-title">主题外观</view><view class="settings-caption">选择后全局即时同步</view></view>
+      </view>
+      <view class="settings-saving">{{themeSaving ? '保存中...' : currentThemeName}}</view>
+    </view>
+    <view class="theme-picker settings-surface">
+      <view
+        class="theme-swatch motion-state {{item.activeClass}} {{themeSaving ? 'disabled' : ''}}"
+        wx:for="{{themeOptions}}"
+        wx:key="key"
+        data-key="{{item.key}}"
+        bindtap="onThemeSelect"
+      >
+        <view class="swatch-dot {{item.key === 'custom' ? 'custom-dot' : ''}}" style="background: {{item.swatch}};"></view>
+        <view class="swatch-name">{{item.name}}</view>
+        <view class="swatch-check" wx:if="{{item.activeClass}}"><image src="/images/ui-icons/check.svg" mode="aspectFit"></image></view>
+      </view>
+    </view>
+  </view>
+
+  <view class="settings-section account-section">
+    <view class="settings-heading">
+      <view class="settings-heading-main">
+        <view class="settings-heading-icon"><image src="/images/ui-icons/account.svg" mode="aspectFit"></image></view>
+        <view><view class="settings-title">账号管理</view><view class="settings-caption">密码、协议与账号状态</view></view>
+      </view>
+    </view>
+    <view class="settings-surface account-surface">
+      <view class="account-summary-row">
+        <view class="account-summary-label">登录账号</view>
+        <view class="account-summary-value">{{user.accountName || '未绑定'}}</view>
+      </view>
+      <view class="account-link-list">
+        <view class="account-link-row" data-type="terms" bindtap="openLegal">
+          <image src="/images/ui-icons/file-text.svg" mode="aspectFit"></image><text>用户服务协议</text><view>›</view>
+        </view>
+        <view class="account-link-row" data-type="privacy" bindtap="openLegal">
+          <image src="/images/ui-icons/fingerprint.svg" mode="aspectFit"></image><text>隐私政策</text><view>›</view>
+        </view>
+        <view class="account-link-row" bindtap="togglePasswordForm">
+          <image src="/images/ui-icons/key-round.svg" mode="aspectFit"></image><text>{{showPasswordForm ? '收起密码修改' : '修改登录密码'}}</text><view>{{showPasswordForm ? '⌃' : '›'}}</view>
+        </view>
+      </view>
+
+      <view class="password-form" wx:if="{{showPasswordForm}}">
+        <view class="password-form-head"><view>更新密码</view><text>修改后其他设备会退出登录</text></view>
+        <view class="field"><view class="field-label">当前密码</view><input class="field-input" password="{{true}}" maxlength="64" adjust-position="{{true}}" cursor-spacing="96" value="{{currentPassword}}" placeholder="输入当前密码" bindinput="onCurrentPasswordInput" /></view>
+        <view class="field"><view class="field-label">新密码</view><input class="field-input" password="{{true}}" maxlength="64" adjust-position="{{true}}" cursor-spacing="96" value="{{newPassword}}" placeholder="8-64 位，包含字母和数字" bindinput="onNewPasswordInput" /></view>
+        <view class="field"><view class="field-label">确认新密码</view><input class="field-input" password="{{true}}" maxlength="64" adjust-position="{{true}}" cursor-spacing="96" value="{{confirmNewPassword}}" placeholder="再次输入新密码" bindinput="onConfirmNewPasswordInput" /></view>
+        <view class="primary-btn password-submit {{passwordBusy ? 'disabled' : ''}}" bindtap="changePassword">{{passwordBusy ? '修改中...' : '保存新密码'}}</view>
+      </view>
+
+      <view class="account-actions">
+        <view class="account-action logout {{accountBusy ? 'disabled' : ''}}" bindtap="logoutAccount"><image src="/images/ui-icons/log-in.svg" mode="aspectFit"></image><text>退出当前设备</text></view>
+        <view class="account-action danger {{accountBusy ? 'disabled' : ''}}" bindtap="deleteAccount"><image src="/images/ui-icons/trash-2.svg" mode="aspectFit"></image><text>注销账号</text></view>
+      </view>
+    </view>
+  </view>
+
+  <view class="custom-theme-mask" wx:if="{{customThemeOpen}}" bindtap="closeCustomTheme" catchtouchmove="stopEvent">
+    <view class="custom-theme-sheet" catchtap="stopEvent">
+      <view class="custom-theme-grabber"></view>
+      <view class="custom-theme-head">
+        <view class="custom-theme-heading">
+          <view class="custom-theme-heading-icon"><image src="/images/ui-icons/palette.svg" mode="aspectFit"></image></view>
+          <view class="custom-theme-heading-copy"><view class="custom-theme-title">自定义主题</view><view class="custom-theme-subtitle">RGB 与透明度</view></view>
+        </view>
+        <view class="custom-theme-close {{themeSaving ? 'disabled' : ''}}" bindtap="closeCustomTheme"><image src="/images/ui-icons/close.svg" mode="aspectFit"></image></view>
+      </view>
+      <view class="custom-theme-body">
+        <view class="custom-theme-body-inner">
+          <view class="custom-theme-stage" style="{{customThemeHeroStyle}}">
+            <view class="custom-theme-stage-top"><view class="custom-theme-stage-mark"><image src="/images/ui-icons/palette.svg" mode="aspectFit"></image></view><view class="pill hero-pill custom-theme-stage-pill">预览</view></view>
+            <view class="custom-theme-stage-title">InCircle</view><view class="custom-theme-stage-copy">你的专属主题</view>
+            <view class="custom-theme-stage-samples"><view class="custom-theme-stage-button" style="{{customThemeStageButtonStyle}}">进入圈子</view><view class="pill hero-pill custom-theme-stage-tag">进行中</view></view>
+          </view>
+          <view class="custom-theme-preview-meta">
+            <view class="custom-theme-preview-surface"><view class="custom-theme-preview" style="{{customThemePreviewStyle}}"></view></view>
+            <view class="custom-theme-preview-copy"><view class="custom-theme-preview-heading"><text class="custom-theme-preview-hex">{{customThemePreviewHex}}</text><view class="custom-theme-alpha-chip" style="{{customThemeAlphaStyle}}">透明度 {{customThemeDraft.a}}%</view></view><text class="custom-theme-rgb-text">{{customThemeRgbText}}</text></view>
+            <view class="custom-theme-palette-strip"><view style="{{customThemeDarkStyle}}"></view><view style="{{customThemePrimaryStyle}}"></view><view style="{{customThemeAccentStyle}}"></view></view>
+          </view>
+          <view class="custom-channel-panel">
+            <view class="custom-channel-head"><view class="custom-channel-title">颜色通道</view><view class="custom-channel-hint">RGBA</view></view>
+            <view class="custom-channel-list">
+              <view class="custom-channel-row"><view class="custom-channel-label red-channel">R</view><slider class="custom-channel-slider" min="0" max="255" value="{{customThemeDraft.r}}" activeColor="#d85b57" backgroundColor="#edf0ef" block-color="#d85b57" block-size="18" data-channel="r" bindchanging="onCustomThemeChannelChange" bindchange="onCustomThemeChannelChange" /><view class="custom-channel-value">{{customThemeDraft.r}}</view></view>
+              <view class="custom-channel-row"><view class="custom-channel-label green-channel">G</view><slider class="custom-channel-slider" min="0" max="255" value="{{customThemeDraft.g}}" activeColor="#32936f" backgroundColor="#edf0ef" block-color="#32936f" block-size="18" data-channel="g" bindchanging="onCustomThemeChannelChange" bindchange="onCustomThemeChannelChange" /><view class="custom-channel-value">{{customThemeDraft.g}}</view></view>
+              <view class="custom-channel-row"><view class="custom-channel-label blue-channel">B</view><slider class="custom-channel-slider" min="0" max="255" value="{{customThemeDraft.b}}" activeColor="#477fbd" backgroundColor="#edf0ef" block-color="#477fbd" block-size="18" data-channel="b" bindchanging="onCustomThemeChannelChange" bindchange="onCustomThemeChannelChange" /><view class="custom-channel-value">{{customThemeDraft.b}}</view></view>
+              <view class="custom-channel-row"><view class="custom-channel-label alpha-channel">A</view><slider class="custom-channel-slider" min="0" max="100" value="{{customThemeDraft.a}}" activeColor="{{customThemePreviewHex}}" backgroundColor="#edf0ef" block-color="{{customThemePreviewHex}}" block-size="18" data-channel="a" bindchanging="onCustomThemeChannelChange" bindchange="onCustomThemeChannelChange" /><view class="custom-channel-value">{{customThemeDraft.a}}%</view></view>
+            </view>
+          </view>
+        </view>
+      </view>
+      <view class="custom-theme-actions"><view class="custom-theme-button cancel {{themeSaving ? 'disabled' : ''}}" bindtap="closeCustomTheme">取消</view><view class="custom-theme-button confirm {{themeSaving ? 'disabled' : ''}}" style="{{customThemeActionStyle}}" bindtap="applyCustomTheme">{{themeSaving ? '应用中...' : '应用主题'}}</view></view>
+    </view>
+  </view>
+
+  <view class="verification-mask" wx:if="{{verificationSheetOpen}}" bindtap="closeVerificationSheet" catchtouchmove="stopEvent">
+    <view class="verification-sheet" catchtap="stopEvent">
+      <view class="verification-grabber"></view>
+      <view class="verification-head">
+        <view class="verification-icon"><image src="/images/ui-icons/eye-off.svg" mode="aspectFit"></image></view>
+        <view class="verification-head-copy"><view class="verification-title">关闭微信校验</view><view class="verification-subtitle">以后只需账号密码即可登录</view></view>
+        <view class="verification-close" bindtap="closeVerificationSheet"><image src="/images/ui-icons/close.svg" mode="aspectFit"></image></view>
+      </view>
+      <view class="verification-warning"><image src="/images/ui-icons/alert.svg" mode="aspectFit"></image><text>关闭后，知道账号密码的人可从其他微信登录。原微信绑定关系不会改变。</text></view>
+      <view class="verification-field"><view class="field-label">当前密码</view><input class="field-input" password="{{true}}" maxlength="64" adjust-position="{{true}}" cursor-spacing="96" value="{{verificationPassword}}" placeholder="输入密码确认是你本人" bindinput="onVerificationPasswordInput" /></view>
+      <view class="verification-actions"><view class="verification-button cancel" bindtap="closeVerificationSheet">保持开启</view><view class="verification-button danger {{verificationBusy ? 'disabled' : ''}}" bindtap="confirmDisableWechatVerification">{{verificationBusy ? '确认中...' : '确认关闭'}}</view></view>
+    </view>
+  </view>
+</view>
+
+<view class="page account-settings-page state-page {{themeClass}}" wx:elif="{{loadError}}">
+  <view class="state-panel">
+    <view class="state-icon"><image src="/images/ui-icons/alert.svg" mode="aspectFit"></image></view>
+    <view class="state-title">账号设置暂时没能打开</view>
+    <view class="state-copy">{{loadError}}</view>
+    <view class="primary-btn state-action" bindtap="retryLoad">重新加载</view>
+  </view>
+</view>
+
+<view class="page account-settings-page loading-page {{themeClass}}" wx:else>
+  <view class="loading-panel"><view class="loading-illustration"><view class="loading-card-line first"></view><view class="loading-card-line second"></view><view class="loading-card-line third"></view><view class="loading-card-mark"></view></view><view class="loading-text">正在整理账号设置...</view><view class="loading-dots"><view></view><view></view><view></view></view></view>
+</view>
+
+<theme-dialog id="incircle-theme-dialog" />

@@ -5,6 +5,7 @@ const { pipeline } = require("stream/promises");
 const sharp = require("sharp");
 
 const { bearerToken, verifyAccessToken } = require("../auth");
+const { requireActiveAccountSession } = require("../account-sessions");
 const { AppError } = require("../errors");
 const { readAgreementAcceptanceState } = require("../agreement-store");
 const { agreementStatus } = require("../legal");
@@ -104,7 +105,9 @@ async function authenticateUpload(fastify, request, fields, isAvatar) {
   else if (code) identity = await exchangeWechatLoginCode(fastify.config, code);
   else throw new AppError("请先登录后再上传图片", { statusCode: 401, errCode: "AUTH_REQUIRED" });
 
-  const userResult = await fastify.db.query("SELECT * FROM incircle_users WHERE openid = $1 LIMIT 1", [identity.openid]);
+  const userResult = token && identity.userId
+    ? await fastify.db.query("SELECT * FROM incircle_users WHERE id = $1 LIMIT 1", [identity.userId])
+    : await fastify.db.query("SELECT * FROM incircle_users WHERE openid = $1 LIMIT 1", [identity.openid]);
   const user = userResult.rows[0] || null;
   if (identity.userId && (!user || String(user.id) !== String(identity.userId))) {
     throw new AppError("登录凭证与账号不匹配，请重新登录", { statusCode: 401, errCode: "TOKEN_SUBJECT_MISMATCH" });
@@ -121,6 +124,7 @@ async function authenticateUpload(fastify, request, fields, isAvatar) {
   if (token && identity.authVersion && Number(identity.authVersion) !== Number((user && user.auth_version) || 1)) {
     throw new AppError("登录状态已失效，请重新登录", { statusCode: 401, errCode: "TOKEN_REVOKED" });
   }
+  if (token && user) await requireActiveAccountSession(fastify.db, identity, user.id);
   if (token && (!user || user.status !== "active" || !user.logged_in)) {
     throw new AppError("请先登录后再上传图片", { statusCode: 401, errCode: "LOGIN_REQUIRED" });
   }

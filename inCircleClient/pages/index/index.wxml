@@ -29,11 +29,11 @@
         </view>
         <text>圈子设置</text>
       </view>
-      <view class="hero-action admin" bindtap="openAdmin" wx:if="{{isSuperAdmin}}">
+      <view class="hero-action account" bindtap="openAccountSettings">
         <view class="hero-action-icon">
-          <image class="hero-action-img" src="/images/ui-icons/admin.svg"></image>
+          <image class="hero-action-img" src="/images/ui-icons/account.svg"></image>
         </view>
-        <text>超管后台</text>
+        <text>账号设置</text>
       </view>
     </view>
   </view>

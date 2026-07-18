@@ -195,6 +195,15 @@ test("authenticated business access is blocked until the current acceptance exis
     config: {},
     db: {
       async query(sql) {
+        if (/FROM incircle_account_sessions/.test(String(sql))) {
+          return { rows: [{
+            id: "44444444-4444-4444-8444-444444444444",
+            user_id: user.id,
+            token_version: 1,
+            expires_at: "2099-01-01T00:00:00.000Z",
+            revoked_at: null,
+          }] };
+        }
         if (/incircle_account_agreement_acceptances/.test(String(sql))) {
           return { rows: [{
             acceptance_kind: "latest",
@@ -210,8 +219,15 @@ test("authenticated business access is blocked until the current acceptance exis
       },
     },
   }, {});
-  service.resolveIdentity = async () => ({ openid: user.openid, userId: user.id, authVersion: 3 });
-  service.getUserByOpenid = async () => user;
+  service.resolveIdentity = async () => ({
+    source: "token",
+    openid: user.openid,
+    userId: user.id,
+    authVersion: 3,
+    sessionId: "44444444-4444-4444-8444-444444444444",
+    sessionVersion: 1,
+  });
+  service.getUserById = async () => user;
   service.currentLegalProfile = async () => TEST_LEGAL_PROFILE;
 
   await assert.rejects(
@@ -231,12 +247,13 @@ test("login uses one primary flow with themed legal consent and no auth theme gr
   const consentTemplate = read("inCircleClient/pages/agreement-consent/index.wxml");
   const consentStyles = read("inCircleClient/pages/agreement-consent/index.wxss");
   const consentScript = read("inCircleClient/pages/agreement-consent/index.js");
-  const accountTemplate = read("inCircleClient/pages/circle-switch/index.wxml");
-  const accountScript = read("inCircleClient/pages/circle-switch/index.js");
+  const accountTemplate = read("inCircleClient/pages/account-settings/index.wxml");
+  const accountScript = read("inCircleClient/pages/account-settings/index.js");
   const app = JSON.parse(read("inCircleClient/app.json"));
 
   assert.ok(app.pages.includes("pages/legal/index"));
   assert.ok(app.pages.includes("pages/agreement-consent/index"));
+  assert.ok(app.pages.includes("pages/account-settings/index"));
   assert.doesNotMatch(template, /mode-tabs|theme-picker|status-row|微信绑定校验/);
   assert.match(template, /class="step-rail"/);
   assert.match(template, /账号安全[\s\S]*圈内资料/);
@@ -309,8 +326,8 @@ test("login uses one primary flow with themed legal consent and no auth theme gr
   assert.match(styles, /\.auth-secondary\s*\{[^}]*width:\s*100%;[^}]*margin-top:\s*auto/s);
   assert.match(template, /class="circle-mark[^\"]*"[^>]*>圈<\/view>/);
   assert.match(template, /class="auth-secondary"[\s\S]*创建账号/);
-  assert.match(accountTemplate, /data-type="terms"[^>]*bindtap="openLegal">用户服务协议/);
-  assert.match(accountTemplate, /data-type="privacy"[^>]*bindtap="openLegal">隐私政策/);
+  assert.match(accountTemplate, /data-type="terms"[^>]*bindtap="openLegal"[\s\S]*?用户服务协议/);
+  assert.match(accountTemplate, /data-type="privacy"[^>]*bindtap="openLegal"[\s\S]*?隐私政策/);
   assert.match(accountScript, /openLegal\(e\)[\s\S]*pages\/legal\/index\?type=/);
   assert.doesNotMatch(styles, /position:\s*fixed[^}]*login-panel/s);
 });

@@ -208,7 +208,14 @@ test("migration and themed mini-program UI carry the circle quota contract", () 
   assert.match(page, /showCircleCreateLimitDialog/);
   assert.match(markup, /已创建 \{\{ownedCircleCount\}\} \/ \{\{circleCreateLimit\}\}/);
   assert.match(markup, /已达创建上限/);
+  const launchpadIndex = markup.indexOf('class="circle-launchpad"');
+  const circleSectionIndex = markup.indexOf('class="section circle-section"');
+  const circleListIndex = markup.indexOf('class="circle-list-shell"');
+  const homeEntryIndex = markup.indexOf('class="circle-home-entry');
+  assert.ok(launchpadIndex > 0 && launchpadIndex < circleSectionIndex);
+  assert.ok(homeEntryIndex > circleListIndex);
   assert.match(styles, /\.circle-list-shell/);
   assert.match(styles, /\.circle-launchpad[\s\S]*var\(--theme-soft/);
-  assert.match(styles, /\.create-quota[\s\S]*var\(--theme-primary-dark/);
+  assert.match(styles, /\.circle-action-hint[\s\S]*var\(--theme-primary/);
+  assert.match(styles, /\.circle-home-entry[\s\S]*var\(--theme-soft/);
 });

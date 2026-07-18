@@ -1,6 +1,7 @@
 const HTTP_READ_CACHE_STORAGE_KEY = "incircleHttpReadCache";
 const HTTP_READ_CACHE_LIMIT = 40;
 const auth = require("./auth");
+const device = require("./device");
 const theme = require("./theme");
 
 const WECHAT_CODE_TYPES = {
@@ -34,6 +35,7 @@ const READ_TTL = {
   // This is the shared policy for cache, in-flight merging, and safe transient retries.
   incirclePublicLegalProfile: 300000,
   incircleSession: 300000,
+  incircleAccountSettings: 5000,
   incircleListMyCircles: 20000,
   incircleJoinPreview: 0,
   incircleCircleSettings: 20000,
@@ -99,6 +101,8 @@ const WRITE_INVALIDATION = {
   incircleAiReportMessage: ["incircleAiReports"],
   incircleAiUpdateReport: ["incircleAiReports"],
   incircleUpdateTheme: ["incircleSession", "incircleListMyCircles"],
+  incircleUpdateWechatLoginVerification: ["incircleAccountSettings"],
+  incircleRevokeLoginSession: ["incircleAccountSettings"],
   incircleRotateInviteCode: ["incircleCircleSettings", "incircleGetInviteQrCode", "incircleJoinPreview"],
 };
 
@@ -221,11 +225,10 @@ function sendHttpRequest(type, data, options) {
     globalData.httpBackendHeaders || {},
     accessToken ? { Authorization: `Bearer ${accessToken}` } : {}
   );
-  const loginCodePromise = anonymous
+  const loginCodePromise = anonymous || !forceWechatCode
     ? Promise.resolve("")
-    : forceWechatCode || !accessToken
-      ? auth.getWechatLoginCode()
-      : Promise.resolve("");
+    : auth.getWechatLoginCode();
+  const deviceContext = forceWechatCode ? device.getDeviceContext() : null;
   const request = loginCodePromise.then(
     (wechatLoginCode) =>
       new Promise((resolve, reject) => {
@@ -234,7 +237,12 @@ function sendHttpRequest(type, data, options) {
           method: "POST",
           timeout,
           header: headers,
-          data: Object.assign({}, data || {}, wechatLoginCode ? { wechatLoginCode } : {}),
+          data: Object.assign(
+            {},
+            data || {},
+            wechatLoginCode ? { wechatLoginCode } : {},
+            deviceContext ? { deviceContext } : {}
+          ),
           success(response) {
             const statusCode = response && response.statusCode;
             const result = normalizeHttpResponseBody(response && response.data);
@@ -281,15 +289,25 @@ function callHttpBackend(type, data, options) {
     ) {
       auth.handleAgreementRequired(error);
     }
-    const authRetryable = error && ["TOKEN_INVALID", "TOKEN_EXPIRED", "TOKEN_REVOKED", "TOKEN_SUBJECT_MISMATCH"].indexOf(error.errCode) !== -1;
+    const authRetryable = error && [
+      "AUTH_REQUIRED",
+      "LOGIN_REQUIRED",
+      "TOKEN_INVALID",
+      "TOKEN_EXPIRED",
+      "TOKEN_REVOKED",
+      "TOKEN_SUBJECT_MISMATCH",
+      "TOKEN_SESSION_REQUIRED",
+      "ACCOUNT_SESSION_REVOKED",
+      "ACCOUNT_SESSION_EXPIRED",
+      "ACCOUNT_BLOCKED",
+      "ACCOUNT_DELETED",
+    ].indexOf(error.errCode) !== -1;
     if (authRetryable && !(options && options.authRetried)) {
       auth.clearAccessToken();
       if (type === "incircleSession") {
-        return sendHttpRequest(type, data, { forceWechatCode: true, authRetried: true });
+        return sendHttpRequest(type, data, { authRetried: true });
       }
-      return sendHttpRequest("incircleSession", { type: "incircleSession" }, { forceWechatCode: true, authRetried: true }).then(
-        () => callHttpBackend(type, data, Object.assign({}, options, { authRetried: true }))
-      );
+      auth.handleAuthenticationRequired(error);
     }
     if (isRead(type) && isTransientRequestError(error) && !(options && options.transientRetried)) {
       return delay(280).then(() => callHttpBackend(
@@ -540,6 +558,22 @@ function acceptAgreements(agreementAcceptance) {
 
 function changePassword(payload) {
   return requestAction("incircleChangePassword", payload || {});
+}
+
+function getAccountSettings(options) {
+  if (options && options.force) clearCache(["incircleAccountSettings"]);
+  return requestAction("incircleAccountSettings", {});
+}
+
+function updateWechatLoginVerification(enabled, currentPassword) {
+  return requestAction("incircleUpdateWechatLoginVerification", {
+    enabled: !!enabled,
+    currentPassword: currentPassword || "",
+  });
+}
+
+function revokeLoginSession(sessionId) {
+  return requestAction("incircleRevokeLoginSession", { sessionId });
 }
 
 function updateTheme(themeKey, customTheme) {
@@ -1301,6 +1335,7 @@ function streamAiChat(payload, handlers) {
       if (response.statusCode < 200 || response.statusCode >= 300) {
         const error = makeHttpError(normalizeHttpResponseBody(response.data), `AI 请求失败 (${response.statusCode})`);
         auth.handleAgreementRequired(error);
+        auth.handleAuthenticationRequired(error);
         if ([408, 502, 503, 504].indexOf(Number(response.statusCode)) !== -1) recover(error, 0);
         else fail(error);
         return;
@@ -1371,6 +1406,9 @@ module.exports = {
   resetPassword,
   acceptAgreements,
   changePassword,
+  getAccountSettings,
+  updateWechatLoginVerification,
+  revokeLoginSession,
   updateTheme,
   logout,
   deleteAccount,

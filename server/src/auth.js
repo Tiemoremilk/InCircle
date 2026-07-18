@@ -23,24 +23,37 @@ function requireJwtSecret(config) {
   }
 }
 
-function issueAccessToken(config, user) {
+function issueAccessToken(config, user, session) {
   requireJwtSecret(config);
+  if (!session || !session.id || !session.token_version) {
+    throw new AppError("登录设备会话未建立", {
+      statusCode: 500,
+      errCode: "ACCOUNT_SESSION_REQUIRED",
+    });
+  }
   const nowSeconds = Math.floor(Date.now() / 1000);
+  const configuredExpiry = nowSeconds + config.jwtTtlSeconds;
+  const sessionExpiry = Math.floor(new Date(session.expires_at).getTime() / 1000);
+  const expiresAtSeconds = Number.isFinite(sessionExpiry)
+    ? Math.min(configuredExpiry, sessionExpiry)
+    : configuredExpiry;
   const header = encodeBase64Url(JSON.stringify({ alg: "HS256", typ: "JWT" }));
   const payload = encodeBase64Url(
     JSON.stringify({
       sub: String(user.id),
-      openid: String(user.openid),
+      openid: String(user.openid || ""),
+      sid: String(session.id),
+      sessionVersion: Number(session.token_version),
       iat: nowSeconds,
-      exp: nowSeconds + config.jwtTtlSeconds,
-      version: 1,
+      exp: expiresAtSeconds,
+      version: 2,
       authVersion: Number(user.auth_version || 1),
     })
   );
   const input = `${header}.${payload}`;
   return {
     token: `${input}.${signatureFor(config, input)}`,
-    expiresAt: new Date((nowSeconds + config.jwtTtlSeconds) * 1000).toISOString(),
+    expiresAt: new Date(expiresAtSeconds * 1000).toISOString(),
   };
 }
 
@@ -67,13 +80,19 @@ function verifyAccessToken(config, token) {
   if (!payload.exp || payload.exp <= nowSeconds) {
     throw new AppError("登录状态已过期，请重新登录", { statusCode: 401, errCode: "TOKEN_EXPIRED" });
   }
-  if (!payload.sub || !payload.openid || payload.version !== 1) {
+  if (!payload.sub || ![1, 2].includes(payload.version)) {
+    throw new AppError("登录凭证无效，请重新登录", { statusCode: 401, errCode: "TOKEN_INVALID" });
+  }
+  if (payload.version === 2 && (!payload.sid || !payload.sessionVersion)) {
     throw new AppError("登录凭证无效，请重新登录", { statusCode: 401, errCode: "TOKEN_INVALID" });
   }
   return {
     userId: String(payload.sub),
-    openid: String(payload.openid),
+    openid: String(payload.openid || ""),
     authVersion: Number(payload.authVersion || 1),
+    sessionId: String(payload.sid || ""),
+    sessionVersion: Number(payload.sessionVersion || 0),
+    tokenVersion: Number(payload.version || 1),
     expiresAt: new Date(payload.exp * 1000).toISOString(),
     source: "token",
   };

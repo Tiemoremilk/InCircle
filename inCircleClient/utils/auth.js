@@ -1,6 +1,7 @@
 const ACCESS_TOKEN_KEY = "incircleAccessToken";
 const ACCESS_TOKEN_EXPIRES_KEY = "incircleAccessTokenExpiresAt";
 let agreementRedirecting = false;
+let loginRedirecting = false;
 
 function getGlobalData() {
   if (typeof getApp !== "function") return {};
@@ -119,12 +120,48 @@ function handleAgreementRequired(error) {
   return true;
 }
 
+function handleAuthenticationRequired(error) {
+  const codes = [
+    "AUTH_REQUIRED",
+    "LOGIN_REQUIRED",
+    "TOKEN_INVALID",
+    "TOKEN_EXPIRED",
+    "TOKEN_REVOKED",
+    "TOKEN_SUBJECT_MISMATCH",
+    "TOKEN_SESSION_REQUIRED",
+    "ACCOUNT_SESSION_REVOKED",
+    "ACCOUNT_SESSION_EXPIRED",
+    "ACCOUNT_BLOCKED",
+    "ACCOUNT_DELETED",
+  ];
+  if (!error || codes.indexOf(error.errCode) === -1) return false;
+  clearAccessToken();
+  if (typeof wx === "undefined" || typeof wx.reLaunch !== "function") return true;
+  try {
+    const pages = typeof getCurrentPages === "function" ? getCurrentPages() : [];
+    const current = pages.length ? pages[pages.length - 1] : null;
+    if (current && current.route === "pages/login/index") return true;
+  } catch (navigationError) {
+    // Continue with guarded navigation.
+  }
+  if (loginRedirecting) return true;
+  loginRedirecting = true;
+  wx.reLaunch({
+    url: "/pages/login/index",
+    complete() {
+      setTimeout(() => { loginRedirecting = false; }, 500);
+    },
+  });
+  return true;
+}
+
 module.exports = {
   authorizationHeader,
   clearAccessToken,
   getAccessToken,
   getWechatLoginCode,
   handleAgreementRequired,
+  handleAuthenticationRequired,
   setAccessToken,
   updateFromSession,
 };

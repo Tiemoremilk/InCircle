@@ -3,6 +3,15 @@ const fs = require("fs");
 const path = require("path");
 const { AppError } = require("../errors");
 const { bearerToken, issueAccessToken, verifyAccessToken } = require("../auth");
+const {
+  establishAccountSession,
+  listAccountSessions,
+  requireActiveAccountSession,
+  revokeAccountSession,
+  revokeAllAccountSessions,
+  rotateCurrentAccountSession,
+  sessionMatchesBoundWechat,
+} = require("../account-sessions");
 const { publicUrl } = require("../routes/media");
 const {
   MEMBER_ROLES,
@@ -1737,7 +1746,7 @@ class InCircleService {
     const code = body && (body.wechatLoginCode || body.code);
     if (code) {
       if (this.identityCache.has(code)) return this.identityCache.get(code);
-      const identity = await exchangeWechatLoginCode(this.config, code);
+      const identity = Object.assign(await exchangeWechatLoginCode(this.config, code), { source: "wechat" });
       this.identityCache.set(code, identity);
       return identity;
     }
@@ -1768,11 +1777,34 @@ class InCircleService {
     return result.rows[0] || null;
   }
 
+  async getUserById(userId) {
+    const result = await this.db.query("SELECT * FROM incircle_users WHERE id = $1 LIMIT 1", [userId]);
+    return result.rows[0] || null;
+  }
+
   async getUserByAccount(account) {
     const accountKey = accountKeyOf(account);
     if (!accountKey) return null;
     const result = await this.db.query("SELECT * FROM incircle_users WHERE account_key = $1 LIMIT 1", [accountKey]);
     return result.rows[0] || null;
+  }
+
+  async establishLoginSession(user, identity, body) {
+    const session = await establishAccountSession(
+      this.db,
+      this.config,
+      this.request,
+      user,
+      identity,
+      body || {}
+    );
+    this.activeAccountSession = session;
+    this.activeIdentity = Object.assign({}, identity, {
+      userId: String(user.id),
+      sessionId: String(session.id),
+      sessionVersion: Number(session.token_version),
+    });
+    return session;
   }
 
   async syncClientThemePreference(user, body) {
@@ -1941,7 +1973,9 @@ class InCircleService {
     const acceptanceState = await readAgreementAcceptanceState(this.db, userRow, legalProfile);
     const agreements = agreementStatus(userRow, legalProfile, acceptanceState);
     const hasActiveAccount = !!(userRow.logged_in && hasPasswordAccount(userRow));
-    const access = hasActiveAccount ? issueAccessToken(this.config, userRow) : null;
+    const accountSession = this.activeAccountSession || null;
+    const hasActiveSession = !!(hasActiveAccount && accountSession);
+    const access = hasActiveSession ? issueAccessToken(this.config, userRow, accountSession) : null;
     if (hasActiveAccount && !agreements.accepted) {
       return {
         user: publicUser(userRow),
@@ -1951,15 +1985,15 @@ class InCircleService {
         memberships: [],
         currentCircleId: "",
         currentCircle: null,
-        loggedIn: true,
+        loggedIn: hasActiveSession,
         hasCircle: false,
         hasCircles: false,
         isSuperAdmin: false,
         needsAccountBinding: false,
         agreementsAccepted: false,
         agreements,
-        accessToken: access.token,
-        accessTokenExpiresAt: access.expiresAt,
+        accessToken: access ? access.token : "",
+        accessTokenExpiresAt: access ? access.expiresAt : "",
         backend: { provider: "self-hosted", mode: "http", migrated: true },
       };
     }
@@ -2010,7 +2044,7 @@ class InCircleService {
       memberships: memberships.map(publicMembership),
       currentCircleId,
       currentCircle: currentCircleId ? decoratedCircles.find((circle) => circle.id === currentCircleId) || null : null,
-      loggedIn: hasActiveAccount,
+      loggedIn: hasActiveSession,
       hasCircle: !!currentCircleId,
       hasCircles: decoratedCircles.length > 0,
       isSuperAdmin: this.isSuperAdmin(userRow.openid, userRow),
@@ -2046,7 +2080,13 @@ class InCircleService {
 
   async requireUser(body, options) {
     const identity = await this.resolveIdentity(body, { required: true });
-    const user = await this.getUserByOpenid(identity.openid);
+    if (identity.source !== "token" || !identity.userId) {
+      throw new AppError("请使用账号密码重新登录", {
+        statusCode: 401,
+        errCode: "AUTH_REQUIRED",
+      });
+    }
+    const user = await this.getUserById(identity.userId);
     if (user && user.status === "blocked") {
       throw new AppError(user.blocked_reason || "账号已被封禁，请联系平台处理", {
         statusCode: 403,
@@ -2065,6 +2105,8 @@ class InCircleService {
     if (identity.authVersion && Number(identity.authVersion) !== Number(user.auth_version || 1)) {
       throw new AppError("登录状态已失效，请重新登录", { statusCode: 401, errCode: "TOKEN_REVOKED" });
     }
+    this.activeAccountSession = await requireActiveAccountSession(this.db, identity, user.id);
+    this.activeIdentity = identity;
     if (!(options && options.allowPendingAgreement)) {
       const legalProfile = await this.currentLegalProfile();
       const acceptanceState = await readAgreementAcceptanceState(this.db, user, legalProfile);
@@ -2086,31 +2128,12 @@ class InCircleService {
 
   async session(body) {
     const legalProfile = await this.currentLegalProfile();
-    let identity = null;
-    try {
-      identity = await this.resolveIdentity(body, { required: false });
-    } catch (error) {
-      if (error.errCode === "WECHAT_CONFIG_REQUIRED") {
-        const session = this.emptySession(null, legalProfile);
-        session.authReady = false;
-        session.authMessage = error.message;
-        return session;
-      }
-      throw error;
-    }
-    if (!identity) {
+    if (!bearerToken(this.request)) {
       return this.emptySession(null, legalProfile);
     }
-    let user = await this.getUserByOpenid(identity.openid);
-    if (!user || user.status === "deleted") return this.emptySession(null, legalProfile);
-    if (user.status === "blocked") return this.buildSession(user);
+    const auth = await this.requireUser(body, { allowPendingAgreement: true });
+    let user = auth.user;
     user = await this.syncClientThemePreference(user, body);
-    if (!hasPasswordAccount(user)) {
-      return Object.assign(this.emptySession(publicUser(user), legalProfile), {
-        needsAccountBinding: true,
-        isSuperAdmin: this.isSuperAdmin(identity.openid, user),
-      });
-    }
     return this.buildSession(user);
   }
 
@@ -2152,6 +2175,7 @@ class InCircleService {
     );
     user = await this.syncClientThemePreference(user, body);
     user = await this.saveAccountCredentials(identity.openid, accountName, password, { lastLoginAt: nowIso(), agreement });
+    await this.establishLoginSession(user, identity, body);
     return this.buildSession(user);
   }
 
@@ -2214,12 +2238,14 @@ class InCircleService {
         }
         await this.db.query("UPDATE incircle_circle_members SET openid = $2, updated_at = now() WHERE user_id = $1", [user.id, identity.openid]);
         await this.db.query("UPDATE incircle_member_cards SET openid = $2, updated_at = now() WHERE user_id = $1", [user.id, identity.openid]);
+        await revokeAllAccountSessions(this.db, user.id, "微信绑定已更新");
         const recorded = await recordAgreementAcceptance(this.db, user.id, agreement);
         return recorded.user;
       });
+      await this.establishLoginSession(user, identity, body);
       return this.buildSession(user);
     }
-    if (user.openid !== identity.openid) {
+    if (user.verify_wechat_on_login !== false && user.openid !== identity.openid) {
       throw new AppError("该账号已绑定其他微信，请使用绑定的微信打开小程序", {
         statusCode: 403,
         errCode: "WECHAT_MISMATCH",
@@ -2231,7 +2257,6 @@ class InCircleService {
         `
         UPDATE incircle_users SET
           logged_in = true,
-          auth_version = auth_version + 1,
           last_login_at = now(),
           updated_at = now()
         WHERE id = $1
@@ -2242,6 +2267,7 @@ class InCircleService {
       const recorded = await recordAgreementAcceptance(this.db, result.rows[0].id, agreement);
       return recorded.user;
     });
+    await this.establishLoginSession(user, identity, body);
     return this.buildSession(user);
   }
 
@@ -2280,6 +2306,7 @@ class InCircleService {
     );
     user = await this.syncClientThemePreference(user, body);
     user = await this.saveAccountCredentials(identity.openid, accountName, password, { lastLoginAt: nowIso(), agreement });
+    await this.establishLoginSession(user, identity, body);
     return this.buildSession(user);
   }
 
@@ -2314,6 +2341,8 @@ class InCircleService {
       lastLoginAt: nowIso(),
       agreement,
     });
+    await revokeAllAccountSessions(this.db, nextUser.id, "密码已重置");
+    await this.establishLoginSession(nextUser, identity, body);
     return this.buildSession(nextUser);
   }
 
@@ -2340,7 +2369,96 @@ class InCircleService {
       nextPassword,
       {}
     );
+    await revokeAllAccountSessions(this.db, nextUser.id, "密码已修改", auth.identity.sessionId);
+    this.activeAccountSession = await rotateCurrentAccountSession(
+      this.db,
+      this.config,
+      auth.identity,
+      nextUser.id
+    );
     return this.buildSession(nextUser);
+  }
+
+  async accountSettings(body) {
+    const auth = await this.requireUser(body);
+    const sessions = await listAccountSessions(
+      this.db,
+      auth.user.id,
+      auth.identity.sessionId
+    );
+    return {
+      user: publicUser(auth.user),
+      isSuperAdmin: this.isSuperAdmin(auth.user.openid, auth.user),
+      verifyWechatOnLogin: auth.user.verify_wechat_on_login !== false,
+      sessions,
+    };
+  }
+
+  async updateWechatLoginVerification(body) {
+    const auth = await this.requireUser(body);
+    if (typeof body.enabled !== "boolean") {
+      throw new AppError("登录校验设置无效", {
+        statusCode: 400,
+        errCode: "INVALID_WECHAT_LOGIN_VERIFICATION",
+      });
+    }
+    const enabled = body.enabled;
+    const current = auth.user.verify_wechat_on_login !== false;
+    if (enabled === current) {
+      return { verifyWechatOnLogin: current };
+    }
+    if (!enabled) {
+      const password = String(body.currentPassword || "");
+      this.enforceAuthRateLimit("disable-wechat-login-verification", auth.identity, auth.user.account_key);
+      if (!password || !(await verifyPassword(auth.user, password))) {
+        throw new AppError("当前密码不正确", {
+          statusCode: 401,
+          errCode: "INVALID_CURRENT_PASSWORD",
+        });
+      }
+    } else if (!sessionMatchesBoundWechat(this.activeAccountSession, auth.user)) {
+      throw new AppError("请使用账号原绑定的微信登录后再开启校验", {
+        statusCode: 403,
+        errCode: "BOUND_WECHAT_REQUIRED",
+      });
+    }
+    await this.db.withTransaction(async () => {
+      await this.db.query(
+        `
+        UPDATE incircle_users
+        SET verify_wechat_on_login = $2, updated_at = now()
+        WHERE id = $1
+        `,
+        [auth.user.id, enabled]
+      );
+      await this.logOperation(
+        null,
+        auth,
+        enabled ? "开启登录微信校验" : "关闭登录微信校验",
+        "user",
+        auth.user.id,
+        {}
+      );
+    });
+    return { verifyWechatOnLogin: enabled };
+  }
+
+  async revokeLoginSession(body) {
+    const auth = await this.requireUser(body);
+    const sessionId = String(body.sessionId || "");
+    if (!isUuid(sessionId)) {
+      throw new AppError("登录设备参数无效", {
+        statusCode: 400,
+        errCode: "INVALID_ACCOUNT_SESSION_ID",
+      });
+    }
+    await this.db.withTransaction(async () => {
+      await revokeAccountSession(this.db, auth.user.id, auth.identity.sessionId, sessionId);
+      await this.logOperation(null, auth, "退出其他登录设备", "user", auth.user.id, {});
+    });
+    return {
+      sessions: await listAccountSessions(this.db, auth.user.id, auth.identity.sessionId),
+    };
   }
 
   async updateTheme(body) {
@@ -2376,14 +2494,30 @@ class InCircleService {
   async logout(body) {
     const auth = await this.requireUser(body, { allowPendingAgreement: true });
     const legalProfile = await this.currentLegalProfile();
-    const result = await this.db.query(
-      "UPDATE incircle_users SET logged_in = false, auth_version = auth_version + 1, updated_at = now() WHERE id = $1 RETURNING *",
-      [auth.user.id]
-    );
-    return this.emptySession(
-      result.rows[0] ? publicUser(Object.assign({}, result.rows[0], { logged_in: false })) : null,
-      legalProfile
-    );
+    await this.db.withTransaction(async () => {
+      await this.db.query(
+        `
+        UPDATE incircle_account_sessions
+        SET revoked_at = COALESCE(revoked_at, now()),
+            revoked_reason = '用户退出当前设备',
+            updated_at = now()
+        WHERE id = $1 AND user_id = $2
+        `,
+        [auth.identity.sessionId, auth.user.id]
+      );
+      await this.db.query(
+        `
+        UPDATE incircle_users
+        SET logged_in = EXISTS (
+          SELECT 1 FROM incircle_account_sessions
+          WHERE user_id = $1 AND revoked_at IS NULL AND expires_at > now()
+        ), updated_at = now()
+        WHERE id = $1
+        `,
+        [auth.user.id]
+      );
+    });
+    return this.emptySession(null, legalProfile);
   }
 
   async deleteAccount(body) {
@@ -2401,6 +2535,7 @@ class InCircleService {
       });
     }
     await this.db.withTransaction(async () => {
+      await this.db.query("DELETE FROM incircle_account_sessions WHERE user_id = $1", [auth.user.id]);
       await this.db.query("DELETE FROM incircle_ai_reports WHERE user_id = $1", [auth.user.id]);
       await this.db.query("DELETE FROM incircle_ai_consents WHERE user_id = $1", [auth.user.id]);
       await this.db.query("DELETE FROM incircle_ai_conversations WHERE user_id = $1", [auth.user.id]);
@@ -6096,6 +6231,11 @@ class InCircleService {
         `,
         [userId, status, auth.user.id, reason]
       );
+      await revokeAllAccountSessions(
+        this.db,
+        userId,
+        status === "blocked" ? "账号已被封禁" : "账号状态已更新"
+      );
       await this.logOperation(null, auth, status === "blocked" ? "封禁用户" : "解封用户", "user", userId, {
         reason: status === "blocked" ? reason : "",
       });
@@ -6123,6 +6263,7 @@ class InCircleService {
       );
       await this.db.query("UPDATE incircle_circle_members SET openid = '', updated_at = now() WHERE user_id = $1", [userId]);
       await this.db.query("UPDATE incircle_member_cards SET openid = '', updated_at = now() WHERE user_id = $1", [userId]);
+      await revokeAllAccountSessions(this.db, userId, "微信绑定已解除");
       await this.logOperation(null, auth, "解绑用户微信", "user", userId, {});
     });
     return this.adminUserDetail(Object.assign({}, body, { userId }));

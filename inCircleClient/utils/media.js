@@ -65,6 +65,7 @@ function parseUploadResponse(response, fallbackMessage) {
     if (body && body.errCode) error.errCode = body.errCode;
     if (body && typeof body.details !== "undefined") error.details = body.details;
     auth.handleAgreementRequired(error);
+    auth.handleAuthenticationRequired(error);
     throw error;
   }
   return body.data || body;
