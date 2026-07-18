@@ -4,14 +4,18 @@ const path = require("path");
 const { AppError } = require("../errors");
 const { bearerToken, issueAccessToken, verifyAccessToken } = require("../auth");
 const {
+  clearAccountSessionLocations,
+  deleteAccountSession,
   establishAccountSession,
-  listAccountSessions,
+  readAccountSessionCollection,
   requireActiveAccountSession,
   revokeAccountSession,
   revokeAllAccountSessions,
   rotateCurrentAccountSession,
   sessionMatchesBoundWechat,
+  updateCurrentAccountSessionLocation,
 } = require("../account-sessions");
+const { resolveLoginLocation } = require("../location");
 const { publicUrl } = require("../routes/media");
 const {
   MEMBER_ROLES,
@@ -37,6 +41,7 @@ const JOIN_CODE_LENGTH = 8;
 const JOIN_CODE_PATTERN = /^[A-Za-z0-9@#￥%&]{8}$/;
 const INVITE_TOKEN_PATTERN = /^[a-f0-9]{32}$/;
 const MAX_OWNED_CIRCLES_PER_USER = 10;
+const ACCOUNT_SETTINGS_SESSION_LIMIT = 3;
 const FRIENDLY_TAG_THRESHOLD = 2;
 const FRIENDLY_TAG_SCORE = 1;
 const FRIENDLY_TAG_PROMOTION_SCORE = 2;
@@ -213,6 +218,38 @@ function publicUser(row) {
     currentCircleId: row.current_circle_id || "",
     loggedIn: !!row.logged_in,
     isSuperAdmin: !!row.is_super_admin,
+    preciseLoginLocationEnabled: row.precise_login_location_enabled === true,
+  };
+}
+
+async function lockLoginLocationPreference(db, userId) {
+  const result = await db.query(
+    `
+    SELECT precise_login_location_enabled
+    FROM incircle_users
+    WHERE id = $1
+    FOR UPDATE
+    `,
+    [userId]
+  );
+  if (!result.rows[0]) {
+    throw new AppError("账号不存在或已删除", {
+      statusCode: 404,
+      errCode: "USER_NOT_FOUND",
+    });
+  }
+  return result.rows[0].precise_login_location_enabled === true;
+}
+
+async function accountSessionSummary(db, userId, currentSessionId) {
+  const collection = await readAccountSessionCollection(db, userId, currentSessionId, {
+    limit: ACCOUNT_SETTINGS_SESSION_LIMIT,
+  });
+  return {
+    sessions: collection.sessions,
+    sessionCount: collection.total,
+    activeSessionCount: collection.activeSessionCount,
+    hasMoreSessions: collection.hasMore,
   };
 }
 
@@ -2381,7 +2418,7 @@ class InCircleService {
 
   async accountSettings(body) {
     const auth = await this.requireUser(body);
-    const sessions = await listAccountSessions(
+    const sessionSummary = await accountSessionSummary(
       this.db,
       auth.user.id,
       auth.identity.sessionId
@@ -2390,7 +2427,141 @@ class InCircleService {
       user: publicUser(auth.user),
       isSuperAdmin: this.isSuperAdmin(auth.user.openid, auth.user),
       verifyWechatOnLogin: auth.user.verify_wechat_on_login !== false,
-      sessions,
+      preciseLoginLocationEnabled: auth.user.precise_login_location_enabled === true,
+      ...sessionSummary,
+    };
+  }
+
+  async loginSessions(body) {
+    const auth = await this.requireUser(body);
+    const collection = await readAccountSessionCollection(
+      this.db,
+      auth.user.id,
+      auth.identity.sessionId
+    );
+    return {
+      sessions: collection.sessions,
+      sessionCount: collection.total,
+      activeSessionCount: collection.activeSessionCount,
+    };
+  }
+
+  async enablePreciseLoginLocation(body) {
+    const auth = await this.requireUser(body);
+    this.enforceAuthRateLimit("login-location", auth.identity, auth.user.id);
+    const location = await resolveLoginLocation(body.location, this.config);
+    let wasEnabled = false;
+    await this.db.withTransaction(async () => {
+      wasEnabled = await lockLoginLocationPreference(this.db, auth.user.id);
+      if (!wasEnabled) {
+        await this.db.query(
+          `
+          UPDATE incircle_users
+          SET precise_login_location_enabled = true, updated_at = now()
+          WHERE id = $1
+          `,
+          [auth.user.id]
+        );
+      }
+      await updateCurrentAccountSessionLocation(
+        this.db,
+        auth.user.id,
+        auth.identity.sessionId,
+        location
+      );
+      await this.logOperation(
+        null,
+        auth,
+        wasEnabled ? "更新当前设备登录位置" : "开启精确登录定位",
+        "user",
+        auth.user.id,
+        { addressResolved: location.resolved === true }
+      );
+    });
+    return {
+      updated: true,
+      preciseLoginLocationEnabled: true,
+      addressResolved: location.resolved === true,
+      ...(await accountSessionSummary(this.db, auth.user.id, auth.identity.sessionId)),
+    };
+  }
+
+  async updatePreciseLoginLocationPreference(body) {
+    const auth = await this.requireUser(body);
+    if (body.enabled === true) {
+      throw new AppError("开启精确登录定位时必须同时提交当前位置", {
+        statusCode: 409,
+        errCode: "LOGIN_LOCATION_INITIAL_CAPTURE_REQUIRED",
+      });
+    }
+    if (body.enabled !== false) {
+      throw new AppError("登录定位设置无效", {
+        statusCode: 400,
+        errCode: "INVALID_LOGIN_LOCATION_PREFERENCE",
+      });
+    }
+    let wasEnabled = false;
+    await this.db.withTransaction(async () => {
+      wasEnabled = await lockLoginLocationPreference(this.db, auth.user.id);
+      if (wasEnabled) {
+        await this.db.query(
+          `
+          UPDATE incircle_users
+          SET precise_login_location_enabled = false, updated_at = now()
+          WHERE id = $1
+          `,
+          [auth.user.id]
+        );
+      }
+      await clearAccountSessionLocations(this.db, auth.user.id);
+      if (wasEnabled) {
+        await this.logOperation(
+          null,
+          auth,
+          "关闭精确登录定位",
+          "user",
+          auth.user.id,
+          { storedLocationsCleared: true }
+        );
+      }
+    });
+    return {
+      preciseLoginLocationEnabled: false,
+      ...(await accountSessionSummary(this.db, auth.user.id, auth.identity.sessionId)),
+    };
+  }
+
+  async updateCurrentLoginLocation(body) {
+    const auth = await this.requireUser(body);
+    if (auth.user.precise_login_location_enabled !== true) {
+      throw new AppError("精确登录定位已关闭", {
+        statusCode: 409,
+        errCode: "LOGIN_LOCATION_DISABLED",
+      });
+    }
+    this.enforceAuthRateLimit("login-location", auth.identity, auth.user.id);
+    const location = await resolveLoginLocation(body.location, this.config);
+    await this.db.withTransaction(async () => {
+      const enabled = await lockLoginLocationPreference(this.db, auth.user.id);
+      if (!enabled) {
+        throw new AppError("精确登录定位已关闭", {
+          statusCode: 409,
+          errCode: "LOGIN_LOCATION_DISABLED",
+        });
+      }
+      await updateCurrentAccountSessionLocation(
+        this.db,
+        auth.user.id,
+        auth.identity.sessionId,
+        location
+      );
+      await this.logOperation(null, auth, "更新当前设备登录位置", "user", auth.user.id, {
+        addressResolved: location.resolved === true,
+      });
+    });
+    return {
+      updated: true,
+      addressResolved: location.resolved === true,
     };
   }
 
@@ -2457,8 +2628,24 @@ class InCircleService {
       await this.logOperation(null, auth, "退出其他登录设备", "user", auth.user.id, {});
     });
     return {
-      sessions: await listAccountSessions(this.db, auth.user.id, auth.identity.sessionId),
+      ...(await accountSessionSummary(this.db, auth.user.id, auth.identity.sessionId)),
     };
+  }
+
+  async deleteLoginSession(body) {
+    const auth = await this.requireUser(body);
+    const sessionId = String(body.sessionId || "");
+    if (!isUuid(sessionId)) {
+      throw new AppError("登录记录参数无效", {
+        statusCode: 400,
+        errCode: "INVALID_ACCOUNT_SESSION_ID",
+      });
+    }
+    await this.db.withTransaction(async () => {
+      await deleteAccountSession(this.db, auth.user.id, auth.identity.sessionId, sessionId);
+      await this.logOperation(null, auth, "删除已退出登录记录", "user", auth.user.id, {});
+    });
+    return { deletedSessionId: sessionId };
   }
 
   async updateTheme(body) {

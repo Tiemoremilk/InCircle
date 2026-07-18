@@ -3,7 +3,8 @@ const crypto = require("crypto");
 const { AppError } = require("./errors");
 
 const MAX_DEVICE_SESSIONS = 50;
-const PUBLIC_DEVICE_SESSIONS = 20;
+const PUBLIC_DEVICE_SESSIONS = MAX_DEVICE_SESSIONS;
+const LOGIN_LOCATION_RETENTION_DAYS = 90;
 
 function sha256(value) {
   return crypto.createHash("sha256").update(String(value || "")).digest("hex");
@@ -89,6 +90,15 @@ async function establishAccountSession(db, config, request, user, identity, body
       sdk_version = EXCLUDED.sdk_version,
       environment_version = EXCLUDED.environment_version,
       login_address = EXCLUDED.login_address,
+      login_location_source = '',
+      login_latitude = NULL,
+      login_longitude = NULL,
+      login_accuracy_m = NULL,
+      login_location_province = '',
+      login_location_city = '',
+      login_location_district = '',
+      login_location_detail = '',
+      login_location_captured_at = NULL,
       last_login_at = now(),
       expires_at = EXCLUDED.expires_at,
       revoked_at = NULL,
@@ -208,6 +218,13 @@ function publicAccountSession(row, currentSessionId) {
     row.wechat_version ? `微信 ${row.wechat_version}` : "",
     row.environment_version ? `${row.environment_version} 版` : "",
   ].filter(Boolean).join(" · ");
+  const hasLocation = row.login_latitude !== null
+    && typeof row.login_latitude !== "undefined"
+    && row.login_longitude !== null
+    && typeof row.login_longitude !== "undefined"
+    && Number.isFinite(Number(row.login_latitude))
+    && Number.isFinite(Number(row.login_longitude))
+    && !!row.login_location_captured_at;
   return {
     id: row.id,
     deviceName: row.device_name || row.device_model || row.device_brand || "未知设备",
@@ -215,27 +232,161 @@ function publicAccountSession(row, currentSessionId) {
     deviceModel: row.device_model || "",
     environment: environment || "环境信息暂不可用",
     loginAddress: row.login_address || "未知地址",
+    loginLocation: {
+      available: hasLocation,
+      source: hasLocation ? row.login_location_source || "wx.getLocation" : "",
+      latitude: hasLocation ? Number(row.login_latitude) : null,
+      longitude: hasLocation ? Number(row.login_longitude) : null,
+      accuracyMeters: hasLocation && row.login_accuracy_m !== null
+        ? Number(row.login_accuracy_m)
+        : null,
+      province: hasLocation ? row.login_location_province || "" : "",
+      city: hasLocation ? row.login_location_city || "" : "",
+      district: hasLocation ? row.login_location_district || "" : "",
+      detail: hasLocation ? row.login_location_detail || "" : "",
+      capturedAt: hasLocation ? row.login_location_captured_at : null,
+    },
     lastLoginAt: row.last_login_at || null,
     expiresAt: row.expires_at || null,
     status: current ? "current" : active ? "active" : row.revoked_at ? "revoked" : "expired",
     statusText: current ? "当前设备" : active ? "已登录" : row.revoked_at ? "已退出" : "已过期",
     current,
     canRevoke: active && !current,
+    canDelete: !active && !current,
   };
 }
 
-async function listAccountSessions(db, userId, currentSessionId) {
+async function clearExpiredAccountSessionLocations(db, userId) {
+  const userFilter = userId ? "AND user_id = $2" : "";
   const result = await db.query(
     `
-    SELECT *
+    UPDATE incircle_account_sessions
+    SET login_location_source = '',
+        login_latitude = NULL,
+        login_longitude = NULL,
+        login_accuracy_m = NULL,
+        login_location_province = '',
+        login_location_city = '',
+        login_location_district = '',
+        login_location_detail = '',
+        login_location_captured_at = NULL,
+        updated_at = now()
+    WHERE login_location_captured_at < now() - ($1::text || ' days')::interval
+      ${userFilter}
+    `,
+    userId ? [LOGIN_LOCATION_RETENTION_DAYS, userId] : [LOGIN_LOCATION_RETENTION_DAYS]
+  );
+  return Number(result.rowCount || 0);
+}
+
+async function clearAccountSessionLocations(db, userId) {
+  await db.query(
+    `
+    UPDATE incircle_account_sessions
+    SET login_location_source = '',
+        login_latitude = NULL,
+        login_longitude = NULL,
+        login_accuracy_m = NULL,
+        login_location_province = '',
+        login_location_city = '',
+        login_location_district = '',
+        login_location_detail = '',
+        login_location_captured_at = NULL,
+        updated_at = now()
+    WHERE user_id = $1
+      AND login_location_captured_at IS NOT NULL
+    `,
+    [userId]
+  );
+}
+
+async function updateCurrentAccountSessionLocation(db, userId, sessionId, location) {
+  const result = await db.query(
+    `
+    UPDATE incircle_account_sessions
+    SET login_location_source = $3,
+        login_latitude = $4,
+        login_longitude = $5,
+        login_accuracy_m = $6,
+        login_location_province = $7,
+        login_location_city = $8,
+        login_location_district = $9,
+        login_location_detail = $10,
+        login_location_captured_at = now(),
+        updated_at = now()
+    WHERE id = $1
+      AND user_id = $2
+      AND revoked_at IS NULL
+      AND expires_at > now()
+    RETURNING *
+    `,
+    [
+      sessionId,
+      userId,
+      location.source,
+      location.latitude,
+      location.longitude,
+      location.accuracy,
+      location.province || "",
+      location.city || "",
+      location.district || "",
+      location.detail || "",
+    ]
+  );
+  if (!result.rows[0]) {
+    throw new AppError("当前登录设备已失效，请重新登录", {
+      statusCode: 401,
+      errCode: "ACCOUNT_SESSION_REVOKED",
+    });
+  }
+  return result.rows[0];
+}
+
+function accountSessionLimit(value) {
+  const parsed = Math.floor(Number(value));
+  if (!Number.isFinite(parsed) || parsed <= 0) return PUBLIC_DEVICE_SESSIONS;
+  return Math.min(PUBLIC_DEVICE_SESSIONS, parsed);
+}
+
+async function readAccountSessionCollection(db, userId, currentSessionId, options) {
+  await clearExpiredAccountSessionLocations(db, userId);
+  const limit = accountSessionLimit(options && options.limit);
+  const result = await db.query(
+    `
+    SELECT *,
+      count(*) OVER()::integer AS session_total,
+      count(*) FILTER (
+        WHERE revoked_at IS NULL AND expires_at > now()
+      ) OVER()::integer AS active_session_count
     FROM incircle_account_sessions
     WHERE user_id = $1
-    ORDER BY (id = $2::uuid) DESC, last_login_at DESC, created_at DESC
-    LIMIT $3
+    ORDER BY last_login_at DESC, created_at DESC, id DESC
+    LIMIT $2
     `,
-    [userId, currentSessionId || null, PUBLIC_DEVICE_SESSIONS]
+    [userId, limit]
   );
-  return result.rows.map((row) => publicAccountSession(row, currentSessionId));
+  const rows = result.rows || [];
+  const total = rows.length ? Number(rows[0].session_total || rows.length) : 0;
+  const activeSessionCount = rows.length
+    ? Number(rows[0].active_session_count || 0)
+    : 0;
+  const sessions = rows.map((row) => publicAccountSession(row, currentSessionId));
+  return {
+    sessions,
+    total,
+    activeSessionCount,
+    hasMore: total > sessions.length,
+  };
+}
+
+async function listAccountSessions(db, userId, currentSessionId, options) {
+  const collection = await readAccountSessionCollection(
+    db,
+    userId,
+    currentSessionId,
+    options
+  );
+  return collection.sessions;
 }
 
 async function revokeAccountSession(db, userId, currentSessionId, targetSessionId) {
@@ -265,19 +416,69 @@ async function revokeAccountSession(db, userId, currentSessionId, targetSessionI
   return result.rows[0];
 }
 
+async function deleteAccountSession(db, userId, currentSessionId, targetSessionId) {
+  if (String(currentSessionId || "") === String(targetSessionId || "")) {
+    throw new AppError("当前登录设备不能删除", {
+      statusCode: 409,
+      errCode: "CURRENT_SESSION_CANNOT_DELETE",
+    });
+  }
+  const selected = await db.query(
+    `
+    SELECT id, revoked_at, expires_at
+    FROM incircle_account_sessions
+    WHERE id = $1 AND user_id = $2
+    LIMIT 1
+    FOR UPDATE
+    `,
+    [targetSessionId, userId]
+  );
+  const session = selected.rows[0];
+  if (!session) {
+    throw new AppError("登录记录不存在或已被清理", {
+      statusCode: 404,
+      errCode: "ACCOUNT_SESSION_NOT_FOUND",
+    });
+  }
+  const expired = !session.expires_at || new Date(session.expires_at).getTime() <= Date.now();
+  if (!session.revoked_at && !expired) {
+    throw new AppError("请先退出这台设备，再删除登录记录", {
+      statusCode: 409,
+      errCode: "ACTIVE_SESSION_CANNOT_DELETE",
+    });
+  }
+  const removed = await db.query(
+    "DELETE FROM incircle_account_sessions WHERE id = $1 AND user_id = $2 RETURNING id",
+    [targetSessionId, userId]
+  );
+  if (!removed.rows[0]) {
+    throw new AppError("登录记录不存在或已被清理", {
+      statusCode: 404,
+      errCode: "ACCOUNT_SESSION_NOT_FOUND",
+    });
+  }
+  return removed.rows[0];
+}
+
 function sessionMatchesBoundWechat(session, user) {
   if (!session || !user || !user.openid || !session.login_openid_hash) return false;
   return session.login_openid_hash === sha256(user.openid);
 }
 
 module.exports = {
+  LOGIN_LOCATION_RETENTION_DAYS,
+  clearAccountSessionLocations,
+  clearExpiredAccountSessionLocations,
+  deleteAccountSession,
   establishAccountSession,
   listAccountSessions,
   loginAddressFromRequest,
+  readAccountSessionCollection,
   requireActiveAccountSession,
   revokeAccountSession,
   revokeAllAccountSessions,
   rotateCurrentAccountSession,
   sessionMatchesBoundWechat,
   sha256,
+  updateCurrentAccountSessionLocation,
 };

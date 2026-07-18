@@ -1,0 +1,103 @@
+<page-meta page-style="{{themeStyle}} {{incircleKeyboardPageStyle}}"></page-meta>
+
+<view class="page login-records-page {{themeClass}}" wx:if="{{!loading}}">
+  <view class="records-toolbar">
+    <view class="search-shell">
+      <image src="/images/ui-icons/search.svg" mode="aspectFit"></image>
+      <input
+        adjust-position="{{true}}"
+        cursor-spacing="24"
+        confirm-type="search"
+        placeholder="搜索设备、系统、位置或网络地址"
+        value="{{searchText}}"
+        bindinput="onSearchInput"
+      />
+      <view class="search-clear" wx:if="{{searchText}}" bindtap="clearSearch">清空</view>
+    </view>
+    <view class="records-summary">
+      <view>
+        <text>{{activeSessionCount}} 台已登录</text>
+        <text class="summary-divider">·</text>
+        <text>{{sessionCount}} 条记录</text>
+      </view>
+      <text>{{searchText ? '匹配 ' + filteredCount + ' 条' : '最近登录优先'}}</text>
+    </view>
+  </view>
+
+  <view class="records-error" wx:if="{{loadError}}">
+    <view class="records-error-icon"><image src="/images/ui-icons/alert.svg" mode="aspectFit"></image></view>
+    <view class="records-error-copy"><view>登录记录暂不可用</view><text>{{loadError}}</text></view>
+    <view class="records-retry" bindtap="retryLoad">重新加载</view>
+  </view>
+
+  <view class="records-list" wx:elif="{{sessions.length}}">
+    <view class="login-record-card {{item.statusClass}}" wx:for="{{sessions}}" wx:key="id">
+      <view class="record-head">
+        <view class="record-device-icon"><image src="{{item.deviceIcon}}" mode="aspectFit"></image></view>
+        <view class="record-device-copy">
+          <view class="record-device-name">{{item.deviceName}}</view>
+          <view class="record-environment">{{item.environment}}</view>
+        </view>
+        <view class="record-side">
+          <view class="record-status {{item.statusClass}}">{{item.statusText}}</view>
+          <view
+            class="record-action danger {{sessionBusyId === item.id ? 'disabled' : ''}}"
+            wx:if="{{item.canRevoke}}"
+            data-id="{{item.id}}"
+            bindtap="revokeSession"
+          >{{sessionBusyId === item.id ? '处理中' : '退出'}}</view>
+          <view
+            class="record-action danger {{sessionBusyId === item.id ? 'disabled' : ''}}"
+            wx:if="{{item.canDelete}}"
+            data-id="{{item.id}}"
+            bindtap="deleteSession"
+          >{{sessionBusyId === item.id ? '处理中' : '删除'}}</view>
+        </view>
+      </view>
+
+      <view class="record-location {{item.hasLoginLocation ? 'recorded' : 'empty'}}">
+        <view class="record-location-icon"><image src="/images/ui-icons/map-pin.svg" mode="aspectFit"></image></view>
+        <view class="record-location-copy">
+          <view class="record-location-head">
+            <view>登录位置</view>
+            <text>{{item.hasLoginLocation ? '已记录' : '未记录'}}</text>
+          </view>
+          <view class="record-location-value">{{item.loginLocationText}}</view>
+          <view class="record-location-detail" wx:if="{{item.loginCoordinateText || item.loginLocationCapturedText}}">
+            <text class="record-coordinate" wx:if="{{item.loginCoordinateText}}">{{item.loginCoordinateText}}</text>
+            <text wx:if="{{item.loginLocationCapturedText}}">记录于 {{item.loginLocationCapturedText}}</text>
+          </view>
+        </view>
+      </view>
+
+      <view class="record-meta">
+        <view><image src="/images/ui-icons/clock.svg" mode="aspectFit"></image><text>{{item.lastLoginText}}</text></view>
+        <view><image src="/images/ui-icons/link.svg" mode="aspectFit"></image><text>网络出口：{{item.networkAddressText}}</text></view>
+      </view>
+    </view>
+  </view>
+
+  <empty-state
+    wx:else
+    kind="search"
+    icon="{{searchText ? '/images/ui-icons/search.svg' : '/images/ui-icons/history.svg'}}"
+    title="{{searchText ? '没有匹配的登录记录' : '暂无登录记录'}}"
+    description="{{searchText ? '换个设备、系统或位置关键字再试。' : '账号在新设备登录后会显示在这里。'}}"
+    compact="{{true}}"
+  />
+</view>
+
+<view class="page loading-page {{themeClass}}" wx:else>
+  <view class="loading-panel">
+    <view class="loading-illustration">
+      <view class="loading-card-line first"></view>
+      <view class="loading-card-line second"></view>
+      <view class="loading-card-line third"></view>
+      <view class="loading-card-mark"></view>
+    </view>
+    <view class="loading-text">正在读取登录记录...</view>
+    <view class="loading-dots"><view></view><view></view><view></view></view>
+  </view>
+</view>
+
+<theme-dialog id="incircle-theme-dialog" />

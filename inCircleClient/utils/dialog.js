@@ -36,6 +36,7 @@ function customOptions(options) {
     verificationText: source.verificationText,
     verificationLabel: source.verificationLabel,
     verificationPlaceholder: source.verificationPlaceholder,
+    confirmOpenType: source.confirmOpenType,
   };
 }
 

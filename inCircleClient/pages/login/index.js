@@ -5,6 +5,7 @@ const dialog = require("../../utils/dialog");
 const invite = require("../../utils/invite");
 const legal = require("../../utils/legal");
 const auth = require("../../utils/auth");
+const loginLocation = require("../../utils/login-location");
 
 function normalizePhone(value) {
   return String(value || "").replace(/[^\d]/g, "").slice(0, 11);
@@ -501,8 +502,10 @@ Page({
 
     action
       .then((session) => {
-        this.showFeedback(mode === "forgot" ? "密码已重置" : "登录成功", "success");
-        this.goNext(session);
+        return this.completeLogin(
+          session,
+          mode === "forgot" ? "密码已重置" : "登录成功"
+        );
       })
       .catch((err) => {
         if (mode === "login" && err && err.errCode === "WECHAT_REBIND_CONFIRM_REQUIRED") {
@@ -550,8 +553,7 @@ Page({
         ),
       })
       .then((session) => {
-        this.showFeedback("微信已重新绑定", "success");
-        this.goNext(session);
+        return this.completeLogin(session, "微信已重新绑定");
       })
       .catch((error) => {
         const message = (error && error.message) || "绑定失败";
@@ -574,6 +576,14 @@ Page({
   openAgreementConsent() {
     const query = invite.inviteQuery(this.data.nextCode, this.data.nextInviteToken);
     wx.reLaunch({ url: `/pages/agreement-consent/index${query}` });
+  },
+
+  completeLogin(session, successText) {
+    // A login capture is silent: missing privacy or location permission skips it.
+    loginLocation.captureAndSave(session, { interactive: false });
+    this.showFeedback(successText || "登录成功", "success");
+    this.goNext(session);
+    return Promise.resolve(session);
   },
 
   goNext(session) {

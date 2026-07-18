@@ -43,27 +43,54 @@
     <view class="settings-heading">
       <view class="settings-heading-main">
         <view class="settings-heading-icon"><image src="/images/ui-icons/shield-check.svg" mode="aspectFit"></image></view>
-        <view><view class="settings-title">登录保护</view><view class="settings-caption">控制账号密码登录时的身份校验</view></view>
+        <view><view class="settings-title">登录保护</view><view class="settings-caption">管理微信校验与登录设备位置</view></view>
       </view>
     </view>
-    <view class="settings-surface security-surface">
-      <view class="security-setting-row">
-        <view class="security-setting-icon"><image src="/images/ui-icons/fingerprint.svg" mode="aspectFit"></image></view>
-        <view class="security-setting-copy">
-          <view class="security-setting-title">登录时校验绑定微信</view>
-          <view class="security-setting-desc">开启后，账号密码与原绑定微信必须同时匹配</view>
+    <view class="security-stack">
+      <view class="settings-surface security-surface">
+        <view class="security-setting-row">
+          <view class="security-setting-icon"><image src="/images/ui-icons/user-check.svg" mode="aspectFit"></image></view>
+          <view class="security-setting-copy">
+            <view class="security-setting-title">登录时校验绑定微信</view>
+            <view class="security-setting-desc">开启后，账号密码与原绑定微信必须同时匹配</view>
+          </view>
+          <switch
+            class="theme-switch"
+            checked="{{verifyWechatOnLogin}}"
+            disabled="{{verificationBusy}}"
+            color="{{themePrimary}}"
+            bindchange="onWechatVerificationChange"
+          />
         </view>
-        <switch
-          class="theme-switch"
-          checked="{{verifyWechatOnLogin}}"
-          disabled="{{verificationBusy}}"
-          color="{{themePrimary}}"
-          bindchange="onWechatVerificationChange"
-        />
+        <view class="security-state {{verifyWechatOnLogin ? 'protected' : 'password-only'}}">
+          <view class="security-state-dot"></view>
+          <text>{{verifyWechatOnLogin ? '当前为双重校验，建议保持开启' : '当前仅校验账号密码，其他微信也可以登录'}}</text>
+        </view>
       </view>
-      <view class="security-state {{verifyWechatOnLogin ? 'protected' : 'password-only'}}">
-        <view class="security-state-dot"></view>
-        <text>{{verifyWechatOnLogin ? '当前为双重校验，建议保持开启' : '当前仅校验账号密码，其他微信也可以登录'}}</text>
+      <view class="settings-surface security-surface location-security-surface">
+        <view class="security-setting-row location-setting-row">
+          <view class="security-setting-icon"><image src="/images/ui-icons/locate-fixed.svg" mode="aspectFit"></image></view>
+          <view class="security-setting-copy">
+            <view class="security-setting-title">记录精确登录位置</view>
+            <view class="security-setting-desc">经你授权，在账号登录时记录当前设备位置</view>
+          </view>
+          <switch
+            class="theme-switch"
+            checked="{{preciseLoginLocationEnabled}}"
+            disabled="{{locationBusy}}"
+            color="{{themePrimary}}"
+            bindchange="onPreciseLocationChange"
+          />
+        </view>
+        <view class="location-setting-note {{preciseLoginLocationEnabled ? 'location-on' : 'location-off'}}">
+          <view class="location-setting-note-copy">
+            <view class="location-setting-note-dot"></view>
+            <text>{{locationBusy ? (locationOperation === 'clearing' ? '正在清除已有设备的精确位置' : (locationOperation === 'authorizing' ? '正在请求微信位置授权' : '正在更新本机登录位置')) : (preciseLoginLocationEnabled ? '仅在登录或主动更新时采集，不持续追踪' : '默认关闭，开启后才会记录精确位置')}}</text>
+          </view>
+          <view wx:if="{{preciseLoginLocationEnabled || locationBusy}}" class="location-update {{locationBusy ? 'disabled' : ''}}" bindtap="updateCurrentLocation">
+            {{locationBusy ? (locationOperation === 'clearing' ? '清除中' : (locationOperation === 'authorizing' ? '授权中' : '定位中')) : '更新本机位置'}}
+          </view>
+        </view>
       </view>
     </view>
   </view>
@@ -79,7 +106,7 @@
     <view class="session-list settings-surface" wx:if="{{sessions.length}}">
       <view class="session-row {{item.statusClass}}" wx:for="{{sessions}}" wx:key="id">
         <view class="session-device-icon">
-          <image src="{{item.current ? '/images/ui-icons/phone.svg' : '/images/ui-icons/log-in.svg'}}" mode="aspectFit"></image>
+          <image src="{{item.deviceIcon}}" mode="aspectFit"></image>
         </view>
         <view class="session-main">
           <view class="session-title-line">
@@ -92,12 +119,32 @@
                 data-id="{{item.id}}"
                 bindtap="revokeSession"
               >{{sessionBusyId === item.id ? '处理中' : '退出'}}</view>
+              <view
+                class="session-delete {{sessionBusyId === item.id ? 'disabled' : ''}}"
+                wx:if="{{item.canDelete}}"
+                data-id="{{item.id}}"
+                bindtap="deleteSession"
+              >{{sessionBusyId === item.id ? '处理中' : '删除'}}</view>
             </view>
           </view>
           <view class="session-environment">{{item.environment}}</view>
+          <view class="session-location {{item.hasLoginLocation ? 'recorded' : 'empty'}}">
+            <view class="session-location-mark"><image src="/images/ui-icons/map-pin.svg" mode="aspectFit"></image></view>
+            <view class="session-location-copy">
+              <view class="session-location-head">
+                <view class="session-location-label">登录位置</view>
+                <view class="session-location-status">{{item.hasLoginLocation ? '已记录' : '未记录'}}</view>
+              </view>
+              <view class="session-location-value">{{item.loginLocationText}}</view>
+              <view class="session-location-detail" wx:if="{{item.loginCoordinateText || item.loginLocationCapturedText}}">
+                <text class="session-location-coordinate" wx:if="{{item.loginCoordinateText}}">{{item.loginCoordinateText}}</text>
+                <text class="session-location-captured" wx:if="{{item.loginLocationCapturedText}}">记录于 {{item.loginLocationCapturedText}}</text>
+              </view>
+            </view>
+          </view>
           <view class="session-meta">
             <view><image src="/images/ui-icons/clock.svg" mode="aspectFit"></image><text>{{item.lastLoginText}}</text></view>
-            <view><image src="/images/ui-icons/link.svg" mode="aspectFit"></image><text>{{item.addressText}}</text></view>
+            <view><image src="/images/ui-icons/link.svg" mode="aspectFit"></image><text>网络出口：{{item.networkAddressText}}</text></view>
           </view>
         </view>
       </view>
@@ -105,6 +152,14 @@
     <view class="session-empty settings-surface" wx:else>
       <view class="session-empty-icon"><image src="/images/ui-icons/history.svg" mode="aspectFit"></image></view>
       <view><view class="session-empty-title">暂无登录记录</view><view class="session-empty-copy">下一次账号登录后会在这里显示设备与环境。</view></view>
+    </view>
+    <view class="session-more settings-surface" wx:if="{{hasMoreSessions}}" bindtap="openLoginRecords">
+      <view class="session-more-icon"><image src="/images/ui-icons/history.svg" mode="aspectFit"></image></view>
+      <view class="session-more-copy">
+        <view>查看更多登录记录</view>
+        <text>共 {{sessionCount}} 条，按最近登录时间排序</text>
+      </view>
+      <image class="session-more-arrow" src="/images/ui-icons/arrow-right.svg" mode="aspectFit"></image>
     </view>
   </view>
 
@@ -166,6 +221,43 @@
       <view class="account-actions">
         <view class="account-action logout {{accountBusy ? 'disabled' : ''}}" bindtap="logoutAccount"><image src="/images/ui-icons/log-in.svg" mode="aspectFit"></image><text>退出当前设备</text></view>
         <view class="account-action danger {{accountBusy ? 'disabled' : ''}}" bindtap="deleteAccount"><image src="/images/ui-icons/trash-2.svg" mode="aspectFit"></image><text>注销账号</text></view>
+      </view>
+    </view>
+  </view>
+
+  <view class="location-permission-mask" wx:if="{{locationPermissionOpen}}" bindtap="closeLocationPermission" catchtouchmove="stopEvent">
+    <view class="location-permission-sheet" catchtap="stopEvent">
+      <view class="location-permission-grabber"></view>
+      <view class="location-permission-head">
+        <view class="location-permission-icon"><image src="/images/ui-icons/locate-fixed.svg" mode="aspectFit"></image></view>
+        <view class="location-permission-heading">
+          <view class="location-permission-title-line">
+            <view class="location-permission-title">{{locationPermissionTitle}}</view>
+            <view class="location-permission-status">待授权</view>
+          </view>
+          <view class="location-permission-subtitle">{{locationPermissionSubtitle}}</view>
+        </view>
+        <view class="location-permission-close" bindtap="closeLocationPermission"><image src="/images/ui-icons/close.svg" mode="aspectFit"></image></view>
+      </view>
+
+      <view class="location-permission-copy">{{locationPermissionCopy}}</view>
+
+      <view class="location-permission-points">
+        <view class="location-permission-point">
+          <view class="location-permission-point-icon"><image src="/images/ui-icons/clock.svg" mode="aspectFit"></image></view>
+          <view class="location-permission-point-copy"><view>按次记录</view><text>仅在登录或你主动更新时获取一次，不持续追踪。</text></view>
+        </view>
+        <view class="location-permission-point">
+          <view class="location-permission-point-icon"><image src="/images/ui-icons/shield-check.svg" mode="aspectFit"></image></view>
+          <view class="location-permission-point-copy"><view>由你控制</view><text>拒绝不影响登录，关闭开关会清除已有精确位置。</text></view>
+        </view>
+      </view>
+
+      <view class="location-permission-actions">
+        <button class="location-permission-button cancel" bindtap="closeLocationPermission">暂不设置</button>
+        <view class="location-permission-action-spacer" aria-hidden="true"></view>
+        <button wx:if="{{locationPermissionMode === 'mini-program'}}" class="location-permission-button confirm" open-type="openSetting" bindopensetting="onLocationSettingResult">{{locationPermissionActionText}}</button>
+        <button wx:else class="location-permission-button confirm" bindtap="onOpenAppLocationSetting">{{locationPermissionActionText}}</button>
       </view>
     </view>
   </view>

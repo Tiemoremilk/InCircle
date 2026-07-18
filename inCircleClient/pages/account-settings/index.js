@@ -1,7 +1,8 @@
 const api = require("../../utils/api");
 const dialog = require("../../utils/dialog");
+const loginLocation = require("../../utils/login-location");
+const loginSessions = require("../../utils/login-sessions");
 const theme = require("../../utils/theme");
-const time = require("../../utils/time");
 
 function clampChannel(value, maximum) {
   const number = Math.round(Number(value || 0));
@@ -41,15 +42,22 @@ function customThemePreview(value) {
   };
 }
 
-function decorateSession(item) {
-  const session = item || {};
-  return Object.assign({}, session, {
-    lastLoginText: time.displayDateTime(session.lastLoginAt) || "时间未知",
-    addressText: session.loginAddress && session.loginAddress !== "未知地址"
-      ? session.loginAddress
-      : "地址暂不可用",
-    statusClass: session.current ? "current" : session.canRevoke ? "active" : "inactive",
-  });
+function sessionSummaryData(data) {
+  const source = data || {};
+  const sessions = (source.sessions || []).map(loginSessions.decorateSession);
+  const suppliedTotal = Number(source.sessionCount);
+  const suppliedActive = Number(source.activeSessionCount);
+  const sessionCount = Number.isFinite(suppliedTotal) ? suppliedTotal : sessions.length;
+  return {
+    sessions,
+    sessionCount,
+    activeSessionCount: Number.isFinite(suppliedActive)
+      ? suppliedActive
+      : sessions.filter((item) => item.current || item.canRevoke).length,
+    hasMoreSessions: typeof source.hasMoreSessions === "boolean"
+      ? source.hasMoreSessions
+      : sessionCount > sessions.length,
+  };
 }
 
 const DEFAULT_CUSTOM_THEME_PREVIEW = customThemePreview(theme.DEFAULT_CUSTOM_THEME_RGBA);
@@ -64,7 +72,18 @@ Page({
     verificationBusy: false,
     verificationSheetOpen: false,
     verificationPassword: "",
+    preciseLoginLocationEnabled: false,
+    locationBusy: false,
+    locationOperation: "",
+    locationPermissionOpen: false,
+    locationPermissionMode: "mini-program",
+    locationPermissionTitle: "开启位置权限",
+    locationPermissionSubtitle: "请在小程序设置中允许位置信息",
+    locationPermissionCopy: "允许后，最近登录会展示本机授权位置、定位精度和采集时间。",
+    locationPermissionActionText: "打开微信设置",
     sessions: [],
+    sessionCount: 0,
+    hasMoreSessions: false,
     activeSessionCount: 0,
     sessionBusyId: "",
     accountBusy: false,
@@ -84,16 +103,29 @@ Page({
 
   onLoad() {
     this.accountSettingsAlive = true;
+    this.locationPermissionResumeEnable = false;
+    this.pendingSystemLocationResume = null;
     this.refreshThemeOptions();
   },
 
   onShow() {
     this.accountSettingsAlive = true;
-    this.loadSettings();
+    const pendingResume = this.pendingSystemLocationResume;
+    this.pendingSystemLocationResume = null;
+    return this.loadSettings().then(() => {
+      if (!pendingResume || !this.accountSettingsAlive) return;
+      const environment = loginLocation.readLocationEnvironment();
+      if (environment.appLocationAuthorized === "authorized") {
+        this.beginInteractiveLocation(pendingResume.enablePreference);
+        return;
+      }
+      wx.showToast({ title: "微信定位权限尚未开启", icon: "none" });
+    });
   },
 
   onUnload() {
     this.accountSettingsAlive = false;
+    this.pendingSystemLocationResume = null;
   },
 
   refreshThemeOptions() {
@@ -106,24 +138,26 @@ Page({
 
   loadSettings(options) {
     if (this.data.accountBusy || this.data.verificationBusy) return Promise.resolve();
+    const requestId = (this.settingsRequestId || 0) + 1;
+    this.settingsRequestId = requestId;
     if (options && options.loading) this.setData({ loading: true, loadError: "" });
     return api.getAccountSettings({ force: !!(options && options.force) })
       .then((data) => {
-        if (!this.accountSettingsAlive) return;
-        const sessions = (data.sessions || []).map(decorateSession);
+        if (!this.accountSettingsAlive || requestId !== this.settingsRequestId) return;
+        const sessionSummary = sessionSummaryData(data);
         this.setData({
           loading: false,
           loadError: "",
           user: data.user || {},
           isSuperAdmin: !!data.isSuperAdmin,
           verifyWechatOnLogin: data.verifyWechatOnLogin !== false,
-          sessions,
-          activeSessionCount: sessions.filter((item) => item.current || item.canRevoke).length,
+          preciseLoginLocationEnabled: data.preciseLoginLocationEnabled === true,
+          ...sessionSummary,
         }, () => theme.applyPageTheme(this));
         this.refreshThemeOptions();
       })
       .catch((error) => {
-        if (!this.accountSettingsAlive) return;
+        if (!this.accountSettingsAlive || requestId !== this.settingsRequestId) return;
         this.setData({
           loading: false,
           loadError: (error && error.message) || "账号设置读取失败",
@@ -150,9 +184,164 @@ Page({
       this.data.accountBusy
       || this.data.passwordBusy
       || this.data.verificationBusy
+      || this.data.locationBusy
       || this.data.themeSaving
       || this.data.sessionBusyId
     );
+  },
+
+  onPreciseLocationChange(e) {
+    if (this.isBusy()) {
+      this.setData({ preciseLoginLocationEnabled: this.data.preciseLoginLocationEnabled });
+      return;
+    }
+    const enabled = !!e.detail.value;
+    const previous = this.data.preciseLoginLocationEnabled;
+    if (enabled === previous) return;
+    if (enabled) {
+      this.setData({ preciseLoginLocationEnabled: false });
+      this.beginInteractiveLocation(true);
+      return;
+    }
+    this.setData({
+      preciseLoginLocationEnabled: false,
+      locationBusy: true,
+      locationOperation: "clearing",
+    });
+    api.updatePreciseLoginLocationPreference(false)
+      .then((data) => {
+        this.setData({
+          preciseLoginLocationEnabled: false,
+          ...sessionSummaryData(data),
+        });
+        wx.showToast({ title: "已关闭并清除位置", icon: "success" });
+      })
+      .catch((error) => {
+        this.setData({ preciseLoginLocationEnabled: previous });
+        wx.showToast({ title: (error && error.message) || "定位设置失败", icon: "none" });
+      })
+      .finally(() => {
+        if (this.accountSettingsAlive) this.setData({ locationBusy: false, locationOperation: "" });
+      });
+  },
+
+  updateCurrentLocation() {
+    if (this.isBusy()) return;
+    if (!this.data.preciseLoginLocationEnabled) {
+      wx.showToast({ title: "请先开启精确登录定位", icon: "none" });
+      return;
+    }
+    this.beginInteractiveLocation(false);
+  },
+
+  beginInteractiveLocation(enablePreference) {
+    if (this.isBusy()) return;
+    this.pendingSystemLocationResume = null;
+    const enabling = enablePreference === true;
+    this.setData({
+      preciseLoginLocationEnabled: enabling ? false : this.data.preciseLoginLocationEnabled,
+      locationBusy: true,
+      locationOperation: enabling ? "authorizing" : "locating",
+    });
+    this.captureCurrentLocation({ enablePreference: enabling })
+      .finally(() => {
+        if (this.accountSettingsAlive) this.setData({ locationBusy: false, locationOperation: "" });
+      });
+  },
+
+  captureCurrentLocation(options) {
+    const enablePreference = !!(options && options.enablePreference);
+    return loginLocation.captureAndSave({
+      user: { preciseLoginLocationEnabled: enablePreference || this.data.preciseLoginLocationEnabled },
+    }, { interactive: true, enablePreference }).then((result) => {
+      if (result && result.updated) {
+        if (Array.isArray(result.sessions)) {
+          this.setData({
+            preciseLoginLocationEnabled: result.preciseLoginLocationEnabled === true
+              || this.data.preciseLoginLocationEnabled,
+            ...sessionSummaryData(result),
+          });
+        }
+        wx.showToast({
+          title: enablePreference
+            ? "已开启并记录位置"
+            : result.addressResolved ? "登录位置已更新" : "位置坐标已更新",
+          icon: "success",
+        });
+        return Array.isArray(result.sessions) ? result : this.loadSettings({ force: true });
+      }
+      if (enablePreference) this.setData({ preciseLoginLocationEnabled: false });
+      if (result && result.reason === "permission-denied") {
+        this.openLocationPermission("mini-program", enablePreference);
+      } else if (result && result.reason === "app-permission-denied") {
+        this.openLocationPermission("app", enablePreference);
+      } else if (result && result.reason === "privacy-denied") {
+        wx.showToast({ title: "未同意微信隐私授权", icon: "none" });
+      } else if (result && result.reason === "privacy-config-error") {
+        wx.showToast({ title: "微信隐私配置尚未生效", icon: "none" });
+      } else if (result && result.reason === "timeout") {
+        wx.showToast({ title: "定位超时，请稍后重试", icon: "none" });
+      } else if (result && result.reason === "system-location-disabled") {
+        wx.showToast({ title: "请先开启手机定位服务", icon: "none" });
+      } else if (result && result.reason === "save-failed") {
+        wx.showToast({ title: result.message || "登录位置保存失败", icon: "none" });
+      } else if (!result || !result.updated) {
+        wx.showToast({ title: "暂时无法获取位置", icon: "none" });
+      }
+      return result;
+    });
+  },
+
+  openLocationPermission(mode, enablePreference) {
+    const appPermission = mode === "app";
+    this.locationPermissionResumeEnable = enablePreference === true;
+    this.setData({
+      locationPermissionOpen: true,
+      locationPermissionMode: appPermission ? "app" : "mini-program",
+      locationPermissionTitle: appPermission ? "允许微信使用定位" : "开启位置权限",
+      locationPermissionSubtitle: appPermission
+        ? "请在系统权限中允许微信访问位置"
+        : "请在小程序设置中允许位置信息",
+      locationPermissionCopy: appPermission
+        ? "微信当前没有系统定位权限，开启后才能获取本机位置。"
+        : "小程序位置权限已关闭，重新允许后即可记录本机登录位置。",
+      locationPermissionActionText: appPermission ? "打开系统权限" : "打开微信设置",
+    });
+  },
+
+  closeLocationPermission() {
+    this.locationPermissionResumeEnable = false;
+    this.setData({ locationPermissionOpen: false });
+  },
+
+  onLocationSettingResult(e) {
+    const detail = (e && e.detail) || {};
+    const authSetting = detail.authSetting || {};
+    const enablePreference = this.locationPermissionResumeEnable;
+    this.locationPermissionResumeEnable = false;
+    this.setData({ locationPermissionOpen: false });
+    if (authSetting["scope.userLocation"] === true) {
+      this.beginInteractiveLocation(enablePreference);
+      return;
+    }
+    wx.showToast({ title: "位置权限尚未开启", icon: "none" });
+  },
+
+  onOpenAppLocationSetting() {
+    if (typeof wx.openAppAuthorizeSetting !== "function") {
+      wx.showToast({ title: "当前微信版本不支持打开系统权限", icon: "none" });
+      return;
+    }
+    const enablePreference = this.locationPermissionResumeEnable;
+    this.locationPermissionResumeEnable = false;
+    this.pendingSystemLocationResume = { enablePreference };
+    this.setData({ locationPermissionOpen: false });
+    wx.openAppAuthorizeSetting({
+      fail: () => {
+        this.pendingSystemLocationResume = null;
+        wx.showToast({ title: "无法打开系统权限设置", icon: "none" });
+      },
+    });
   },
 
   onWechatVerificationChange(e) {
@@ -235,11 +424,7 @@ Page({
         this.setData({ sessionBusyId: sessionId });
         api.revokeLoginSession(sessionId)
           .then((data) => {
-            const sessions = (data.sessions || []).map(decorateSession);
-            this.setData({
-              sessions,
-              activeSessionCount: sessions.filter((item) => item.current || item.canRevoke).length,
-            });
+            this.setData(sessionSummaryData(data));
             wx.showToast({ title: "设备已退出", icon: "success" });
           })
           .catch((error) => {
@@ -250,6 +435,40 @@ Page({
           });
       },
     });
+  },
+
+  deleteSession(e) {
+    if (this.isBusy()) return;
+    const sessionId = String(e.currentTarget.dataset.id || "");
+    const target = (this.data.sessions || []).find((item) => item.id === sessionId);
+    if (!target || !target.canDelete) return;
+    dialog.show({
+      title: "删除登录记录",
+      content: `确定删除“${target.deviceName}”的已退出记录？这不会影响账号和其他登录设备。`,
+      cancelText: "暂不删除",
+      confirmText: "确认删除",
+      tone: "danger",
+      success: (res) => {
+        if (!res.confirm) return;
+        this.setData({ sessionBusyId: sessionId });
+        api.deleteLoginSession(sessionId)
+          .then(() => this.loadSettings({ force: true }))
+          .then(() => {
+            wx.showToast({ title: "登录记录已删除", icon: "success" });
+          })
+          .catch((error) => {
+            wx.showToast({ title: (error && error.message) || "删除登录记录失败", icon: "none" });
+          })
+          .finally(() => {
+            if (this.accountSettingsAlive) this.setData({ sessionBusyId: "" });
+          });
+      },
+    });
+  },
+
+  openLoginRecords() {
+    if (this.isBusy() || !this.data.hasMoreSessions) return;
+    wx.navigateTo({ url: "/pages/login-records/index" });
   },
 
   onThemeSelect(e) {

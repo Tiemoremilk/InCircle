@@ -36,6 +36,7 @@ const READ_TTL = {
   incirclePublicLegalProfile: 300000,
   incircleSession: 300000,
   incircleAccountSettings: 5000,
+  incircleListLoginSessions: 5000,
   incircleListMyCircles: 20000,
   incircleJoinPreview: 0,
   incircleCircleSettings: 20000,
@@ -102,7 +103,11 @@ const WRITE_INVALIDATION = {
   incircleAiUpdateReport: ["incircleAiReports"],
   incircleUpdateTheme: ["incircleSession", "incircleListMyCircles"],
   incircleUpdateWechatLoginVerification: ["incircleAccountSettings"],
-  incircleRevokeLoginSession: ["incircleAccountSettings"],
+  incircleEnablePreciseLoginLocation: ["incircleAccountSettings", "incircleListLoginSessions", "incircleSession"],
+  incircleUpdatePreciseLoginLocationPreference: ["incircleAccountSettings", "incircleListLoginSessions", "incircleSession"],
+  incircleUpdateCurrentLoginLocation: ["incircleAccountSettings", "incircleListLoginSessions"],
+  incircleRevokeLoginSession: ["incircleAccountSettings", "incircleListLoginSessions"],
+  incircleDeleteLoginSession: ["incircleAccountSettings", "incircleListLoginSessions"],
   incircleRotateInviteCode: ["incircleCircleSettings", "incircleGetInviteQrCode", "incircleJoinPreview"],
 };
 
@@ -565,6 +570,11 @@ function getAccountSettings(options) {
   return requestAction("incircleAccountSettings", {});
 }
 
+function getLoginSessions(options) {
+  if (options && options.force) clearCache(["incircleListLoginSessions"]);
+  return requestAction("incircleListLoginSessions", {});
+}
+
 function updateWechatLoginVerification(enabled, currentPassword) {
   return requestAction("incircleUpdateWechatLoginVerification", {
     enabled: !!enabled,
@@ -572,8 +582,30 @@ function updateWechatLoginVerification(enabled, currentPassword) {
   });
 }
 
+function updatePreciseLoginLocationPreference(enabled) {
+  return requestAction("incircleUpdatePreciseLoginLocationPreference", {
+    enabled: !!enabled,
+  });
+}
+
+function enablePreciseLoginLocation(location) {
+  return requestAction("incircleEnablePreciseLoginLocation", {
+    location: location || {},
+  });
+}
+
+function updateCurrentLoginLocation(location) {
+  return requestAction("incircleUpdateCurrentLoginLocation", {
+    location: location || {},
+  });
+}
+
 function revokeLoginSession(sessionId) {
   return requestAction("incircleRevokeLoginSession", { sessionId });
+}
+
+function deleteLoginSession(sessionId) {
+  return requestAction("incircleDeleteLoginSession", { sessionId });
 }
 
 function updateTheme(themeKey, customTheme) {
@@ -1407,8 +1439,13 @@ module.exports = {
   acceptAgreements,
   changePassword,
   getAccountSettings,
+  getLoginSessions,
   updateWechatLoginVerification,
+  enablePreciseLoginLocation,
+  updatePreciseLoginLocationPreference,
+  updateCurrentLoginLocation,
   revokeLoginSession,
+  deleteLoginSession,
   updateTheme,
   logout,
   deleteAccount,

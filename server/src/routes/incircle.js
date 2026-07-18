@@ -81,10 +81,20 @@ async function dispatchInCircleType(fastify, body, request) {
       return service.changePassword(body);
     case "incircleAccountSettings":
       return service.accountSettings(body);
+    case "incircleListLoginSessions":
+      return service.loginSessions(body);
+    case "incircleEnablePreciseLoginLocation":
+      return service.enablePreciseLoginLocation(body);
+    case "incircleUpdatePreciseLoginLocationPreference":
+      return service.updatePreciseLoginLocationPreference(body);
+    case "incircleUpdateCurrentLoginLocation":
+      return service.updateCurrentLoginLocation(body);
     case "incircleUpdateWechatLoginVerification":
       return service.updateWechatLoginVerification(body);
     case "incircleRevokeLoginSession":
       return service.revokeLoginSession(body);
+    case "incircleDeleteLoginSession":
+      return service.deleteLoginSession(body);
     case "incircleUpdateTheme":
       return service.updateTheme(body);
     case "incircleLogout":

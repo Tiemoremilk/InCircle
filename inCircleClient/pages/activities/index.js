@@ -1,6 +1,7 @@
 const api = require("../../utils/api");
 const editIntent = require("../../utils/editIntent");
 const dialog = require("../../utils/dialog");
+const privateApi = require("../../utils/wechat-private-api");
 
 const STATUS_OPTIONS = ["我来", "待定", "不来", "候补", "带一人"];
 const TYPE_OPTIONS = ["饭局", "运动", "桌游", "电影", "KTV", "露营", "学习", "游戏"];
@@ -286,6 +287,17 @@ Page({
         });
       },
       fail: (error) => {
+        const privacyReason = privateApi.classifyPrivacyFailure(error);
+        if (privacyReason) {
+          if (privacyReason === "privacy-config-error") {
+            privateApi.logPrivateApiFailure("wx.chooseLocation", error);
+          }
+          wx.showToast({
+            title: privateApi.privateApiFailureMessage(error, "暂时无法选择地图位置"),
+            icon: "none",
+          });
+          return;
+        }
         if (error && error.errMsg && error.errMsg.indexOf("cancel") !== -1) return;
         wx.showToast({ title: "暂时无法选择地图位置", icon: "none" });
       },

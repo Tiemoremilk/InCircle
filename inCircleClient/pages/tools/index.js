@@ -4,6 +4,7 @@ const time = require("../../utils/time");
 const editIntent = require("../../utils/editIntent");
 const dialog = require("../../utils/dialog");
 const toolIntent = require("../../utils/toolIntent");
+const privateApi = require("../../utils/wechat-private-api");
 
 const TOOL_TABS = [
   { key: "aa", label: "AA", icon: "/images/ui-icons/bill.png" },
@@ -853,6 +854,17 @@ Page({
         });
       },
       fail: (error) => {
+        const privacyReason = privateApi.classifyPrivacyFailure(error);
+        if (privacyReason) {
+          if (privacyReason === "privacy-config-error") {
+            privateApi.logPrivateApiFailure("wx.chooseLocation", error);
+          }
+          wx.showToast({
+            title: privateApi.privateApiFailureMessage(error, "暂时无法选择地图位置"),
+            icon: "none",
+          });
+          return;
+        }
         if (error && error.errMsg && error.errMsg.indexOf("cancel") !== -1) return;
         wx.showToast({ title: "暂时无法选择地图位置", icon: "none" });
       },

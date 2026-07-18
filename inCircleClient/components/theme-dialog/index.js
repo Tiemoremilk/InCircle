@@ -62,6 +62,7 @@ Component({
     verificationPlaceholder: "",
     verificationValue: "",
     confirmDisabled: false,
+    confirmOpenType: "",
     stackActions: false,
   },
 
@@ -128,6 +129,7 @@ Component({
         verificationPlaceholder: normalizeText(options.verificationPlaceholder, verificationText),
         verificationValue: "",
         confirmDisabled: !!verificationText,
+        confirmOpenType: options.confirmOpenType === "openSetting" ? "openSetting" : "",
         stackActions: narrowScreen || confirmText.length > 6 || cancelText.length > 6,
         tone,
         themeStyle: [
@@ -159,6 +161,16 @@ Component({
     onConfirm() {
       if (this.data.confirmDisabled) return;
       this.close({ confirm: true, cancel: false, content: this.data.verificationValue, errMsg: "showModal:ok" });
+    },
+
+    onConfirmOpenSetting(e) {
+      const detail = (e && e.detail) || {};
+      this.close({
+        confirm: true,
+        cancel: false,
+        authSetting: detail.authSetting || {},
+        errMsg: detail.errMsg || "openSetting:ok",
+      });
     },
 
     onCancel() {

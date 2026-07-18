@@ -5,9 +5,11 @@ const test = require("node:test");
 const fastifyFactory = require("fastify");
 
 const {
+  deleteAccountSession,
   establishAccountSession,
   listAccountSessions,
   loginAddressFromRequest,
+  readAccountSessionCollection,
   requireActiveAccountSession,
   revokeAccountSession,
   sessionMatchesBoundWechat,
@@ -144,6 +146,81 @@ test("session validation and revocation are enforced by server-side session id",
   assert.equal(Object.hasOwn(publicRows[0], "login_openid_hash"), false);
 });
 
+test("login records stay newest-first and only inactive sessions can be deleted", async () => {
+  const userId = "11111111-1111-4111-8111-111111111111";
+  const currentSessionId = "22222222-2222-4222-8222-222222222222";
+  const revokedSessionId = "33333333-3333-4333-8333-333333333333";
+  const queries = [];
+  const collectionDb = {
+    async query(sql, params) {
+      queries.push({ sql: String(sql), params });
+      if (/UPDATE incircle_account_sessions/.test(sql)) return { rows: [], rowCount: 0 };
+      if (/count\(\*\) OVER/.test(sql)) {
+        return {
+          rows: [{
+            id: currentSessionId,
+            device_name: "Current Phone",
+            expires_at: new Date(Date.now() + 60000),
+            revoked_at: null,
+            last_login_at: new Date(),
+            session_total: 4,
+            active_session_count: 2,
+          }],
+        };
+      }
+      throw new Error(`Unexpected SQL: ${sql}`);
+    },
+  };
+  const collection = await readAccountSessionCollection(
+    collectionDb,
+    userId,
+    currentSessionId,
+    { limit: 3 }
+  );
+  const listQuery = queries.find((query) => /count\(\*\) OVER/.test(query.sql));
+  assert.match(listQuery.sql, /ORDER BY last_login_at DESC, created_at DESC, id DESC/);
+  assert.deepEqual(listQuery.params, [userId, 3]);
+  assert.equal(collection.total, 4);
+  assert.equal(collection.activeSessionCount, 2);
+  assert.equal(collection.hasMore, true);
+  assert.equal(collection.sessions[0].canDelete, false);
+
+  await assert.rejects(
+    () => deleteAccountSession(collectionDb, userId, currentSessionId, currentSessionId),
+    (error) => error.errCode === "CURRENT_SESSION_CANNOT_DELETE" && error.statusCode === 409
+  );
+
+  const activeDb = {
+    async query(sql) {
+      if (/SELECT id, revoked_at, expires_at/.test(sql)) {
+        return { rows: [{ id: revokedSessionId, revoked_at: null, expires_at: new Date(Date.now() + 60000) }] };
+      }
+      throw new Error(`Unexpected SQL: ${sql}`);
+    },
+  };
+  await assert.rejects(
+    () => deleteAccountSession(activeDb, userId, currentSessionId, revokedSessionId),
+    (error) => error.errCode === "ACTIVE_SESSION_CANNOT_DELETE" && error.statusCode === 409
+  );
+
+  const deleteQueries = [];
+  const revokedDb = {
+    async query(sql, params) {
+      deleteQueries.push({ sql: String(sql), params });
+      if (/SELECT id, revoked_at, expires_at/.test(sql)) {
+        return { rows: [{ id: revokedSessionId, revoked_at: new Date(), expires_at: new Date() }] };
+      }
+      if (/DELETE FROM incircle_account_sessions/.test(sql)) return { rows: [{ id: revokedSessionId }] };
+      throw new Error(`Unexpected SQL: ${sql}`);
+    },
+  };
+  assert.equal(
+    (await deleteAccountSession(revokedDb, userId, currentSessionId, revokedSessionId)).id,
+    revokedSessionId
+  );
+  assert.equal(deleteQueries.some((query) => /DELETE FROM incircle_account_sessions/.test(query.sql)), true);
+});
+
 test("a WeChat code cannot bypass a revoked or missing account session", async () => {
   const service = new InCircleService({
     config: {},
@@ -169,6 +246,11 @@ test("account settings, login verification, and device management are wired end 
   const page = read("inCircleClient/pages/account-settings/index.wxml");
   const pageScript = read("inCircleClient/pages/account-settings/index.js");
   const pageStyles = read("inCircleClient/pages/account-settings/index.wxss");
+  const loginRecords = read("inCircleClient/pages/login-records/index.wxml");
+  const loginRecordsScript = read("inCircleClient/pages/login-records/index.js");
+  const loginRecordsStyles = read("inCircleClient/pages/login-records/index.wxss");
+  const loginSessionClient = read("inCircleClient/utils/login-sessions.js");
+  const accountSessionSource = read("server/src/account-sessions.js");
   const home = read("inCircleClient/pages/index/index.wxml");
   const circles = read("inCircleClient/pages/circle-switch/index.wxml");
   const app = JSON.parse(read("inCircleClient/app.json"));
@@ -183,9 +265,14 @@ test("account settings, login verification, and device management are wired end 
   assert.match(routes, /case "incircleAccountSettings"/);
   assert.match(routes, /case "incircleUpdateWechatLoginVerification"/);
   assert.match(routes, /case "incircleRevokeLoginSession"/);
+  assert.match(routes, /case "incircleListLoginSessions"/);
+  assert.match(routes, /case "incircleDeleteLoginSession"/);
   assert.match(service, /user\.verify_wechat_on_login !== false && user\.openid !== identity\.openid/);
   assert.match(service, /async updateWechatLoginVerification\(body\)[\s\S]*verifyPassword\(auth\.user, password\)/);
   assert.match(service, /CURRENT_SESSION_CANNOT_REVOKE|revokeAccountSession/);
+  assert.match(service, /ACCOUNT_SETTINGS_SESSION_LIMIT = 3/);
+  assert.match(accountSessionSource, /ORDER BY last_login_at DESC, created_at DESC, id DESC/);
+  assert.match(accountSessionSource, /ACTIVE_SESSION_CANNOT_DELETE/);
 
   const loginStart = service.indexOf("async accountLogin(body)");
   const loginEnd = service.indexOf("async bindAccount(body)", loginStart);
@@ -201,6 +288,7 @@ test("account settings, login verification, and device management are wired end 
   });
 
   assert.equal(app.pages.includes("pages/account-settings/index"), true);
+  assert.equal(app.pages.includes("pages/login-records/index"), true);
   assert.match(home, /bindtap="openAccountSettings"[\s\S]*账号设置/);
   assert.doesNotMatch(home, /超管后台/);
   assert.match(circles, /class="overview-account"[\s\S]*账号设置/);
@@ -209,13 +297,24 @@ test("account settings, login verification, and device management are wired end 
   assert.match(page, /同一设备只保留最近一次记录/);
   assert.match(page, /item\.current[\s\S]*当前设备|statusText/);
   assert.match(page, /session-title-line[\s\S]*session-controls[\s\S]*session-status[\s\S]*session-revoke/);
+  assert.match(page, /session-more[\s\S]*查看更多登录记录/);
+  assert.match(page, /user-check\.svg/);
   assert.match(page, /管理中心/);
   assert.match(page, /主题外观/);
   assert.match(pageScript, /confirmDisableWechatVerification\(\)[\s\S]*verificationPassword/);
   assert.match(pageScript, /revokeSession\(e\)/);
+  assert.match(pageScript, /deleteSession\(e\)/);
+  assert.match(pageScript, /pages\/login-records\/index/);
+  assert.match(loginRecords, /placeholder="搜索设备、系统、位置或网络地址"/);
+  assert.match(loginRecords, /item\.canRevoke[\s\S]*item\.canDelete/);
+  assert.match(loginRecordsScript, /getLoginSessions/);
+  assert.match(loginRecordsScript, /deleteLoginSession/);
+  assert.match(loginSessionClient, /filterSessions/);
+  assert.match(loginRecordsStyles, /\.records-list\s*\{[^}]*gap:\s*12rpx/s);
+  assert.match(loginRecordsStyles, /var\(--theme-primary/);
   assert.match(pageStyles, /var\(--theme-primary/);
   assert.match(pageStyles, /\.session-controls\s*\{[^}]*display:\s*flex;[^}]*align-items:\s*center;/s);
   assert.match(pageStyles, /\.session-status\s*\{[^}]*height:\s*36rpx;/s);
-  assert.match(pageStyles, /\.session-revoke\s*\{[^}]*height:\s*36rpx;/s);
+  assert.match(pageStyles, /\.session-revoke,\s*\.session-delete\s*\{[^}]*height:\s*36rpx;/s);
   assert.match(pageStyles, /env\(safe-area-inset-bottom\)/);
 });

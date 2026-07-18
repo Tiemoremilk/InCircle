@@ -14,6 +14,8 @@ param(
 
   [string]$WechatAppSecret = "",
 
+  [string]$TencentMapKey = "",
+
   [string]$PublicBaseUrl = "",
 
   [string]$LegalOperatorType = "individual",
@@ -190,6 +192,7 @@ set -euo pipefail
 PACKAGE_PATH="${1:-incircle-server-release.tar.gz}"
 WECHAT_APP_ID_VALUE="${WECHAT_APP_ID_VALUE:-your-wechat-app-id}"
 WECHAT_APP_SECRET_VALUE="${WECHAT_APP_SECRET_VALUE:-}"
+TENCENT_MAP_KEY_VALUE="${TENCENT_MAP_KEY_VALUE:-}"
 PUBLIC_BASE_URL_VALUE="${PUBLIC_BASE_URL_VALUE:-https://your-api.example.com}"
 LEGAL_OPERATOR_TYPE_VALUE="${LEGAL_OPERATOR_TYPE_VALUE:-individual}"
 LEGAL_OPERATOR_NAME_VALUE="${LEGAL_OPERATOR_NAME_VALUE:-}"
@@ -287,8 +290,8 @@ ensure_line() {
 fill_empty_line() {
   local key="$1"
   local value="$2"
-  if [ -f .env ] && grep -qE "^${key}=$" .env; then
-    sed -i "s#^${key}=.*#${key}=${value}#" .env
+  if [ -f .env ] && grep -qE "^${key}=[[:space:]]*(\"\"|'')?[[:space:]]*$" .env; then
+    set_line "$key" "$value"
   fi
 }
 
@@ -346,6 +349,7 @@ LEGAL_PRIVACY_VERSION=${LEGAL_PRIVACY_VERSION_VALUE}
 LEGAL_EFFECTIVE_DATE=${LEGAL_EFFECTIVE_DATE_VALUE}
 WECHAT_APP_ID=${WECHAT_APP_ID_VALUE}
 WECHAT_APP_SECRET=${WECHAT_APP_SECRET_VALUE}
+TENCENT_MAP_KEY=${TENCENT_MAP_KEY_VALUE}
 WECHAT_QRCODE_ENV_VERSION=release
 INCIRCLE_SUPER_ADMIN_OPENIDS=${SUPER_ADMIN_OPENIDS_VALUE}
 JWT_SECRET=${jwt_secret}
@@ -383,6 +387,7 @@ EOF
   ensure_line LEGAL_EFFECTIVE_DATE "$LEGAL_EFFECTIVE_DATE_VALUE"
   ensure_line WECHAT_APP_ID "$WECHAT_APP_ID_VALUE"
   ensure_line WECHAT_APP_SECRET "$WECHAT_APP_SECRET_VALUE"
+  ensure_line TENCENT_MAP_KEY "$TENCENT_MAP_KEY_VALUE"
   ensure_line WECHAT_QRCODE_ENV_VERSION 'release'
   ensure_line INCIRCLE_SUPER_ADMIN_OPENIDS "$SUPER_ADMIN_OPENIDS_VALUE"
   ensure_line JWT_SECRET "$(random_token 48 64)"
@@ -398,6 +403,9 @@ EOF
   fill_empty_line WECHAT_APP_ID "$WECHAT_APP_ID_VALUE"
   if [ -n "$WECHAT_APP_SECRET_VALUE" ]; then
     fill_empty_line WECHAT_APP_SECRET "$WECHAT_APP_SECRET_VALUE"
+  fi
+  if [ -n "$TENCENT_MAP_KEY_VALUE" ]; then
+    fill_empty_line TENCENT_MAP_KEY "$TENCENT_MAP_KEY_VALUE"
   fi
   fill_empty_line PUBLIC_BASE_URL "$PUBLIC_BASE_URL_VALUE"
   fill_empty_line LEGAL_OPERATOR_TYPE "$LEGAL_OPERATOR_TYPE_VALUE"
@@ -462,6 +470,19 @@ compose run --rm api npm run db:migrate
 
 echo "Starting API container"
 compose up -d api
+
+map_key_value="$(env_value TENCENT_MAP_KEY)"
+map_key_value="$(printf '%s' "$map_key_value" | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')"
+case "$map_key_value" in
+  ''|'""'|"''") ;;
+  *)
+    if ! compose exec -T api node -e 'process.exit(process.env.TENCENT_MAP_KEY ? 0 : 1)'; then
+      echo "TENCENT_MAP_KEY is configured in .env but missing from the API container." >&2
+      exit 1
+    fi
+    echo "TENCENT_MAP_KEY is available to the API container."
+    ;;
+esac
 
 PORT_VALUE="$(env_value PORT 3000)"
 HEALTH_URL="http://127.0.0.1:${PORT_VALUE}/health"
@@ -556,6 +577,7 @@ try {
   $quotedRemotePackage = Quote-RemoteValue $remotePackage
   $quotedWechatAppId = Quote-RemoteValue $WechatAppId
   $quotedWechatAppSecret = Quote-RemoteValue $WechatAppSecret
+  $quotedTencentMapKey = Quote-RemoteValue $TencentMapKey
   $quotedPublicBaseUrl = Quote-RemoteValue $PublicBaseUrl
   $quotedLegalOperatorType = Quote-RemoteValue $LegalOperatorType
   $quotedLegalOperatorName = Quote-RemoteValue $LegalOperatorName
@@ -586,7 +608,7 @@ try {
     )) -ErrorMessage "Failed to upload remote deploy script"
 
     Write-Host "Running remote deploy..."
-    $remoteCommand = "cd $quotedRemoteDir && chmod +x $quotedRemoteScript && WECHAT_APP_ID_VALUE=$quotedWechatAppId WECHAT_APP_SECRET_VALUE=$quotedWechatAppSecret PUBLIC_BASE_URL_VALUE=$quotedPublicBaseUrl LEGAL_OPERATOR_TYPE_VALUE=$quotedLegalOperatorType LEGAL_OPERATOR_NAME_VALUE=$quotedLegalOperatorName LEGAL_CONTACT_EMAIL_VALUE=$quotedLegalContactEmail LEGAL_TERMS_VERSION_VALUE=$quotedLegalTermsVersion LEGAL_PRIVACY_VERSION_VALUE=$quotedLegalPrivacyVersion LEGAL_EFFECTIVE_DATE_VALUE=$quotedLegalEffectiveDate SUPER_ADMIN_OPENIDS_VALUE=$quotedSuperAdminOpenids SKIP_BACKUP=$skipBackupValue USE_SUDO=$useSudoValue bash $quotedRemoteScript $quotedRemotePackage"
+    $remoteCommand = "cd $quotedRemoteDir && chmod +x $quotedRemoteScript && WECHAT_APP_ID_VALUE=$quotedWechatAppId WECHAT_APP_SECRET_VALUE=$quotedWechatAppSecret TENCENT_MAP_KEY_VALUE=$quotedTencentMapKey PUBLIC_BASE_URL_VALUE=$quotedPublicBaseUrl LEGAL_OPERATOR_TYPE_VALUE=$quotedLegalOperatorType LEGAL_OPERATOR_NAME_VALUE=$quotedLegalOperatorName LEGAL_CONTACT_EMAIL_VALUE=$quotedLegalContactEmail LEGAL_TERMS_VERSION_VALUE=$quotedLegalTermsVersion LEGAL_PRIVACY_VERSION_VALUE=$quotedLegalPrivacyVersion LEGAL_EFFECTIVE_DATE_VALUE=$quotedLegalEffectiveDate SUPER_ADMIN_OPENIDS_VALUE=$quotedSuperAdminOpenids SKIP_BACKUP=$skipBackupValue USE_SUDO=$useSudoValue bash $quotedRemoteScript $quotedRemotePackage"
     Invoke-CheckedCommand -FilePath "ssh" -Arguments ($sshOptions + @(
       $sshTarget,
       $remoteCommand
@@ -626,7 +648,7 @@ fi
 
 cd "`$REMOTE_DIR"
 chmod +x "`$REMOTE_SCRIPT"
-WECHAT_APP_ID_VALUE=$quotedWechatAppId WECHAT_APP_SECRET_VALUE=$quotedWechatAppSecret PUBLIC_BASE_URL_VALUE=$quotedPublicBaseUrl LEGAL_OPERATOR_TYPE_VALUE=$quotedLegalOperatorType LEGAL_OPERATOR_NAME_VALUE=$quotedLegalOperatorName LEGAL_CONTACT_EMAIL_VALUE=$quotedLegalContactEmail LEGAL_TERMS_VERSION_VALUE=$quotedLegalTermsVersion LEGAL_PRIVACY_VERSION_VALUE=$quotedLegalPrivacyVersion LEGAL_EFFECTIVE_DATE_VALUE=$quotedLegalEffectiveDate SUPER_ADMIN_OPENIDS_VALUE=$quotedSuperAdminOpenids SKIP_BACKUP=$skipBackupValue USE_SUDO=$useSudoValue bash "`$REMOTE_SCRIPT" "`$REMOTE_PACKAGE"
+WECHAT_APP_ID_VALUE=$quotedWechatAppId WECHAT_APP_SECRET_VALUE=$quotedWechatAppSecret TENCENT_MAP_KEY_VALUE=$quotedTencentMapKey PUBLIC_BASE_URL_VALUE=$quotedPublicBaseUrl LEGAL_OPERATOR_TYPE_VALUE=$quotedLegalOperatorType LEGAL_OPERATOR_NAME_VALUE=$quotedLegalOperatorName LEGAL_CONTACT_EMAIL_VALUE=$quotedLegalContactEmail LEGAL_TERMS_VERSION_VALUE=$quotedLegalTermsVersion LEGAL_PRIVACY_VERSION_VALUE=$quotedLegalPrivacyVersion LEGAL_EFFECTIVE_DATE_VALUE=$quotedLegalEffectiveDate SUPER_ADMIN_OPENIDS_VALUE=$quotedSuperAdminOpenids SKIP_BACKUP=$skipBackupValue USE_SUDO=$useSudoValue bash "`$REMOTE_SCRIPT" "`$REMOTE_PACKAGE"
 "@.Replace("`r`n", "`n")
 
     Invoke-CheckedCommandWithInput -FilePath "ssh" -Arguments ($sshOptions + @(

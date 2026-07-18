@@ -343,9 +343,7 @@ Page({
                   title: "需要相册权限",
                   content: "请允许保存到相册，之后就能把入圈码发到微信群或线下展示。",
                   confirmText: "去设置",
-                  success: (res) => {
-                    if (res.confirm && typeof wx.openSetting === "function") wx.openSetting();
-                  },
+                  confirmOpenType: "openSetting",
                 });
                 return;
               }

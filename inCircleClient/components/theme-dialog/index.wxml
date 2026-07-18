@@ -51,6 +51,15 @@
       >{{cancelText}}</button>
       <view wx:if="{{showCancel}}" class="theme-dialog-action-spacer" aria-hidden="true"></view>
       <button
+        wx:if="{{confirmOpenType === 'openSetting'}}"
+        class="theme-dialog-button confirm-button"
+        disabled="{{confirmDisabled}}"
+        hover-class="button-pressed"
+        open-type="openSetting"
+        bindopensetting="onConfirmOpenSetting"
+      >{{confirmText}}</button>
+      <button
+        wx:else
         class="theme-dialog-button confirm-button"
         disabled="{{confirmDisabled}}"
         hover-class="button-pressed"

@@ -30,6 +30,7 @@ LEGAL_PRIVACY_VERSION=your-privacy-version
 LEGAL_EFFECTIVE_DATE=YYYY-MM-DD
 WECHAT_APP_ID=your-wechat-app-id
 WECHAT_APP_SECRET=your-wechat-app-secret
+TENCENT_MAP_KEY=your-server-side-tencent-location-key
 INCIRCLE_SUPER_ADMIN_OPENIDS=your-openid
 JWT_SECRET=your-long-random-secret
 AI_CREDENTIALS_ENCRYPTION_KEY=64-random-hex-characters
@@ -38,6 +39,8 @@ AI_CONTENT_SECURITY_ENABLED=true
 ```
 
 `WECHAT_APP_SECRET` is required because the backend validates every login request with WeChat `jscode2session` and generates official WeChat Mini Program invite codes with `getwxacodeunlimit`.
+
+`TENCENT_MAP_KEY` is optional. When present, the backend sends an authorized GCJ-02 login coordinate to the fixed Tencent Location Service reverse-geocoding endpoint and stores the returned province, city, district, and address. Without it, coordinates and device-reported accuracy are still recorded. Keep the key only in the server `.env`, restrict it in the Tencent console where possible, and never place it in the Mini Program bundle or Git.
 
 The legal configuration is only an initialization seed for the singleton `incircle_public_legal_profile` table. Migration fills missing fields but never overwrites a complete database profile on later deploys. `LEGAL_OPERATOR_TYPE` accepts `individual` or `enterprise`; migration `0025` may initialize only this newly introduced field. Later legal text or version changes must be made deliberately in PostgreSQL. Changing either agreement version makes prior acceptance stale and requires users to confirm the current agreements again.
 
@@ -62,6 +65,8 @@ If the server `.env` does not have `WECHAT_APP_SECRET` yet, pass it once during 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\deploy-server.ps1 -HostName "your-server-host" -WechatAppSecret "your-wechat-app-secret"
 ```
+
+To enable detailed login addresses, add `TENCENT_MAP_KEY` directly to the protected server `.env`, or pass `-TencentMapKey` once. Existing non-empty values are preserved by later deployments.
 
 The script preserves `.env`, backs up PostgreSQL, builds the API image, stops the old API, runs migrations in a one-off container, starts the API, checks `/health`, and verifies that port 3000 is bound only to loopback. It does not delete the PostgreSQL volume or uploaded files.
 
@@ -163,6 +168,12 @@ docker compose stop api
 docker compose run --rm api npm run db:migrate
 docker compose up -d api
 curl http://127.0.0.1:3000/health
+```
+
+Verify that the running API container received the optional map key without printing it:
+
+```bash
+docker compose exec -T api node -e 'console.log(process.env.TENCENT_MAP_KEY ? "TENCENT_MAP_KEY=set" : "TENCENT_MAP_KEY=missing")'
 ```
 
 Never use `docker compose down -v` unless you intentionally want to delete the database volume.

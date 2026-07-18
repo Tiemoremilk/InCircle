@@ -48,6 +48,7 @@ CREATE TABLE IF NOT EXISTS incircle_users (
   agreement_acceptance_source text NOT NULL DEFAULT '',
   agreement_subject_id uuid NOT NULL DEFAULT gen_random_uuid(),
   verify_wechat_on_login boolean NOT NULL DEFAULT true,
+  precise_login_location_enabled boolean NOT NULL DEFAULT false,
   raw_data jsonb NOT NULL DEFAULT '{}'::jsonb,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now(),
@@ -55,6 +56,12 @@ CREATE TABLE IF NOT EXISTS incircle_users (
     theme_key IN ('forest', 'ocean', 'berry', 'graphite', 'coral', 'peacock', 'cyan', 'mint', 'sky', 'apricot', 'lilac', 'custom')
   )
 );
+
+ALTER TABLE incircle_users
+  ADD COLUMN IF NOT EXISTS precise_login_location_enabled boolean NOT NULL DEFAULT false;
+
+ALTER TABLE incircle_users
+  ALTER COLUMN precise_login_location_enabled SET DEFAULT false;
 
 CREATE TABLE IF NOT EXISTS incircle_circles (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -114,6 +121,15 @@ CREATE TABLE IF NOT EXISTS incircle_account_sessions (
   sdk_version text NOT NULL DEFAULT '',
   environment_version text NOT NULL DEFAULT '',
   login_address text NOT NULL DEFAULT '',
+  login_location_source text NOT NULL DEFAULT '',
+  login_latitude double precision,
+  login_longitude double precision,
+  login_accuracy_m double precision,
+  login_location_province text NOT NULL DEFAULT '',
+  login_location_city text NOT NULL DEFAULT '',
+  login_location_district text NOT NULL DEFAULT '',
+  login_location_detail text NOT NULL DEFAULT '',
+  login_location_captured_at timestamptz,
   last_login_at timestamptz NOT NULL DEFAULT now(),
   expires_at timestamptz NOT NULL,
   revoked_at timestamptz,
@@ -125,14 +141,75 @@ CREATE TABLE IF NOT EXISTS incircle_account_sessions (
   CONSTRAINT chk_incircle_account_session_device_key_hash CHECK (char_length(device_key_hash) = 64),
   CONSTRAINT chk_incircle_account_session_openid_hash CHECK (
     login_openid_hash = '' OR char_length(login_openid_hash) = 64
+  ),
+  CONSTRAINT chk_incircle_account_session_location_source CHECK (
+    login_location_source IN ('', 'wx.getLocation')
+  ),
+  CONSTRAINT chk_incircle_account_session_location_coordinates CHECK (
+    (login_latitude IS NULL AND login_longitude IS NULL)
+    OR (
+      login_latitude BETWEEN -90 AND 90
+      AND login_longitude BETWEEN -180 AND 180
+    )
+  ),
+  CONSTRAINT chk_incircle_account_session_location_accuracy CHECK (
+    login_accuracy_m IS NULL OR login_accuracy_m BETWEEN 0 AND 100000
   )
 );
+
+ALTER TABLE incircle_account_sessions
+  ADD COLUMN IF NOT EXISTS login_location_source text NOT NULL DEFAULT '',
+  ADD COLUMN IF NOT EXISTS login_latitude double precision,
+  ADD COLUMN IF NOT EXISTS login_longitude double precision,
+  ADD COLUMN IF NOT EXISTS login_accuracy_m double precision,
+  ADD COLUMN IF NOT EXISTS login_location_province text NOT NULL DEFAULT '',
+  ADD COLUMN IF NOT EXISTS login_location_city text NOT NULL DEFAULT '',
+  ADD COLUMN IF NOT EXISTS login_location_district text NOT NULL DEFAULT '',
+  ADD COLUMN IF NOT EXISTS login_location_detail text NOT NULL DEFAULT '',
+  ADD COLUMN IF NOT EXISTS login_location_captured_at timestamptz;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'chk_incircle_account_session_location_source'
+  ) THEN
+    ALTER TABLE incircle_account_sessions
+      ADD CONSTRAINT chk_incircle_account_session_location_source
+      CHECK (login_location_source IN ('', 'wx.getLocation'));
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'chk_incircle_account_session_location_coordinates'
+  ) THEN
+    ALTER TABLE incircle_account_sessions
+      ADD CONSTRAINT chk_incircle_account_session_location_coordinates
+      CHECK (
+        (login_latitude IS NULL AND login_longitude IS NULL)
+        OR (
+          login_latitude BETWEEN -90 AND 90
+          AND login_longitude BETWEEN -180 AND 180
+        )
+      );
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'chk_incircle_account_session_location_accuracy'
+  ) THEN
+    ALTER TABLE incircle_account_sessions
+      ADD CONSTRAINT chk_incircle_account_session_location_accuracy
+      CHECK (login_accuracy_m IS NULL OR login_accuracy_m BETWEEN 0 AND 100000);
+  END IF;
+END $$;
 
 CREATE INDEX IF NOT EXISTS idx_incircle_account_sessions_user_login
   ON incircle_account_sessions(user_id, last_login_at DESC);
 CREATE INDEX IF NOT EXISTS idx_incircle_account_sessions_active
   ON incircle_account_sessions(user_id, expires_at DESC)
   WHERE revoked_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_incircle_account_sessions_location_retention
+  ON incircle_account_sessions(login_location_captured_at)
+  WHERE login_location_captured_at IS NOT NULL;
 
 DROP TRIGGER IF EXISTS trg_incircle_account_sessions_updated_at ON incircle_account_sessions;
 CREATE TRIGGER trg_incircle_account_sessions_updated_at

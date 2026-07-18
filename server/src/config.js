@@ -44,6 +44,7 @@ function loadConfig() {
     wechatAppId: process.env.WECHAT_APP_ID || "",
     wechatAppSecret: process.env.WECHAT_APP_SECRET || "",
     wechatQrEnvVersion: process.env.WECHAT_QRCODE_ENV_VERSION || "release",
+    tencentMapKey: process.env.TENCENT_MAP_KEY || "",
     superAdminOpenids: listFromEnv(
       "INCIRCLE_SUPER_ADMIN_OPENIDS",
       process.env.SUPER_ADMIN_OPENIDS || ""

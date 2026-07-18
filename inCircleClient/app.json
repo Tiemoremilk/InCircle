@@ -4,6 +4,7 @@
     "pages/agreement-consent/index",
     "pages/legal/index",
     "pages/account-settings/index",
+    "pages/login-records/index",
     "pages/circle-switch/index",
     "pages/my-circles/index",
     "pages/circle-join/index",
@@ -85,11 +86,12 @@
   "sitemapLocation": "sitemap.json",
   "permission": {
     "scope.userLocation": {
-      "desc": "用于创建地点投票或约局时选择位置，方便圈内成员查看聚会地点。"
+      "desc": "用于选择聚会地点及记录经授权的登录位置"
     }
   },
   "requiredPrivateInfos": [
-    "chooseLocation"
+    "chooseLocation",
+    "getLocation"
   ],
   "style": "v2",
   "lazyCodeLoading": "requiredComponents"
