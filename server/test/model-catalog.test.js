@@ -105,7 +105,7 @@ test("provider metadata wins while the database catalog fills only missing capab
           aliases_normalized: [],
           context_window: 200000,
           max_output_tokens: 65536,
-          catalog_version: "2026-07-18.1",
+            catalog_version: "2026-07-18.2",
           confidence: "community",
         }],
       };
@@ -209,6 +209,8 @@ test("database catalog schema, migration, and deploy importer stay wired togethe
   assert.match(schema, /idx_incircle_ai_model_catalog_global_active_model/);
   assert.match(customLookupMigration, /model_id_normalized/);
   assert.match(customLookupMigration, /WHERE status = 'active'/);
-  assert.equal(bundle.version, "2026-07-18.1");
-  assert.ok(bundle.entries.length >= 600);
+  assert.equal(bundle.version, "2026-07-18.2");
+  assert.ok(bundle.entries.length >= 5000);
+  assert.ok(new Set(bundle.entries.map((entry) => entry.provider_key)).size >= 150);
+  assert.ok(bundle.entries.some((entry) => !entry.context_window || !entry.max_output_tokens));
 });

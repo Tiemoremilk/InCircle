@@ -2,7 +2,16 @@ const api = require("../../utils/api");
 const time = require("../../utils/time");
 const dialog = require("../../utils/dialog");
 
-const OUTPUT_TOKEN_PRESETS = [4096, 8192, 16384, 32768];
+const OUTPUT_TOKEN_PRESET_OPTIONS = Object.freeze([
+  { value: 4096, label: "4K" },
+  { value: 8192, label: "8K" },
+  { value: 16384, label: "16K" },
+  { value: 32768, label: "32K" },
+  { value: 65536, label: "64K" },
+  { value: 131072, label: "128K" },
+]);
+const OUTPUT_TOKEN_PRESETS = OUTPUT_TOKEN_PRESET_OPTIONS.map((item) => item.value);
+const MAX_OUTPUT_TOKENS = 131072;
 
 function promptText(value) {
   return (Array.isArray(value) ? value : []).join("\n");
@@ -13,6 +22,12 @@ function compactTokenCount(value) {
   if (count >= 1000000) return `${Number((count / 1000000).toFixed(2))}M`;
   if (count >= 1000) return `${Number((count / 1000).toFixed(1))}K`;
   return String(count || 0);
+}
+
+function outputLimitDisplay(value) {
+  const count = Number(value || 0);
+  const preset = OUTPUT_TOKEN_PRESET_OPTIONS.find((item) => item.value === count);
+  return preset ? preset.label : count ? compactTokenCount(count) : "--";
 }
 
 function outputCapabilityHint(model) {
@@ -42,9 +57,10 @@ Page({
     saveBusy: false,
     deletingProviderId: "",
     reportBusyId: "",
-    outputTokenPresets: OUTPUT_TOKEN_PRESETS,
+    outputTokenPresets: OUTPUT_TOKEN_PRESET_OPTIONS,
     outputLimitMode: "preset",
     lastOutputPreset: 8192,
+    outputLimitText: "8K",
     outputCapabilityHint: "",
     draft: {
       assistantName: "圈内 AI",
@@ -86,6 +102,7 @@ Page({
           usageDays: usage.days || [],
           outputLimitMode: usesPreset ? "preset" : "custom",
           lastOutputPreset: usesPreset ? maxOutputTokens : 8192,
+          outputLimitText: outputLimitDisplay(maxOutputTokens),
           outputCapabilityHint: outputCapabilityHint(settings.defaultModel),
           draft: {
             assistantName: settings.assistantName || "圈内 AI",
@@ -119,7 +136,10 @@ Page({
   onDraftInput(e) {
     const field = e.currentTarget.dataset.field;
     const patch = { [`draft.${field}`]: e.detail.value };
-    if (field === "maxOutputTokens") patch.outputLimitMode = "custom";
+    if (field === "maxOutputTokens") {
+      patch.outputLimitMode = "custom";
+      patch.outputLimitText = outputLimitDisplay(e.detail.value);
+    }
     this.setData(patch);
   },
 
@@ -132,7 +152,11 @@ Page({
       const value = OUTPUT_TOKEN_PRESETS.includes(current)
         ? current
         : Number(this.data.lastOutputPreset || 8192);
-      this.setData({ outputLimitMode: mode, "draft.maxOutputTokens": value });
+      this.setData({
+        outputLimitMode: mode,
+        outputLimitText: outputLimitDisplay(value),
+        "draft.maxOutputTokens": value,
+      });
       return;
     }
     this.setData({ outputLimitMode: mode });
@@ -145,6 +169,7 @@ Page({
       this.setData({
         outputLimitMode: "preset",
         lastOutputPreset: value,
+        outputLimitText: outputLimitDisplay(value),
         "draft.maxOutputTokens": value,
       });
     }
@@ -158,8 +183,8 @@ Page({
       .map((item) => item.trim())
       .filter(Boolean);
     const maxOutputTokens = Number(draft.maxOutputTokens);
-    if (!Number.isInteger(maxOutputTokens) || maxOutputTokens < 128 || maxOutputTokens > 32768) {
-      wx.showToast({ title: "输出额度应为 128–32768", icon: "none" });
+    if (!Number.isInteger(maxOutputTokens) || maxOutputTokens < 128 || maxOutputTokens > MAX_OUTPUT_TOKENS) {
+      wx.showToast({ title: "输出额度应为 128–131072", icon: "none" });
       return;
     }
     this.setData({ saveBusy: true });
@@ -176,6 +201,7 @@ Page({
         this.setData({
           settings,
           "draft.maxOutputTokens": settings.maxOutputTokens || maxOutputTokens,
+          outputLimitText: outputLimitDisplay(settings.maxOutputTokens || maxOutputTokens),
           outputCapabilityHint: outputCapabilityHint(settings.defaultModel),
         });
         wx.showToast({ title: "AI 设置已保存", icon: "success" });

@@ -719,7 +719,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  min-width: 164rpx;
+  min-width: 174rpx;
   height: 58rpx;
   padding: 0 13rpx;
   flex-shrink: 0;
@@ -785,8 +785,9 @@
 
 .output-preset-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  height: 72rpx;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-auto-rows: 58rpx;
+  min-height: 132rpx;
   margin-top: 12rpx;
   padding: 5rpx;
   gap: 5rpx;
@@ -844,7 +845,7 @@
 }
 
 .output-number-field {
-  width: 252rpx;
+  width: 266rpx;
   flex-shrink: 0;
   border-color: #dfe6e2;
   background: #ffffff;

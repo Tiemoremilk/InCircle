@@ -77,7 +77,7 @@ Circle AI is disabled by default for every circle. A circle owner, circle super 
 - Provider requests reject HTTP, credentials in URLs, loopback, private, link-local, metadata, unsafe DNS, and unsafe redirects.
 - Text input and buffered model output use WeChat `msg_sec_check` when `AI_CONTENT_SECURITY_ENABLED=true`.
 - Chat requests use `reasoningMode=auto|on|off`. `auto` omits provider reasoning parameters, while `on` and `off` use the selected provider's native controls; unsupported explicit modes are rejected instead of being silently simulated.
-- Context windows and output limits are separate model capabilities. Context configuration supports up to 2,000,000 tokens; the circle output target defaults to 8,192 and can be set from 128 to 32,768 tokens.
+- Context windows and output limits are separate model capabilities. Context configuration supports up to 2,000,000 tokens; the circle output target defaults to 8,192 and can be set from 128 to 131,072 tokens.
 - Model capability sources are ordered as `manual > provider sync > confirmed probe/compatibility > database catalog`. Sources are persisted as `manual`, `sync`, `probe`, `compatibility`, or `catalog`, and lower-confidence sources never replace higher-confidence values.
 - Model testing never sends huge prompts to discover 128K or 1M context windows. Unknown contexts remain conservative until provider metadata, an exact database-catalog match, or a manual value is available.
 - The effective output limit is bounded by the circle target, a known model output limit, and the remaining context budget. Unknown output capability is tried optimistically; an explicit pre-stream parameter rejection may retry once at 8,192 tokens and records that compatible value.
@@ -85,14 +85,14 @@ Circle AI is disabled by default for every circle. A circle owner, circle super 
 
 ### Model capability catalog
 
-The runtime catalog is stored in `incircle_ai_model_capability_catalog`; immutable import metadata is stored in `incircle_ai_model_catalog_releases`. The bundled `db/catalog/model-capabilities.json` release `2026-07-18.1` contains 689 text-model records across ten supported provider keys. It is a reviewed community seed based on `models.dev`, not an assertion that every entry is official or that every model in existence is covered. Runtime production processes do not scrape the internet.
+The runtime catalog is stored in `incircle_ai_model_capability_catalog`; immutable import metadata is stored in `incircle_ai_model_catalog_releases`. Bundled release `2026-07-18.2` contains 5,485 text-model records across all 167 provider keys currently exposed by `models.dev`. Thirty-four partial records persist only known fields and leave unknown capabilities at zero. This is a reviewed community seed, not an assertion that every entry is official or that every model in existence is covered. Runtime production processes do not scrape the internet.
 
 Built-in providers match by exact provider key plus normalized model ID or an explicitly stored alias. Custom providers may use a global exact-ID fallback, but only when there is one candidate or every candidate has identical context, output, and reasoning capabilities. This fallback never uses aliases or fuzzy names; conflicting results and user-defined deployment names remain unknown. Manual database rows (`source_kind=manual`) and `official`/`verified` rows are protected from lower-confidence community imports.
 
 To prepare a new release on a development machine:
 
 ```powershell
-npm run ai:catalog:refresh -- --catalog-version 2026-07-18.2
+npm run ai:catalog:refresh -- --catalog-version 2026-07-18.3
 npm test
 npm run check
 ```

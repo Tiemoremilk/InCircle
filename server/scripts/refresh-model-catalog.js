@@ -2,7 +2,7 @@ const fs = require("fs");
 const path = require("path");
 
 const SOURCE_URL = "https://models.dev/api.json";
-const PROVIDER_MAPPING = Object.freeze([
+const PRIMARY_PROVIDER_MAPPING = Object.freeze([
   { providerKey: "openai", sourceKey: "openai" },
   { providerKey: "deepseek", sourceKey: "deepseek" },
   { providerKey: "moonshot", sourceKey: "moonshotai-cn" },
@@ -20,9 +20,50 @@ function cliValue(name) {
   return index >= 0 ? String(process.argv[index + 1] || "").trim() : "";
 }
 
-function positiveInteger(value) {
+function capabilityValue(value, minimum) {
   const parsed = Number(value);
-  return Number.isInteger(parsed) && parsed > 0 && parsed <= 2000000 ? parsed : 0;
+  return Number.isInteger(parsed) && parsed >= minimum && parsed <= 2000000 ? parsed : 0;
+}
+
+function normalizedProviderKey(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 64);
+}
+
+function catalogProviderMappings(payload) {
+  const source = payload && typeof payload === "object" ? payload : {};
+  const mappings = [];
+  const usedProviderKeys = new Set();
+  const primarySourceKeys = new Set(PRIMARY_PROVIDER_MAPPING.map((item) => item.sourceKey));
+  for (const mapping of PRIMARY_PROVIDER_MAPPING) {
+    if (!source[mapping.sourceKey]) continue;
+    mappings.push(mapping);
+    usedProviderKeys.add(mapping.providerKey);
+  }
+  for (const sourceKey of Object.keys(source).sort()) {
+    if (primarySourceKeys.has(sourceKey)) continue;
+    let providerKey = normalizedProviderKey(sourceKey);
+    if (usedProviderKeys.has(providerKey)) providerKey = normalizedProviderKey(`modelsdev-${sourceKey}`);
+    if (!providerKey || usedProviderKeys.has(providerKey)) {
+      throw new Error(`Cannot assign unique provider key for ${sourceKey}`);
+    }
+    mappings.push({ providerKey, sourceKey });
+    usedProviderKeys.add(providerKey);
+  }
+  return mappings;
+}
+
+function optionalHttpsUrl(value) {
+  try {
+    const parsed = new URL(String(value || "").trim());
+    return parsed.protocol === "https:" ? parsed.toString() : "";
+  } catch (error) {
+    return "";
+  }
 }
 
 function completeSourceDate(value) {
@@ -38,9 +79,9 @@ function supportsText(modalities, direction) {
 }
 
 function catalogEntry(mapping, provider, modelId, model, observedAt) {
-  const contextWindow = positiveInteger(model && model.limit && model.limit.context);
-  const maxOutputTokens = positiveInteger(model && model.limit && model.limit.output);
-  if (contextWindow < 1024 || maxOutputTokens < 128) return null;
+  const contextWindow = capabilityValue(model && model.limit && model.limit.context, 1024);
+  const maxOutputTokens = capabilityValue(model && model.limit && model.limit.output, 128);
+  if (!contextWindow && !maxOutputTokens) return null;
   if (!supportsText(model.modalities, "input") || !supportsText(model.modalities, "output")) return null;
   return {
     providerKey: mapping.providerKey,
@@ -54,7 +95,7 @@ function catalogEntry(mapping, provider, modelId, model, observedAt) {
     confidence: "community",
     sourceKind: "models.dev",
     sourceUrl: SOURCE_URL,
-    providerDocUrl: String(provider.doc || "").trim(),
+    providerDocUrl: optionalHttpsUrl(provider.doc),
     releaseDate: completeSourceDate(model.release_date),
     lastUpdated: completeSourceDate(model.last_updated),
     lastVerifiedAt: observedAt,
@@ -74,7 +115,7 @@ async function main() {
 
   const entries = [];
   const providers = [];
-  for (const mapping of PROVIDER_MAPPING) {
+  for (const mapping of catalogProviderMappings(payload)) {
     const provider = payload[mapping.sourceKey];
     if (!provider || !provider.models || typeof provider.models !== "object") continue;
     let count = 0;
@@ -88,7 +129,7 @@ async function main() {
       providerKey: mapping.providerKey,
       sourceKey: mapping.sourceKey,
       name: String(provider.name || mapping.sourceKey),
-      providerDocUrl: String(provider.doc || ""),
+      providerDocUrl: optionalHttpsUrl(provider.doc),
       entryCount: count,
     });
   }
@@ -102,7 +143,7 @@ async function main() {
       name: "models.dev",
       url: SOURCE_URL,
       observedAt,
-      note: "Versioned community seed for exact model IDs. Manual values, provider metadata, and confirmed probes have higher runtime priority.",
+      note: "Versioned community seed across all source providers for exact model IDs. Partial capabilities remain unknown. Manual values, provider metadata, and confirmed probes have higher runtime priority.",
     },
     providers,
     entries,

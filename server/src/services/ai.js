@@ -48,9 +48,12 @@ const AI_CONTEXT_MESSAGE_OVERHEAD_TOKENS = 8;
 const AI_CONTEXT_MIN_OUTPUT_TOKENS = 128;
 const AI_CONTEXT_SAFETY_MARGIN_MIN_TOKENS = 256;
 const AI_CONTEXT_SAFETY_MARGIN_RATE = 0.08;
-const AI_OUTPUT_PLATFORM_MAX_TOKENS = 32768;
+const AI_OUTPUT_PLATFORM_MAX_TOKENS = 131072;
 const AI_OUTPUT_COMPATIBILITY_FALLBACK_TOKENS = 8192;
 const AI_OUTPUT_PROBE_TIMEOUT_MS = 15000;
+const AI_OUTPUT_PROBE_TOKEN_PRESETS = Object.freeze([131072, 65536, 32768, 16384, 8192]);
+const AI_OUTPUT_TEXT_MAX_CHARS = 131072;
+const AI_REASONING_TEXT_MAX_CHARS = 131072;
 const AI_MODEL_CAPABILITY_MAX_TOKENS = 2000000;
 const DIRECT_ANSWER_SYSTEM_SUFFIX = "\n请直接给出最终答案，不要输出分析过程、思考标签或中间推理。";
 const REASONING_SYSTEM_SUFFIX = "\n完成分析后必须预留足够输出额度给出完整最终回答，不能只返回思考过程。";
@@ -1158,35 +1161,31 @@ class AiService {
       return !!reply.trim();
     };
 
-    try {
-      const accepted = await runProbe(AI_OUTPUT_PLATFORM_MAX_TOKENS);
-      return accepted
-        ? { value: AI_OUTPUT_PLATFORM_MAX_TOKENS, source: "probe", status: "accepted_platform_max" }
-        : { value: 0, source: "", status: "empty_response" };
-    } catch (error) {
-      if (!error || error.errCode !== "AI_PROVIDER_OUTPUT_LIMIT_UNSUPPORTED") {
-        return { value: 0, source: "", status: "unavailable" };
-      }
-      const reportedLimit = Number(error.details && error.details.providerTokenLimit || 0);
-      if (Number.isInteger(reportedLimit) && reportedLimit >= 128 && reportedLimit < AI_OUTPUT_PLATFORM_MAX_TOKENS) {
-        return { value: reportedLimit, source: "probe", status: "provider_reported_limit" };
-      }
+    for (let index = 0; index < AI_OUTPUT_PROBE_TOKEN_PRESETS.length; index += 1) {
+      const candidate = AI_OUTPUT_PROBE_TOKEN_PRESETS[index];
       try {
-        const accepted = await runProbe(AI_OUTPUT_COMPATIBILITY_FALLBACK_TOKENS);
+        const accepted = await runProbe(candidate);
         return accepted
-          ? { value: AI_OUTPUT_COMPATIBILITY_FALLBACK_TOKENS, source: "probe", status: "fallback_accepted" }
+          ? {
+            value: candidate,
+            source: "probe",
+            status: index === 0 ? "accepted_platform_max" : "fallback_accepted",
+          }
           : { value: 0, source: "", status: "empty_response" };
-      } catch (fallbackError) {
-        const fallbackLimit = Number(fallbackError && fallbackError.details && fallbackError.details.providerTokenLimit || 0);
-        if (
-          fallbackError && fallbackError.errCode === "AI_PROVIDER_OUTPUT_LIMIT_UNSUPPORTED" &&
-          Number.isInteger(fallbackLimit) && fallbackLimit >= 128 && fallbackLimit < AI_OUTPUT_COMPATIBILITY_FALLBACK_TOKENS
-        ) {
-          return { value: fallbackLimit, source: "probe", status: "provider_reported_limit" };
+      } catch (error) {
+        if (!error || error.errCode !== "AI_PROVIDER_OUTPUT_LIMIT_UNSUPPORTED") {
+          return { value: 0, source: "", status: "unavailable" };
         }
-        return { value: 0, source: "", status: "unavailable" };
+        const reportedLimit = Number(error.details && error.details.providerTokenLimit || 0);
+        if (
+          Number.isInteger(reportedLimit) && reportedLimit >= 128 &&
+          reportedLimit <= AI_OUTPUT_PLATFORM_MAX_TOKENS
+        ) {
+          return { value: reportedLimit, source: "probe", status: "provider_reported_limit" };
+        }
       }
     }
+    return { value: 0, source: "", status: "unavailable" };
   }
 
   async testModel(body) {
@@ -2800,7 +2799,7 @@ class AiService {
         if (isReasoning) {
           const sourceOffset = reasoningAccepted.length;
           reasoningAccepted += segment;
-          if (reasoningAccepted.length > 48000) {
+          if (reasoningAccepted.length > AI_REASONING_TEXT_MAX_CHARS) {
             throw new AppError("模型思考内容过长，已停止生成", { statusCode: 502, errCode: "AI_OUTPUT_TOO_LONG" });
           }
           await emitApproved("reasoning", segmentFrames.length ? segmentFrames : [segment], sourceOffset);
@@ -2809,7 +2808,7 @@ class AiService {
         } else {
           const sourceOffset = accepted.length;
           accepted += segment;
-          if (accepted.length > 36000) throw new AppError("模型回答过长，已停止生成", { statusCode: 502, errCode: "AI_OUTPUT_TOO_LONG" });
+          if (accepted.length > AI_OUTPUT_TEXT_MAX_CHARS) throw new AppError("模型回答过长，已停止生成", { statusCode: 502, errCode: "AI_OUTPUT_TOO_LONG" });
           await emitApproved("delta", segmentFrames.length ? segmentFrames : [segment], sourceOffset);
           scheduleCheckpoint();
           targetLength = outputSecurityBatchSize(accepted.length);
@@ -2883,13 +2882,13 @@ class AiService {
         const reasoningDelta = String(delta || "");
         reasoningObservedChars += reasoningDelta.length;
         reasoningObservedVisibleChars += reasoningDelta.replace(/[\s\u200b-\u200d\u2060\ufeff]/g, "").length;
-        if (reasoningObservedChars > 48000) {
+        if (reasoningObservedChars > AI_REASONING_TEXT_MAX_CHARS) {
           throw new AppError("模型思考内容过长，已停止生成", { statusCode: 502, errCode: "AI_OUTPUT_TOO_LONG" });
         }
         if (!reasoningEnabled) return;
         reasoningPending += appendPendingFrame(reasoningPendingFrames, reasoningDelta);
         maxQueuedOutputChars = Math.max(maxQueuedOutputChars, pending.length + reasoningPending.length);
-        if (reasoningAccepted.length + reasoningPending.length > 48000) {
+        if (reasoningAccepted.length + reasoningPending.length > AI_REASONING_TEXT_MAX_CHARS) {
           throw new AppError("模型思考内容过长，已停止生成", { statusCode: 502, errCode: "AI_OUTPUT_TOO_LONG" });
         }
         requestOutputDrain("reasoning", false);
@@ -2905,7 +2904,7 @@ class AiService {
         }
         pending += appendPendingFrame(pendingFrames, delta);
         maxQueuedOutputChars = Math.max(maxQueuedOutputChars, pending.length + reasoningPending.length);
-        if (accepted.length + pending.length > 36000) {
+        if (accepted.length + pending.length > AI_OUTPUT_TEXT_MAX_CHARS) {
           throw new AppError("模型回答过长，已停止生成", { statusCode: 502, errCode: "AI_OUTPUT_TOO_LONG" });
         }
         requestOutputDrain("content", false);
@@ -3000,7 +2999,7 @@ class AiService {
             }
             pending += appendPendingFrame(pendingFrames, contentDelta);
             maxQueuedOutputChars = Math.max(maxQueuedOutputChars, pending.length + reasoningPending.length);
-            if (accepted.length + pending.length > 36000) {
+            if (accepted.length + pending.length > AI_OUTPUT_TEXT_MAX_CHARS) {
               throw new AppError("模型回答过长，已停止生成", { statusCode: 502, errCode: "AI_OUTPUT_TOO_LONG" });
             }
             requestOutputDrain("content", false);

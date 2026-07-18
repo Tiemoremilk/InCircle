@@ -94,7 +94,7 @@ function readBundledModelCatalog(filePath) {
   const entries = (Array.isArray(payload.entries) ? payload.entries : []).map((entry) => (
     normalizedCatalogEntry(entry, version)
   ));
-  if (!entries.length || entries.length > 5000) throw new Error("Model catalog must contain 1-5000 entries");
+  if (!entries.length || entries.length > 10000) throw new Error("Model catalog must contain 1-10000 entries");
   const identities = new Set();
   for (const entry of entries) {
     const identity = `${entry.provider_key}\u0000${entry.model_id_normalized}`;

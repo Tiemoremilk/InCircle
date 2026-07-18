@@ -767,7 +767,7 @@ CREATE TABLE IF NOT EXISTS incircle_ai_settings (
   updated_at timestamptz NOT NULL DEFAULT now(),
   CONSTRAINT chk_incircle_ai_settings_member_limit CHECK (member_daily_limit BETWEEN 1 AND 200),
   CONSTRAINT chk_incircle_ai_settings_circle_limit CHECK (circle_daily_limit BETWEEN 1 AND 5000),
-  CONSTRAINT chk_incircle_ai_settings_output_tokens CHECK (max_output_tokens BETWEEN 128 AND 32768)
+  CONSTRAINT chk_incircle_ai_settings_output_tokens CHECK (max_output_tokens BETWEEN 128 AND 131072)
 );
 
 CREATE TABLE IF NOT EXISTS incircle_ai_model_catalog_releases (

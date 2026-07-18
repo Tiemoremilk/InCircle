@@ -396,13 +396,13 @@ test("model tests call the selected model and persist model-level health", async
   assert.equal(result.ok, true);
   assert.equal(result.modelId, model.id);
   assert.equal(result.reply, "OK");
-  assert.deepEqual(requestedLimits, [16, 32768]);
-  assert.equal(result.capabilities.maxOutputTokens, 32768);
+  assert.deepEqual(requestedLimits, [16, 131072]);
+  assert.equal(result.capabilities.maxOutputTokens, 131072);
   assert.equal(result.capabilities.maxOutputTokensSource, "probe");
   assert.deepEqual(result.capabilityDetection.updatedFields, ["maxOutputTokens"]);
   assert.equal(writes.length, 2);
   assert.equal(writes[0].params[2], "success");
-  assert.equal(writes[0].params[7], 32768);
+  assert.equal(writes[0].params[7], 131072);
   assert.equal(writes[0].params[8], "probe");
   assert.equal(writes[1].params[2], "success");
 });
@@ -817,7 +817,7 @@ test("database model catalog keeps provider namespaces and supports exact custom
             context_window: 1047576,
             max_output_tokens: 32768,
             supports_reasoning: false,
-            catalog_version: "2026-07-18.1",
+            catalog_version: "2026-07-18.2",
             confidence: "community",
             provider_doc_url: "https://platform.openai.com/docs/models",
           }],
@@ -829,7 +829,7 @@ test("database model catalog keeps provider namespaces and supports exact custom
   const official = await catalogModelCapabilities(db, { preset_key: "openai" }, "gpt-4.1-mini");
   assert.equal(official.contextWindow, 1047576);
   assert.equal(official.maxOutputTokens, 32768);
-  assert.equal(official.catalogVersion, "2026-07-18.1");
+  assert.equal(official.catalogVersion, "2026-07-18.2");
 
   const customExact = await catalogModelCapabilities(db, { preset_key: "custom" }, "gpt-4.1-mini");
   assert.equal(customExact.matched, true);
@@ -849,7 +849,7 @@ test("lightweight output probing records only accepted or explicitly reported li
   const calls = [];
   service.runProviderCompletion = async (options) => {
     calls.push(options.maxTokens);
-    if (options.maxTokens === 32768) {
+    if (options.maxTokens === 131072) {
       throw new AppError("unsupported output limit", {
         statusCode: 502,
         errCode: "AI_PROVIDER_OUTPUT_LIMIT_UNSUPPORTED",
@@ -864,10 +864,31 @@ test("lightweight output probing records only accepted or explicitly reported li
     apiKey: "secret",
     reasoning: { control: "toggle" },
   });
-  assert.deepEqual(calls, [32768]);
+  assert.deepEqual(calls, [131072]);
   assert.equal(detected.value, 12288);
   assert.equal(detected.source, "probe");
   assert.equal(detected.status, "provider_reported_limit");
+
+  calls.length = 0;
+  service.runProviderCompletion = async (options) => {
+    calls.push(options.maxTokens);
+    if (options.maxTokens > 32768) {
+      throw new AppError("unsupported output limit", {
+        statusCode: 502,
+        errCode: "AI_PROVIDER_OUTPUT_LIMIT_UNSUPPORTED",
+      });
+    }
+    await options.onDelta("OK");
+  };
+  const stepped = await service.probeModelOutputCapability({
+    provider: { protocol: "openai", preset_key: "custom" },
+    model: { model_id: "opaque-model" },
+    apiKey: "secret",
+    reasoning: { control: "toggle" },
+  });
+  assert.deepEqual(calls, [131072, 65536, 32768]);
+  assert.equal(stepped.value, 32768);
+  assert.equal(stepped.status, "fallback_accepted");
 
   service.runProviderCompletion = async () => {
     throw new AppError("temporary timeout", { statusCode: 504, errCode: "AI_PROVIDER_TIMEOUT" });
@@ -1808,7 +1829,7 @@ test("generation leases, graceful shutdown, and versioned AI consent are deploye
   assert.match(recoveryQuery, /generation_owner_id = ''/);
 });
 
-test("model-aware 32K output settings and themed capability controls ship together", () => {
+test("model-aware 128K output settings and themed capability controls ship together", () => {
   const root = path.resolve(__dirname, "../..");
   const schema = fs.readFileSync(path.join(root, "server/db/schema.sql"), "utf8");
   const migration = fs.readFileSync(
@@ -1819,6 +1840,10 @@ test("model-aware 32K output settings and themed capability controls ship togeth
     path.join(root, "server/db/migrations/0029_ai_model_capability_detection.sql"),
     "utf8"
   );
+  const output128kMigration = fs.readFileSync(
+    path.join(root, "server/db/migrations/0032_ai_output_128k.sql"),
+    "utf8"
+  );
   const serviceSource = fs.readFileSync(path.join(root, "server/src/services/ai.js"), "utf8");
   const manageJs = fs.readFileSync(path.join(root, "inCircleClient/pages/ai-manage/index.js"), "utf8");
   const manageWxml = fs.readFileSync(path.join(root, "inCircleClient/pages/ai-manage/index.wxml"), "utf8");
@@ -1826,21 +1851,29 @@ test("model-aware 32K output settings and themed capability controls ship togeth
   const modelsJs = fs.readFileSync(path.join(root, "inCircleClient/pages/ai-models/index.js"), "utf8");
   const modelsWxml = fs.readFileSync(path.join(root, "inCircleClient/pages/ai-models/index.wxml"), "utf8");
 
-  assert.match(schema, /max_output_tokens BETWEEN 128 AND 32768/);
+  assert.match(schema, /max_output_tokens BETWEEN 128 AND 131072/);
   assert.match(schema, /max_output_tokens_source text NOT NULL DEFAULT ''/);
   assert.match(migration, /ADD COLUMN IF NOT EXISTS max_output_tokens/);
   assert.match(migration, /compatibility/);
   assert.match(detectionMigration, /'catalog'/);
   assert.match(detectionMigration, /'probe'/);
+  assert.match(output128kMigration, /BETWEEN 128 AND 131072/);
+  assert.match(serviceSource, /AI_OUTPUT_PLATFORM_MAX_TOKENS = 131072/);
+  assert.match(serviceSource, /AI_OUTPUT_PROBE_TOKEN_PRESETS = Object\.freeze\(\[131072, 65536, 32768, 16384, 8192\]\)/);
+  assert.match(serviceSource, /AI_OUTPUT_TEXT_MAX_CHARS = 131072/);
   assert.match(serviceSource, /AI_OUTPUT_COMPATIBILITY_FALLBACK_TOKENS = 8192/);
   assert.match(serviceSource, /max_output_tokens = 0 AND max_output_tokens_source = ''/);
-  assert.match(manageJs, /OUTPUT_TOKEN_PRESETS = \[4096, 8192, 16384, 32768\]/);
+  assert.match(manageJs, /\{ value: 131072, label: "128K" \}/);
+  assert.match(manageJs, /MAX_OUTPUT_TOKENS = 131072/);
   assert.match(manageJs, /outputLimitMode: usesPreset \? "preset" : "custom"/);
-  assert.match(manageWxml, /maxlength="5"/);
+  assert.match(manageWxml, /maxlength="6"/);
   assert.match(manageWxml, /output-preset-grid/);
+  assert.match(manageWxml, /\{\{item\.label\}\}/);
+  assert.match(manageWxml, /输入 128–131072 的整数/);
   assert.match(manageWxml, /outputLimitMode == 'preset'/);
   assert.match(manageWxml, /data-mode="custom"/);
   assert.match(manageWxss, /var\(--theme-primary/);
+  assert.match(manageWxss, /grid-template-columns: repeat\(3, minmax\(0, 1fr\)\)/);
   assert.match(modelsWxml, /maxlength="7"/);
   assert.match(modelsWxml, /校准能力参数/);
   assert.match(modelsWxml, /测试并识别/);
@@ -1917,6 +1950,21 @@ test("1M context models keep context and output capabilities independent", async
   assert.equal(unknownPlan.maxOutputTokens, 32768);
   assert.equal(unknownPlan.outputCapabilityKnown, false);
   assert.equal(unknownPlan.outputCapabilitySource, "unknown");
+
+  const highOutputPlan = await service.buildGenerationPlan({
+    ctx: { circleId: "circle-1", auth: { user: { id: "user-1" } } },
+    settings: { system_prompt: "system", max_output_tokens: 131072 },
+    model: {
+      context_window: 1050000,
+      max_output_tokens: 128000,
+      max_output_tokens_source: "catalog",
+    },
+    content: "生成一份完整报告",
+    reasoningMode: { selection: "off", enabled: false, adapter: "none" },
+  });
+  assert.equal(highOutputPlan.configuredMaxOutputTokens, 131072);
+  assert.equal(highOutputPlan.modelMaxOutputTokens, 128000);
+  assert.equal(highOutputPlan.maxOutputTokens, 128000);
 });
 
 test("chat generation sends the computed effective output limit to the provider", async () => {

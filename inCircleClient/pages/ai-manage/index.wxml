@@ -154,7 +154,7 @@
             <view class="output-limit-copy">系统会按模型能力与剩余上下文自动收敛</view>
           </view>
           <view class="output-current-value">
-            <text class="output-current-number">{{draft.maxOutputTokens || '--'}}</text>
+            <text class="output-current-number">{{outputLimitText}}</text>
             <text class="output-current-unit">Token</text>
           </view>
         </view>
@@ -164,20 +164,20 @@
         </view>
         <view class="output-preset-grid" wx:if="{{outputLimitMode == 'preset'}}">
           <view
-            class="output-preset {{draft.maxOutputTokens == item ? 'selected' : ''}}"
+            class="output-preset {{draft.maxOutputTokens == item.value ? 'selected' : ''}}"
             wx:for="{{outputTokenPresets}}"
-            wx:key="*this"
-            data-value="{{item}}"
+            wx:key="value"
+            data-value="{{item.value}}"
             bindtap="selectOutputLimit"
-          >{{item == 4096 ? '4K' : item == 8192 ? '8K' : item == 16384 ? '16K' : '32K'}}</view>
+          >{{item.label}}</view>
         </view>
         <view class="output-custom-panel" wx:else>
           <view class="output-custom-copy">
             <view class="output-custom-title">自定义输出额度</view>
-            <view class="output-custom-help">输入 128–32768 的整数</view>
+            <view class="output-custom-help">输入 128–131072 的整数</view>
           </view>
           <view class="number-field output-number-field">
-            <input type="number" maxlength="5" adjust-position="{{true}}" cursor-spacing="24" value="{{draft.maxOutputTokens}}" data-field="maxOutputTokens" bindinput="onDraftInput" />
+            <input type="number" maxlength="6" adjust-position="{{true}}" cursor-spacing="24" value="{{draft.maxOutputTokens}}" data-field="maxOutputTokens" bindinput="onDraftInput" />
             <text>Token</text>
           </view>
         </view>

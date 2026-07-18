@@ -652,8 +652,8 @@ InCircle 不自行研发、训练或部署生成式人工智能模型，也不�
 | 单次输入 | 最多 4000 字 |
 | 上下文 | 按模型 Token 窗口预算；未知窗口保守按 16384 Token |
 | 历史候选 | 最多读取 100 条，只保留完整问答组并优先最近内容 |
-| 默认最大输出 | 8192 Token；圈子可配置 128–32768 Token |
-| 文本回答硬上限 | 约 36000 字符 |
+| 默认最大输出 | 8192 Token；圈子可配置 128–131072 Token |
+| 正文与思考保护上限 | 各约 131072 字符 |
 
 每日额度按北京时间归零，同一会话同一时间只允许一个生成任务。
 
@@ -681,7 +681,7 @@ InCircle 不自行研发、训练或部署生成式人工智能模型，也不�
 - 支持同步模型列表和手动添加模型 ID。
 - 模型上下文窗口与最大输出能力独立管理；上下文配置支持到 2000000 Token，可覆盖 1M 模型。
 - 能力识别来源包括供应商元数据、数据库能力目录、轻量输出探测和手动设置，并在模型卡片标明来源。
-- 点击“测试并识别”时，模型列表元数据与短提示测试并行执行；输出仍未知时尝试一次最高 32768 Token 的短回答兼容探测。
+- 点击“测试并识别”时，模型列表元数据与短提示测试并行执行；输出仍未知时仅发送短回答，并按 128K、64K、32K、16K、8K 逐级校验输出参数，不发送巨量提示文本。
 - 系统不会通过发送 128K 或 1M 巨量文本探测上下文窗口；未知上下文需依赖供应商元数据、数据库能力目录或管理员手动补充。
 - 运行时优先级固定为“手动设置 > 供应商元数据 > 已确认探测/兼容结果 > 数据库能力目录”。较低优先级来源不会覆盖较高优先级数据。
 - 内置供应商使用“供应商键 + 精确型号 ID”匹配。自定义供应商允许按全库精确型号 ID 兜底，但只有唯一结果，或全部候选的上下文、输出和推理能力完全一致时才采用；不使用别名或模糊名称。存在冲突以及用户自定义的 Azure/方舟部署名仍保持未识别，避免错误放大 Token 预算。
@@ -757,7 +757,7 @@ AI：
 
 ### 模型能力目录
 
-运行时能力目录保存在 <code>incircle_ai_model_capability_catalog</code>，发布记录保存在 <code>incircle_ai_model_catalog_releases</code>。仓库中的 <code>server/db/catalog/model-capabilities.json</code> 是随版本发布的种子，不是每次启动时联网抓取的数据；首发 <code>2026-07-18.1</code> 包含 689 条文本模型能力，覆盖 OpenAI、DeepSeek、Moonshot、智谱、通义、SiliconFlow、OpenRouter、Anthropic、Gemini 和 Azure 十类供应商键。
+运行时能力目录保存在 <code>incircle_ai_model_capability_catalog</code>，发布记录保存在 <code>incircle_ai_model_catalog_releases</code>。仓库中的 <code>server/db/catalog/model-capabilities.json</code> 是随版本发布的种子，不是每次启动时联网抓取的数据；当前 <code>2026-07-18.2</code> 包含 5485 条文本模型能力，覆盖 models.dev 当前 167 个供应商键。其中 34 条只写入来源能够确认的部分能力，未知字段保持为 0，不会猜测补值。
 
 当前种子以 <code>models.dev</code> 社区目录为起点，并保留供应商文档地址。它用于扩大可识别范围，不被描述为官方事实，也不保证覆盖世界上所有模型。生产服务不会抓取互联网；供应商实时返回的元数据和管理员手动值始终优先。
 
@@ -765,7 +765,7 @@ AI：
 
 ~~~powershell
 Set-Location .\server
-npm run ai:catalog:refresh -- --catalog-version 2026-07-18.2
+npm run ai:catalog:refresh -- --catalog-version 2026-07-18.3
 npm test
 npm run check
 ~~~
