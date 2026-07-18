@@ -95,6 +95,13 @@ Page({
     this.setData({ searchText: "", sessions, filteredCount: sessions.length });
   },
 
+  openSessionLocation(e) {
+    const sessionId = String(e.currentTarget.dataset.id || "");
+    const target = (this.data.allSessions || []).find((item) => item.id === sessionId);
+    if (!target || !target.hasLoginLocation) return;
+    loginSessions.openSessionLocation(target);
+  },
+
   revokeSession(e) {
     if (this.data.sessionBusyId) return;
     const sessionId = String(e.currentTarget.dataset.id || "");

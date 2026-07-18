@@ -4229,7 +4229,10 @@ class InCircleService {
       const pending = normalizeMemberList(activity.pending);
       const absent = normalizeMemberList(activity.absent);
       const waitlist = normalizeMemberList(activity.waitlist);
-      if (!attendees.length && realNameSet.has(hostName)) attendees = [hostName];
+      const hostHasResponse = [pending, absent, waitlist].some((list) => list.includes(hostName));
+      if (!attendees.length && !activity.hasNormalizedResponses && !hostHasResponse && realNameSet.has(hostName)) {
+        attendees = [hostName];
+      }
       const responded = new Set([].concat(attendees, pending, absent, waitlist));
       const silent = realNames.filter((name) => !responded.has(name));
       const coming = attendees.length + (activity.plusOneCount || 0);
@@ -4240,7 +4243,9 @@ class InCircleService {
           .filter((tag) => !/^缺\s*\d+\s*人$/.test(String(tag || "")))
           .concat(capacity >= 99 ? "不限人数" : `缺 ${needCount} 人`)
       );
-      const myStatus = statusOfCurrentMember(Object.assign({}, activity, { attendees, pending, absent, waitlist }));
+      const myStatus = activity.hasNormalizedResponses
+        ? String(activity.myStatus || "")
+        : statusOfCurrentMember(Object.assign({}, activity, { attendees, pending, absent, waitlist }));
       return Object.assign({}, activity, {
         hostName,
         creatorName: creatorName || activity.creatorName || hostName,

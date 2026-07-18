@@ -408,6 +408,13 @@ Page({
       });
   },
 
+  openSessionLocation(e) {
+    const sessionId = String(e.currentTarget.dataset.id || "");
+    const target = (this.data.sessions || []).find((item) => item.id === sessionId);
+    if (!target || !target.hasLoginLocation) return;
+    loginSessions.openSessionLocation(target);
+  },
+
   revokeSession(e) {
     if (this.isBusy()) return;
     const sessionId = String(e.currentTarget.dataset.id || "");

@@ -58,8 +58,54 @@ function filterSessions(sessions, keyword) {
   return (sessions || []).filter((session) => matchesSessionSearch(session, keyword));
 }
 
+function showLocationToast(title) {
+  if (typeof wx !== "undefined" && typeof wx.showToast === "function") {
+    wx.showToast({ title, icon: "none" });
+  }
+}
+
+function locationCoordinate(value) {
+  if (typeof value !== "number" && typeof value !== "string") return NaN;
+  if (typeof value === "string" && !value.trim()) return NaN;
+  const coordinate = Number(value);
+  return Number.isFinite(coordinate) ? coordinate : NaN;
+}
+
+function openSessionLocation(session) {
+  const location = session && session.loginLocation ? session.loginLocation : {};
+  const latitude = locationCoordinate(location.latitude);
+  const longitude = locationCoordinate(location.longitude);
+  if (!location.available || !Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+    showLocationToast("本次登录没有可查看的位置");
+    return;
+  }
+
+  const areaParts = [location.province, location.city, location.district]
+    .filter((part, index, values) => part && values.indexOf(part) === index);
+  if (typeof wx === "undefined" || typeof wx.openLocation !== "function") {
+    showLocationToast("地图暂时无法打开");
+    return;
+  }
+
+  try {
+    wx.openLocation({
+      latitude,
+      longitude,
+      scale: 16,
+      name: "登录位置",
+      address: location.detail || areaParts.join(" "),
+      fail() {
+        showLocationToast("地图暂时无法打开");
+      },
+    });
+  } catch (error) {
+    showLocationToast("地图暂时无法打开");
+  }
+}
+
 module.exports = {
   decorateSession,
   filterSessions,
   matchesSessionSearch,
+  openSessionLocation,
 };

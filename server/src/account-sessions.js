@@ -360,10 +360,14 @@ async function readAccountSessionCollection(db, userId, currentSessionId, option
       ) OVER()::integer AS active_session_count
     FROM incircle_account_sessions
     WHERE user_id = $1
-    ORDER BY last_login_at DESC, created_at DESC, id DESC
-    LIMIT $2
+    ORDER BY
+      CASE WHEN id = $2::uuid THEN 0 ELSE 1 END,
+      last_login_at DESC,
+      created_at DESC,
+      id DESC
+    LIMIT $3
     `,
-    [userId, limit]
+    [userId, currentSessionId || null, limit]
   );
   const rows = result.rows || [];
   const total = rows.length ? Number(rows[0].session_total || rows.length) : 0;

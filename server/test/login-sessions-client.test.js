@@ -150,6 +150,111 @@ test("login session decoration maps detail and area fields without reordering", 
   );
 });
 
+test("openSessionLocation opens recorded coordinates as GCJ-02 numbers", () => {
+  const previousWx = global.wx;
+  const openCalls = [];
+  const toastCalls = [];
+  global.wx = {
+    authorize() { assert.fail("openSessionLocation must not request permission"); },
+    getLocation() { assert.fail("openSessionLocation must not capture a new location"); },
+    openLocation(options) { openCalls.push(options); },
+    showToast(options) { toastCalls.push(options); },
+  };
+  delete require.cache[loginSessionsPath];
+
+  try {
+    const loginSessions = require(loginSessionsPath);
+    const detailed = locationSession("detailed", "Resolved Road 1");
+    detailed.loginLocation.latitude = "38.9140038";
+    detailed.loginLocation.longitude = "121.614682";
+    loginSessions.openSessionLocation(detailed);
+    loginSessions.openSessionLocation(locationSession("area", "", {
+      province: "Liaoning",
+      city: "Dalian",
+      district: "Shahekou",
+    }));
+
+    assert.equal(openCalls.length, 2);
+    assert.deepEqual(
+      Object.assign({}, openCalls[0], { fail: undefined }),
+      {
+        latitude: 38.9140038,
+        longitude: 121.614682,
+        scale: 16,
+        name: "登录位置",
+        address: "Resolved Road 1",
+        fail: undefined,
+      }
+    );
+    assert.equal(typeof openCalls[0].fail, "function");
+    assert.equal(openCalls[1].address, "Liaoning Dalian Shahekou");
+    assert.deepEqual(toastCalls, []);
+  } finally {
+    delete require.cache[loginSessionsPath];
+    if (typeof previousWx === "undefined") delete global.wx;
+    else global.wx = previousWx;
+  }
+});
+
+test("openSessionLocation reports unavailable and invalid recorded locations", () => {
+  const previousWx = global.wx;
+  const openCalls = [];
+  const toastCalls = [];
+  global.wx = {
+    openLocation(options) { openCalls.push(options); },
+    showToast(options) { toastCalls.push(options); },
+  };
+  delete require.cache[loginSessionsPath];
+
+  try {
+    const loginSessions = require(loginSessionsPath);
+    loginSessions.openSessionLocation({ loginLocation: { available: false } });
+    loginSessions.openSessionLocation({
+      loginLocation: { available: true, latitude: Infinity, longitude: 121.614682 },
+    });
+    loginSessions.openSessionLocation({
+      loginLocation: { available: true, latitude: 38.9140038, longitude: null },
+    });
+    loginSessions.openSessionLocation({
+      loginLocation: { available: true, latitude: false, longitude: " " },
+    });
+
+    assert.deepEqual(openCalls, []);
+    assert.deepEqual(toastCalls, [
+      { title: "本次登录没有可查看的位置", icon: "none" },
+      { title: "本次登录没有可查看的位置", icon: "none" },
+      { title: "本次登录没有可查看的位置", icon: "none" },
+      { title: "本次登录没有可查看的位置", icon: "none" },
+    ]);
+  } finally {
+    delete require.cache[loginSessionsPath];
+    if (typeof previousWx === "undefined") delete global.wx;
+    else global.wx = previousWx;
+  }
+});
+
+test("openSessionLocation reports WeChat map failures", () => {
+  const previousWx = global.wx;
+  const toastCalls = [];
+  global.wx = {
+    openLocation(options) { options.fail({ errMsg: "openLocation:fail" }); },
+    showToast(options) { toastCalls.push(options); },
+  };
+  delete require.cache[loginSessionsPath];
+
+  try {
+    const loginSessions = require(loginSessionsPath);
+    loginSessions.openSessionLocation(locationSession("failed", "Resolved Road 1"));
+    assert.deepEqual(toastCalls, [
+      { title: "地图暂时无法打开", icon: "none" },
+    ]);
+  } finally {
+    delete require.cache[loginSessionsPath];
+    if (typeof previousWx === "undefined") delete global.wx;
+    else global.wx = previousWx;
+  }
+});
+
 test("forced login session reads bypass cache and stale in-flight responses cannot refill it", async () => {
   const previousWx = global.wx;
   const previousGetApp = global.getApp;

@@ -55,12 +55,23 @@
         </view>
       </view>
 
-      <view class="record-location {{item.hasLoginLocation ? 'recorded' : 'empty'}}">
+      <view
+        class="record-location {{item.hasLoginLocation ? 'recorded' : 'empty'}}"
+        data-id="{{item.id}}"
+        bindtap="openSessionLocation"
+        hover-class="record-location-pressed"
+        hover-start-time="0"
+        hover-stay-time="90"
+      >
         <view class="record-location-icon"><image src="/images/ui-icons/map-pin.svg" mode="aspectFit"></image></view>
         <view class="record-location-copy">
           <view class="record-location-head">
             <view>登录位置</view>
-            <text>{{item.hasLoginLocation ? '已记录' : '未记录'}}</text>
+            <view class="record-location-action" wx:if="{{item.hasLoginLocation}}">
+              查看地图
+              <image src="/images/ui-icons/arrow-right.svg" mode="aspectFit"></image>
+            </view>
+            <text class="record-location-unavailable" wx:else>未记录</text>
           </view>
           <view class="record-location-value">{{item.loginLocationText}}</view>
           <view class="record-location-detail" wx:if="{{item.loginCoordinateText || item.loginLocationCapturedText}}">

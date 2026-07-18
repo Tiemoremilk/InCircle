@@ -24,6 +24,15 @@ function read(relativePath) {
   return fs.readFileSync(path.join(ROOT, relativePath), "utf8");
 }
 
+function assertSessionOrderingQuery(query, expectedParams) {
+  const sql = String(query.sql).replace(/\s+/g, " ").trim();
+  assert.match(
+    sql,
+    /ORDER BY CASE WHEN id = \$2::uuid THEN 0 ELSE 1 END, last_login_at DESC, created_at DESC, id DESC LIMIT \$3/
+  );
+  assert.deepEqual(query.params, expectedParams);
+}
+
 test("login addresses trust exactly one reverse-proxy hop", async () => {
   const app = fastifyFactory({ logger: false, trustProxy: 1 });
   app.get("/ip", async (request) => ({ address: loginAddressFromRequest(request) }));
@@ -146,7 +155,152 @@ test("session validation and revocation are enforced by server-side session id",
   assert.equal(Object.hasOwn(publicRows[0], "login_openid_hash"), false);
 });
 
-test("login records stay newest-first and only inactive sessions can be deleted", async () => {
+test("login records pin each requested current session before deterministic recency order", async () => {
+  const userId = "11111111-1111-4111-8111-111111111111";
+  const oldestSessionId = "22222222-2222-4222-8222-222222222222";
+  const newestSessionId = "33333333-3333-4333-8333-333333333333";
+  const newerCreatedSessionId = "44444444-4444-4444-8444-444444444444";
+  const lowerIdSessionId = "55555555-5555-4555-8555-555555555555";
+  const higherIdSessionId = "66666666-6666-4666-8666-666666666666";
+  const sessionRows = new Map([
+    [oldestSessionId, {
+      id: oldestSessionId,
+      last_login_at: "2026-01-01T00:00:00.000Z",
+      created_at: "2026-01-01T00:00:00.000Z",
+    }],
+    [newestSessionId, {
+      id: newestSessionId,
+      last_login_at: "2026-06-03T00:00:00.000Z",
+      created_at: "2026-02-01T00:00:00.000Z",
+    }],
+    [newerCreatedSessionId, {
+      id: newerCreatedSessionId,
+      last_login_at: "2026-06-02T00:00:00.000Z",
+      created_at: "2026-05-02T00:00:00.000Z",
+    }],
+    [lowerIdSessionId, {
+      id: lowerIdSessionId,
+      last_login_at: "2026-06-02T00:00:00.000Z",
+      created_at: "2026-05-01T00:00:00.000Z",
+    }],
+    [higherIdSessionId, {
+      id: higherIdSessionId,
+      last_login_at: "2026-06-02T00:00:00.000Z",
+      created_at: "2026-05-01T00:00:00.000Z",
+    }],
+  ]);
+  const expectedIdsByCurrentSession = new Map([
+    [oldestSessionId, [
+      oldestSessionId,
+      newestSessionId,
+      newerCreatedSessionId,
+      higherIdSessionId,
+      lowerIdSessionId,
+    ]],
+    [lowerIdSessionId, [
+      lowerIdSessionId,
+      newestSessionId,
+      newerCreatedSessionId,
+      higherIdSessionId,
+      oldestSessionId,
+    ]],
+  ]);
+  const queries = [];
+  const db = {
+    async query(sql, params) {
+      const statement = String(sql);
+      queries.push({ sql: statement, params });
+      if (/UPDATE incircle_account_sessions/.test(statement)) return { rows: [], rowCount: 0 };
+      if (/count\(\*\) OVER/.test(statement)) {
+        const expectedIds = expectedIdsByCurrentSession.get(params[1]);
+        return {
+          rows: expectedIds.map((id) => ({
+            ...sessionRows.get(id),
+            device_name: `Device ${id.slice(0, 4)}`,
+            expires_at: "2099-01-01T00:00:00.000Z",
+            revoked_at: null,
+            session_total: sessionRows.size,
+            active_session_count: sessionRows.size,
+          })),
+        };
+      }
+      throw new Error(`Unexpected SQL: ${sql}`);
+    },
+  };
+
+  for (const [currentSessionId, expectedIds] of expectedIdsByCurrentSession) {
+    const collection = await readAccountSessionCollection(
+      db,
+      userId,
+      currentSessionId,
+      { limit: sessionRows.size }
+    );
+    assert.deepEqual(collection.sessions.map((session) => session.id), expectedIds);
+    assert.deepEqual(
+      collection.sessions.filter((session) => session.current).map((session) => session.id),
+      [currentSessionId]
+    );
+  }
+
+  const listQueries = queries.filter((query) => /count\(\*\) OVER/.test(query.sql));
+  assert.equal(listQueries.length, 2);
+  assertSessionOrderingQuery(listQueries[0], [userId, oldestSessionId, sessionRows.size]);
+  assertSessionOrderingQuery(listQueries[1], [userId, lowerIdSessionId, sessionRows.size]);
+});
+
+test("account summary applies current-first ordering before its three-session limit", async () => {
+  const userId = "11111111-1111-4111-8111-111111111111";
+  const currentSessionId = "22222222-2222-4222-8222-222222222222";
+  const orderedIds = [
+    currentSessionId,
+    "55555555-5555-4555-8555-555555555555",
+    "44444444-4444-4444-8444-444444444444",
+  ];
+  const queries = [];
+  const db = {
+    async query(sql, params) {
+      const statement = String(sql);
+      queries.push({ sql: statement, params });
+      if (/UPDATE incircle_account_sessions/.test(statement)) return { rows: [], rowCount: 0 };
+      if (/count\(\*\) OVER/.test(statement)) {
+        return {
+          rows: orderedIds.map((id) => ({
+            id,
+            device_name: `Device ${id.slice(0, 4)}`,
+            last_login_at: id === currentSessionId
+              ? "2026-01-01T00:00:00.000Z"
+              : "2026-06-01T00:00:00.000Z",
+            created_at: "2026-01-01T00:00:00.000Z",
+            expires_at: "2099-01-01T00:00:00.000Z",
+            revoked_at: null,
+            session_total: 5,
+            active_session_count: 4,
+          })),
+        };
+      }
+      throw new Error(`Unexpected SQL: ${sql}`);
+    },
+  };
+  const service = new InCircleService({
+    db,
+    config: { superAdminOpenids: [] },
+  }, {});
+  service.requireUser = async () => ({
+    user: { id: userId, openid: "bound-openid", nickname: "Example" },
+    identity: { sessionId: currentSessionId },
+  });
+
+  const summary = await service.accountSettings({});
+  const listQuery = queries.find((query) => /count\(\*\) OVER/.test(query.sql));
+  assertSessionOrderingQuery(listQuery, [userId, currentSessionId, 3]);
+  assert.deepEqual(summary.sessions.map((session) => session.id), orderedIds);
+  assert.equal(summary.sessions[0].current, true);
+  assert.equal(summary.sessionCount, 5);
+  assert.equal(summary.activeSessionCount, 4);
+  assert.equal(summary.hasMoreSessions, true);
+});
+
+test("login record metadata and inactive-session deletion stay enforced", async () => {
   const userId = "11111111-1111-4111-8111-111111111111";
   const currentSessionId = "22222222-2222-4222-8222-222222222222";
   const revokedSessionId = "33333333-3333-4333-8333-333333333333";
@@ -178,8 +332,7 @@ test("login records stay newest-first and only inactive sessions can be deleted"
     { limit: 3 }
   );
   const listQuery = queries.find((query) => /count\(\*\) OVER/.test(query.sql));
-  assert.match(listQuery.sql, /ORDER BY last_login_at DESC, created_at DESC, id DESC/);
-  assert.deepEqual(listQuery.params, [userId, 3]);
+  assertSessionOrderingQuery(listQuery, [userId, currentSessionId, 3]);
   assert.equal(collection.total, 4);
   assert.equal(collection.activeSessionCount, 2);
   assert.equal(collection.hasMore, true);
@@ -271,7 +424,10 @@ test("account settings, login verification, and device management are wired end 
   assert.match(service, /async updateWechatLoginVerification\(body\)[\s\S]*verifyPassword\(auth\.user, password\)/);
   assert.match(service, /CURRENT_SESSION_CANNOT_REVOKE|revokeAccountSession/);
   assert.match(service, /ACCOUNT_SETTINGS_SESSION_LIMIT = 3/);
-  assert.match(accountSessionSource, /ORDER BY last_login_at DESC, created_at DESC, id DESC/);
+  assert.match(
+    accountSessionSource,
+    /CASE WHEN id = \$2::uuid THEN 0 ELSE 1 END,\s*last_login_at DESC,\s*created_at DESC,\s*id DESC/
+  );
   assert.match(accountSessionSource, /ACTIVE_SESSION_CANNOT_DELETE/);
 
   const loginStart = service.indexOf("async accountLogin(body)");

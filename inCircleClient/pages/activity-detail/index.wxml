@@ -11,26 +11,46 @@
     <view class="detail-title">{{activity.title}}</view>
     <view class="detail-meta">{{activity.time}} · {{activity.location}}</view>
     <view class="location-box" wx:if="{{activity.hasLocation}}" bindtap="openActivityLocation">
-      <view>
+      <view class="location-content">
         <view class="location-title">{{activity.locationTitle}}</view>
         <view class="location-copy">{{activity.locationCopy}}</view>
       </view>
-      <view class="location-action">{{activity.locationActionText}}</view>
+      <view class="location-action hero-pill">
+        <text>{{activity.locationActionText}}</text>
+      </view>
     </view>
     <view class="hero-note">{{activity.highlight}}</view>
   </view>
 
   <view class="quick-actions motion-section {{activity.canDelete ? 'has-delete' : ''}}">
-    <view class="quick-action" bindtap="shareToGroup">微信群分享</view>
-    <view class="quick-action {{actionLoadingType === 'finish' ? 'disabled' : ''}}" bindtap="finishActivity">
-      {{actionLoadingType === 'finish' ? '生成中...' : '生成复盘'}}
+    <view class="quick-action-slot">
+      <button class="quick-action share-action" open-type="share" hover-class="quick-action-pressed">
+        <text>微信群分享</text>
+      </button>
     </view>
-    <view class="quick-action {{actionLoadingType === 'bill' ? 'disabled' : ''}}" bindtap="createBill">
-      {{actionLoadingType === 'bill' ? '生成中...' : activity.postBillText}}
+    <view class="quick-action-slot">
+      <view class="quick-action bill-action {{actionLoadingType === 'bill' ? 'disabled' : ''}}" bindtap="createBill">
+        <text>{{actionLoadingType === 'bill' ? '生成中...' : activity.postBillText}}</text>
+      </view>
     </view>
-    <view wx:if="{{activity.canDelete}}" class="quick-action danger {{actionLoadingType === 'delete' ? 'disabled' : ''}}" bindtap="deleteActivity">
-      {{actionLoadingType === 'delete' ? '删除中...' : '删除活动'}}
+    <view wx:if="{{activity.canDelete}}" class="quick-action-slot">
+      <view class="quick-action danger {{actionLoadingType === 'delete' ? 'disabled' : ''}}" bindtap="deleteActivity">
+        <text>{{actionLoadingType === 'delete' ? '删除中...' : '删除活动'}}</text>
+      </view>
     </view>
+  </view>
+
+  <view
+    class="recap-cta motion-section {{actionLoadingType === 'finish' ? 'disabled' : ''}}"
+    bindtap="finishActivity"
+    hover-class="recap-cta-pressed"
+  >
+    <view class="recap-cta-icon"><image src="/images/ui-icons/recap.svg" mode="aspectFit"></image></view>
+    <view class="recap-cta-copy">
+      <view class="recap-cta-title">{{actionLoadingType === 'finish' ? '正在整理复盘' : activity.recapActionText}}</view>
+      <view class="recap-cta-hint">{{activity.recapActionHint}}</view>
+    </view>
+    <image class="recap-cta-arrow" src="/images/ui-icons/arrow-right.svg" mode="aspectFit"></image>
   </view>
 
   <view class="section">
@@ -118,25 +138,23 @@
   <view class="section">
     <view class="section-head">
       <view class="section-title">趣味复盘</view>
-      <view class="section-action" bindtap="finishActivity">{{actionLoadingType === 'finish' ? '刷新中...' : '刷新复盘'}}</view>
+      <view class="section-action" wx:if="{{activity.hasRecap}}" bindtap="finishActivity">{{actionLoadingType === 'finish' ? '刷新中...' : '刷新复盘'}}</view>
     </view>
-    <view class="recap-card card" wx:if="{{activity.recapRows.length}}">
+    <view class="recap-card card" wx:if="{{activity.hasRecap}}">
       <view class="recap-row {{recapIndex < 6 ? 'motion-list-item' : ''}}" wx:for="{{activity.recapRows}}" wx:key="label" wx:for-index="recapIndex" style="animation-delay: {{recapIndex * 35}}ms;">
         <text>{{item.label}}</text>
         <text>{{item.value}}</text>
       </view>
-      <view class="recap-note">{{activity.recap.vibe}}</view>
+      <view class="recap-note">{{activity.recap.vibe || '本局暂未记录趣味总结。'}}</view>
     </view>
-    <empty-state
-      wx:else
-      kind="activity"
-      icon="/images/ui-icons/recap.svg"
-      title="还没有生成复盘"
-      description="活动结束后生成一次，亮点和成员表现会整理在这里。"
-      action-text="生成复盘"
-      compact="{{true}}"
-      bindaction="finishActivity"
-    />
+    <view class="recap-empty card" wx:else>
+      <view class="recap-empty-icon"><image src="/images/ui-icons/recap.svg" mode="aspectFit"></image></view>
+      <view class="recap-empty-copy">
+        <view class="recap-empty-title">{{activity.recapEmptyTitle}}</view>
+        <view class="recap-empty-description">{{activity.recapEmptyCopy}}</view>
+      </view>
+      <view class="recap-empty-tag">待生成</view>
+    </view>
   </view>
 </view>
 
