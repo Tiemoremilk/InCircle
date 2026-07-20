@@ -62,9 +62,12 @@ function createCircleHarness(options) {
       throw new Error(`Unexpected query: ${normalized}`);
     },
   };
-  const service = new InCircleService({ db, config: { superAdminOpenids: [] } }, {});
+  const service = new InCircleService({
+    db,
+    config: { superAdminOpenids: source.configSuperAdmin ? ["configured-admin"] : [] },
+  }, {});
   service.requireUser = async () => ({
-    identity: { openid: "owner-openid" },
+    identity: { openid: source.configSuperAdmin ? "configured-admin" : "owner-openid" },
     user: {
       id: USER_ID,
       nickname: "圈主",
@@ -144,6 +147,10 @@ test("only a platform superadmin bypasses the ownership limit", async () => {
   assert.equal(result.circleCreated, true);
   assert.equal(platformAdmin.queries.some((query) => /FOR UPDATE$/.test(query.sql)), false);
   assert.equal(platformAdmin.queries.some((query) => /AS total FROM incircle_circles/.test(query.sql)), false);
+
+  const configuredAdmin = createCircleHarness({ ownedCount: 25, configSuperAdmin: true });
+  assert.equal((await configuredAdmin.service.createCircle({ circle: { name: "配置超管圈" } })).circleCreated, true);
+  assert.equal(configuredAdmin.queries.some((query) => /FOR UPDATE$/.test(query.sql)), false);
 
   const circleRoleOnly = createCircleHarness({ ownedCount: 10, isSuperAdmin: false });
   await assert.rejects(

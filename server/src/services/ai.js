@@ -1,7 +1,7 @@
 const crypto = require("crypto");
 
 const { AppError } = require("../errors");
-const { canManageCircleRole, isOwnerRole } = require("../member-role");
+const { isOwnerRole } = require("../member-role");
 const { beijingDateKey } = require("../time");
 const { InCircleService } = require("./incircle");
 const { checkTextSecurity } = require("./wechat");
@@ -498,14 +498,15 @@ function aiAccessFlags(circleRow, userId, isSuperAdmin) {
   const isOwner =
     String(row.owner_user_id || "") === String(userId || "") ||
     (isMember && isOwnerRole(row.membership_role));
-  const isCircleSuperAdmin = isMember && canManageCircleRole(row.membership_role) && !isOwner;
+  const globalSuperAdmin = !!isSuperAdmin;
+  const canManage = isOwner || globalSuperAdmin;
   return {
     isMember,
     isOwner,
-    isCircleSuperAdmin,
-    isSuperAdmin: !!isSuperAdmin,
-    canManage: isOwner || isCircleSuperAdmin || !!isSuperAdmin,
-    canUseCustomProvider: isOwner || !!isSuperAdmin,
+    isCircleSuperAdmin: false,
+    isSuperAdmin: globalSuperAdmin,
+    canManage,
+    canUseCustomProvider: canManage,
   };
 }
 

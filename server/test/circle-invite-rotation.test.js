@@ -88,11 +88,11 @@ function rotationHarness(t, options) {
   };
   const service = new InCircleService({
     db,
-    config: { uploadDir, superAdminOpenids: source.platformSuperAdmin ? ["platform-admin"] : [] },
+    config: { uploadDir, superAdminOpenids: source.configSuperAdmin ? ["platform-admin"] : [] },
   }, {});
   service.requireUser = async () => ({
-    identity: { openid: source.platformSuperAdmin ? "platform-admin" : "member-openid" },
-    user: { id: USER_ID, nickname: "测试用户", is_super_admin: !!source.platformSuperAdmin },
+    identity: { openid: source.databaseSuperAdmin || source.configSuperAdmin ? "platform-admin" : "member-openid" },
+    user: { id: USER_ID, nickname: "测试用户", is_super_admin: !!source.databaseSuperAdmin },
   });
   service.createUniqueJoinCode = async () => {
     joinCodeGenerationCount += 1;
@@ -167,8 +167,8 @@ test("legacy code-based share options are ignored while manual handoffs remain s
 
 for (const access of [
   { label: "circle owner", role: "圈主" },
-  { label: "circle super admin", role: "超管" },
-  { label: "platform super admin", platformSuperAdmin: true },
+  { label: "database global super admin without membership", databaseSuperAdmin: true },
+  { label: "configured global super admin without membership", configSuperAdmin: true },
 ]) {
   test(`${access.label} rotates both credentials and invalidates the old QR`, async (t) => {
     const harness = rotationHarness(t, access);
@@ -196,6 +196,8 @@ for (const access of [
 
 for (const access of [
   { label: "ordinary members", role: "成员" },
+  { label: "legacy circle super admins", role: "超管" },
+  { label: "legacy circle administrators", role: "管理员" },
   { label: "non-members", role: null },
 ]) {
   test(`${access.label} cannot rotate credentials or delete the current QR`, async (t) => {

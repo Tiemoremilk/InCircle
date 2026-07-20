@@ -122,7 +122,7 @@ test("custom provider preset visibility follows the explicit custom-provider per
   assert.equal(listProviderPresets(true).some((item) => item.key === "custom"), true);
 });
 
-test("AI configuration permission allows circle and platform super admins", () => {
+test("AI configuration permission allows only circle owners and global super admins", () => {
   const owner = aiAccessFlags(
     { owner_user_id: "user-owner", membership_id: "member-1", membership_status: "active", membership_role: "圈主" },
     "user-owner",
@@ -151,14 +151,62 @@ test("AI configuration permission allows circle and platform super admins", () =
   assert.equal(owner.canManage, true);
   assert.equal(owner.canUseCustomProvider, true);
   assert.equal(circleSuperAdmin.isMember, true);
-  assert.equal(circleSuperAdmin.canManage, true);
+  assert.equal(circleSuperAdmin.isOwner, false);
+  assert.equal(circleSuperAdmin.isCircleSuperAdmin, false);
+  assert.equal(circleSuperAdmin.isSuperAdmin, false);
+  assert.equal(circleSuperAdmin.canManage, false);
   assert.equal(circleSuperAdmin.canUseCustomProvider, false);
-  assert.equal(legacyAdmin.canManage, true);
+  assert.equal(legacyAdmin.isMember, true);
+  assert.equal(legacyAdmin.canManage, false);
   assert.equal(legacyAdmin.canUseCustomProvider, false);
   assert.equal(member.canManage, false);
   assert.equal(member.canUseCustomProvider, false);
+  assert.equal(platformSuperAdmin.isMember, false);
+  assert.equal(platformSuperAdmin.isCircleSuperAdmin, false);
+  assert.equal(platformSuperAdmin.isSuperAdmin, true);
   assert.equal(platformSuperAdmin.canManage, true);
   assert.equal(platformSuperAdmin.canUseCustomProvider, true);
+});
+
+test("AI manager gate rejects circle admin roles and accepts a non-member global super admin", async () => {
+  const service = new AiService({ db: {}, config: {} }, {});
+  const baseContext = {
+    circleId: "22222222-2222-4222-8222-222222222222",
+    circle: { status: "active" },
+    platformAiEnabled: true,
+    auth: { user: { id: "user-current" } },
+  };
+
+  for (const membershipRole of ["超管", "管理员"]) {
+    service.accessContext = async () => ({
+      ...baseContext,
+      ...aiAccessFlags({
+        owner_user_id: "user-owner",
+        membership_id: `member-${membershipRole}`,
+        membership_status: "active",
+        membership_role: membershipRole,
+      }, "user-current", false),
+    });
+    await assert.rejects(
+      () => service.requireManager({ circleId: baseContext.circleId }),
+      (error) => error.statusCode === 403 && error.errCode === "AI_CONFIG_FORBIDDEN",
+      membershipRole
+    );
+  }
+
+  service.accessContext = async () => ({
+    ...baseContext,
+    ...aiAccessFlags({
+      owner_user_id: "user-owner",
+      membership_id: null,
+      membership_status: null,
+      membership_role: null,
+    }, "user-current", true),
+  });
+  const context = await service.requireManager({ circleId: baseContext.circleId });
+  assert.equal(context.isMember, false);
+  assert.equal(context.isSuperAdmin, true);
+  assert.equal(context.canManage, true);
 });
 
 test("custom provider preset is visible to circle owners and platform super admins only", async () => {
@@ -167,7 +215,6 @@ test("custom provider preset is visible to circle owners and platform super admi
       label: "circle owner",
       access: {
         isOwner: true,
-        isCircleSuperAdmin: false,
         isSuperAdmin: false,
         canManage: true,
         canUseCustomProvider: true,
@@ -175,21 +222,9 @@ test("custom provider preset is visible to circle owners and platform super admi
       expected: true,
     },
     {
-      label: "circle super admin",
-      access: {
-        isOwner: false,
-        isCircleSuperAdmin: true,
-        isSuperAdmin: false,
-        canManage: true,
-        canUseCustomProvider: false,
-      },
-      expected: false,
-    },
-    {
       label: "platform super admin",
       access: {
         isOwner: false,
-        isCircleSuperAdmin: false,
         isSuperAdmin: true,
         canManage: true,
         canUseCustomProvider: true,
@@ -841,7 +876,7 @@ test("provider token metadata recognizes 1M contexts and independent output limi
   });
 });
 
-test("custom provider saving allows circle owners and platform super admins but rejects circle super admins", async () => {
+test("custom provider saving remains limited to circle owners and global super admins", async () => {
   await withPublicDns(async () => {
     const circleId = "22222222-2222-4222-8222-222222222222";
     const userId = "33333333-3333-4333-8333-333333333333";
@@ -898,7 +933,6 @@ test("custom provider saving allows circle owners and platform super admins but 
         label: "circle owner",
         access: {
           isOwner: true,
-          isCircleSuperAdmin: false,
           isSuperAdmin: false,
           canUseCustomProvider: true,
         },
@@ -907,7 +941,6 @@ test("custom provider saving allows circle owners and platform super admins but 
         label: "platform super admin",
         access: {
           isOwner: false,
-          isCircleSuperAdmin: false,
           isSuperAdmin: true,
           canUseCustomProvider: true,
         },
@@ -925,18 +958,17 @@ test("custom provider saving allows circle owners and platform super admins but 
       );
     }
 
-    const circleSuperAdmin = serviceFor({
+    const unauthorizedManager = serviceFor({
       isOwner: false,
-      isCircleSuperAdmin: true,
       isSuperAdmin: false,
       canUseCustomProvider: false,
     });
     await assert.rejects(
-      () => circleSuperAdmin.service.saveProvider({ circleId, provider: providerDraft }),
+      () => unauthorizedManager.service.saveProvider({ circleId, provider: providerDraft }),
       (error) => error.statusCode === 403 && error.errCode === "AI_PROVIDER_PRESET_FORBIDDEN"
     );
-    assert.equal(circleSuperAdmin.transactionStarted(), false);
-    assert.equal(circleSuperAdmin.queries.length, 0);
+    assert.equal(unauthorizedManager.transactionStarted(), false);
+    assert.equal(unauthorizedManager.queries.length, 0);
   });
 });
 

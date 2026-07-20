@@ -1,6 +1,5 @@
 const MEMBER_ROLES = Object.freeze({
   OWNER: "圈主",
-  SUPER_ADMIN: "超管",
   MEMBER: "成员",
 });
 
@@ -12,7 +11,7 @@ const OWNER_ROLE_ALIASES = new Set([
   "creator",
 ]);
 
-const SUPER_ADMIN_ROLE_ALIASES = new Set([
+const GLOBAL_SUPER_ADMIN_ROLE_ALIASES = new Set([
   "超管",
   "管理员",
   "超级管理员",
@@ -33,7 +32,6 @@ function normalizedRoleKey(value) {
 function normalizeMemberRole(value) {
   const role = normalizedRoleKey(value);
   if (OWNER_ROLE_ALIASES.has(role)) return MEMBER_ROLES.OWNER;
-  if (SUPER_ADMIN_ROLE_ALIASES.has(role)) return MEMBER_ROLES.SUPER_ADMIN;
   return MEMBER_ROLES.MEMBER;
 }
 
@@ -41,13 +39,8 @@ function isOwnerRole(value) {
   return normalizeMemberRole(value) === MEMBER_ROLES.OWNER;
 }
 
-function isCircleSuperAdminRole(value) {
-  return normalizeMemberRole(value) === MEMBER_ROLES.SUPER_ADMIN;
-}
-
 function canManageCircleRole(value) {
-  const role = normalizeMemberRole(value);
-  return role === MEMBER_ROLES.OWNER || role === MEMBER_ROLES.SUPER_ADMIN;
+  return isOwnerRole(value);
 }
 
 function isEnabledClaim(value) {
@@ -55,12 +48,11 @@ function isEnabledClaim(value) {
   return ["true", "1", "yes"].includes(String(value || "").trim().toLowerCase());
 }
 
-function hasGlobalSuperAdminClaim(document, options) {
+function hasGlobalSuperAdminClaim(document) {
   const doc = document && typeof document === "object" ? document : null;
   if (!doc) return false;
   if ([doc.isSuperAdmin, doc.is_super_admin, doc.superAdmin].some(isEnabledClaim)) return true;
-  if (normalizeMemberRole(doc.globalRole) === MEMBER_ROLES.SUPER_ADMIN) return true;
-  if (options && options.allowLegacyRole && normalizeMemberRole(doc.role) === MEMBER_ROLES.SUPER_ADMIN) return true;
+  if (GLOBAL_SUPER_ADMIN_ROLE_ALIASES.has(normalizedRoleKey(doc.globalRole))) return true;
   const permissions = doc.permissions || doc.permission || {};
   return [permissions.isSuperAdmin, permissions.superAdmin, permissions.globalAdmin].some(isEnabledClaim);
 }
@@ -69,7 +61,6 @@ module.exports = {
   MEMBER_ROLES,
   canManageCircleRole,
   hasGlobalSuperAdminClaim,
-  isCircleSuperAdminRole,
   isOwnerRole,
   normalizeMemberRole,
 };

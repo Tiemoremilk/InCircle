@@ -295,7 +295,7 @@ CREATE TABLE IF NOT EXISTS incircle_circle_members (
   raw_data jsonb NOT NULL DEFAULT '{}'::jsonb,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now(),
-  CONSTRAINT chk_incircle_circle_member_role CHECK (role IN ('圈主', '超管', '成员')),
+  CONSTRAINT chk_incircle_circle_member_role CHECK (role IN ('圈主', '成员')),
   UNIQUE (circle_id, user_id)
 );
 
@@ -317,7 +317,7 @@ CREATE TABLE IF NOT EXISTS incircle_member_cards (
   payload jsonb NOT NULL DEFAULT '{}'::jsonb,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now(),
-  CONSTRAINT chk_incircle_member_card_role CHECK (role IN ('圈主', '超管', '成员')),
+  CONSTRAINT chk_incircle_member_card_role CHECK (role IN ('圈主', '成员')),
   UNIQUE (circle_id, user_id)
 );
 
@@ -541,18 +541,11 @@ WITH normalized_member_roles AS (
   SELECT
     member.id,
     CASE
-      WHEN circle.owner_user_id = member.user_id
-        OR lower(btrim(member.role)) IN ('圈主', 'owner', 'circle_owner', 'circle-owner', 'creator')
-        THEN '圈主'
-      WHEN lower(btrim(member.role)) IN (
-        '超管', '管理员', '超级管理员', 'admin', 'administrator', 'manager',
-        'circle_admin', 'circle-admin', 'super_admin', 'super-admin', 'superadmin'
-      )
-        THEN '超管'
+      WHEN circle.owner_user_id = member.user_id THEN '圈主'
       ELSE '成员'
     END AS role
   FROM incircle_circle_members member
-  JOIN incircle_circles circle ON circle.id = member.circle_id
+  LEFT JOIN incircle_circles circle ON circle.id = member.circle_id
 )
 UPDATE incircle_circle_members member
 SET role = normalized.role
@@ -560,37 +553,31 @@ FROM normalized_member_roles normalized
 WHERE member.id = normalized.id
   AND member.role IS DISTINCT FROM normalized.role;
 
+WITH normalized_member_card_roles AS (
+  SELECT
+    card.id,
+    CASE
+      WHEN circle.owner_user_id = card.user_id THEN '圈主'
+      ELSE '成员'
+    END AS role
+  FROM incircle_member_cards card
+  LEFT JOIN incircle_circles circle ON circle.id = card.circle_id
+)
 UPDATE incircle_member_cards card
-SET role = member.role
-FROM incircle_circle_members member
-WHERE member.circle_id = card.circle_id
-  AND member.user_id = card.user_id
-  AND card.role IS DISTINCT FROM member.role;
+SET role = normalized.role
+FROM normalized_member_card_roles normalized
+WHERE card.id = normalized.id
+  AND card.role IS DISTINCT FROM normalized.role;
 
-UPDATE incircle_member_cards card
-SET role = '圈主'
-FROM incircle_circles circle
-WHERE circle.id = card.circle_id
-  AND circle.owner_user_id = card.user_id
-  AND card.role IS DISTINCT FROM '圈主';
-
-UPDATE incircle_member_cards
-SET role = CASE
-  WHEN lower(btrim(role)) IN ('圈主', 'owner', 'circle_owner', 'circle-owner', 'creator') THEN '圈主'
-  WHEN lower(btrim(role)) IN (
-    '超管', '管理员', '超级管理员', 'admin', 'administrator', 'manager',
-    'circle_admin', 'circle-admin', 'super_admin', 'super-admin', 'superadmin'
-  ) THEN '超管'
-  ELSE '成员'
-END
-WHERE role NOT IN ('圈主', '超管', '成员');
+ALTER TABLE incircle_circle_members ALTER COLUMN role SET NOT NULL;
+ALTER TABLE incircle_member_cards ALTER COLUMN role SET NOT NULL;
 
 ALTER TABLE incircle_circle_members DROP CONSTRAINT IF EXISTS chk_incircle_circle_member_role;
 ALTER TABLE incircle_circle_members
-  ADD CONSTRAINT chk_incircle_circle_member_role CHECK (role IN ('圈主', '超管', '成员'));
+  ADD CONSTRAINT chk_incircle_circle_member_role CHECK (role IN ('圈主', '成员'));
 ALTER TABLE incircle_member_cards DROP CONSTRAINT IF EXISTS chk_incircle_member_card_role;
 ALTER TABLE incircle_member_cards
-  ADD CONSTRAINT chk_incircle_member_card_role CHECK (role IN ('圈主', '超管', '成员'));
+  ADD CONSTRAINT chk_incircle_member_card_role CHECK (role IN ('圈主', '成员'));
 
 ALTER TABLE incircle_activities ADD COLUMN IF NOT EXISTS circle_id uuid REFERENCES incircle_circles(id) ON DELETE CASCADE;
 ALTER TABLE incircle_activities ADD COLUMN IF NOT EXISTS created_by_user_id uuid REFERENCES incircle_users(id) ON DELETE SET NULL;

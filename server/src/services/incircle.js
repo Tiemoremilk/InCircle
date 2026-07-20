@@ -20,7 +20,6 @@ const { publicUrl } = require("../routes/media");
 const {
   MEMBER_ROLES,
   canManageCircleRole,
-  isCircleSuperAdminRole,
   isOwnerRole,
   normalizeMemberRole,
 } = require("../member-role");
@@ -165,7 +164,6 @@ function hasPasswordAccount(user) {
 function roleClass(role) {
   const normalizedRole = normalizeMemberRole(role);
   if (normalizedRole === MEMBER_ROLES.OWNER) return "pill-green";
-  if (normalizedRole === MEMBER_ROLES.SUPER_ADMIN) return "pill-red";
   return "pill-blue";
 }
 
@@ -261,8 +259,9 @@ function circleStats(circle) {
   ];
 }
 
-function publicCircle(row, membership, currentCircleId) {
+function publicCircle(row, membership, currentCircleId, options) {
   if (!row) return null;
+  const source = options || {};
   const id = row.id;
   const role = membership ? normalizeMemberRole(membership.role) : "未加入";
   const isCurrent = currentCircleId === id;
@@ -296,7 +295,7 @@ function publicCircle(row, membership, currentCircleId) {
     currentClass: isCurrent ? "active" : "",
     disabledClass: status === "active" ? "" : "disabled",
     canEnter: !!membership && status === "active",
-    canManage: canManageRole(role),
+    canManage: source.isSuperAdmin === true || canManageRole(role),
     memberText: `${row.member_count || 0} 人`,
     activityText: `本月 ${row.monthly_activity_count || 0} 局`,
     debtText: `${row.unsettled_count || 0} 笔待结清`,
@@ -1295,7 +1294,6 @@ function buildMemberBadges(payload, row, role) {
   const hasTitle = !!String((row && row.title) || (payload && payload.title) || "").trim();
 
   if (isOwnerRole(role)) pushUniqueBadge(badges, "圈主驾驶员");
-  if (isCircleSuperAdminRole(role)) pushUniqueBadge(badges, "秩序维护官");
   if (hasTitle && hasProfileText) pushUniqueBadge(badges, "身份卡装修师");
   if (hasAvatar) pushUniqueBadge(badges, "头像营业中");
   if (tags.length >= 3) pushUniqueBadge(badges, "标签批发商");
@@ -1809,6 +1807,14 @@ class InCircleService {
     );
   }
 
+  canManageCircle(auth, membership) {
+    if (!auth || !auth.user) return false;
+    return !!(
+      this.isSuperAdmin(auth.identity && auth.identity.openid, auth.user) ||
+      (membership && canManageRole(membership.role))
+    );
+  }
+
   async getUserByOpenid(openid) {
     const result = await this.db.query("SELECT * FROM incircle_users WHERE openid = $1 LIMIT 1", [openid]);
     return result.rows[0] || null;
@@ -2066,8 +2072,9 @@ class InCircleService {
         membershipByCircle[currentCircleId].last_entered_at = touched.rows[0].last_entered_at;
       }
     }
+    const isSuperAdmin = this.isSuperAdmin(userRow.openid, userRow);
     const decoratedCircles = circles
-      .map((circle) => publicCircle(circle, membershipByCircle[String(circle.id)], currentCircleId))
+      .map((circle) => publicCircle(circle, membershipByCircle[String(circle.id)], currentCircleId, { isSuperAdmin }))
       .sort((left, right) => {
         const leftTime = Date.parse(left.lastEnteredAt || left.createdAt || 0) || 0;
         const rightTime = Date.parse(right.lastEnteredAt || right.createdAt || 0) || 0;
@@ -2084,7 +2091,7 @@ class InCircleService {
       loggedIn: hasActiveSession,
       hasCircle: !!currentCircleId,
       hasCircles: decoratedCircles.length > 0,
-      isSuperAdmin: this.isSuperAdmin(userRow.openid, userRow),
+      isSuperAdmin,
       needsAccountBinding: !hasPasswordAccount(userRow),
       agreementsAccepted: agreements.accepted,
       agreements,
@@ -2888,7 +2895,7 @@ class InCircleService {
       this.db.query(
         `
         SELECT count(*)::int AS joined_count,
-               count(*) FILTER (WHERE role IN ('圈主', '超管'))::int AS managed_count,
+               count(*) FILTER (WHERE role = '圈主')::int AS managed_count,
                (
                  SELECT count(*)::int
                  FROM incircle_circles owned_circle
@@ -2918,7 +2925,7 @@ class InCircleService {
     if (auth.user.current_circle_id && !currentCircleId) {
       await this.db.query("UPDATE incircle_users SET current_circle_id = NULL, updated_at = now() WHERE id = $1", [auth.user.id]);
     }
-    const circles = listResult.rows.map((row) => publicCircle(row, row, currentCircleId));
+    const circles = listResult.rows.map((row) => publicCircle(row, row, currentCircleId, { isSuperAdmin }));
     const total = await totalFromWindowPage(
       this.db,
       listResult,
@@ -2933,7 +2940,9 @@ class InCircleService {
     );
     const totals = totalsResult.rows[0] || {};
     const ownedCircleCount = Number(totals.owned_circle_count || 0);
-    const currentCircle = currentResult.rows[0] ? publicCircle(currentResult.rows[0], currentResult.rows[0], currentCircleId) : null;
+    const currentCircle = currentResult.rows[0]
+      ? publicCircle(currentResult.rows[0], currentResult.rows[0], currentCircleId, { isSuperAdmin })
+      : null;
     return {
       user: publicUser(auth.user),
       circles,
@@ -3209,10 +3218,11 @@ class InCircleService {
       [circleId, auth.user.id]
     );
     const membership = membershipResult.rows[0];
-    if (!membership && !auth.user.is_super_admin) {
+    const isSuperAdmin = this.isSuperAdmin(auth.identity.openid, auth.user);
+    if (!membership && !isSuperAdmin) {
       throw new AppError("你不是这个圈子的成员", { statusCode: 403, errCode: "NOT_IN_CIRCLE" });
     }
-    const canManage = !!(auth.user.is_super_admin || (membership && canManageRole(membership.role)));
+    const canManage = this.canManageCircle(auth, membership);
     const [membersResult, platformSettings] = await Promise.all([
       this.db.query(
         `
@@ -3229,7 +3239,7 @@ class InCircleService {
       this.platformSettings(),
     ]);
     return {
-      circle: publicCircle(circle, membership, circleId),
+      circle: publicCircle(circle, membership, circleId, { isSuperAdmin }),
       members: membersResult.rows.map(publicMember),
       canManage,
       canExit: !!(membership && !isOwnerRole(membership.role)),
@@ -3343,8 +3353,7 @@ class InCircleService {
         [circleId, auth.user.id]
       );
       const membership = membershipResult.rows[0];
-      const platformSuperAdmin = this.isSuperAdmin(auth.identity.openid, auth.user);
-      if (!platformSuperAdmin && !(membership && canManageRole(membership.role))) {
+      if (!this.canManageCircle(auth, membership)) {
         throw new AppError("只有圈主或超管可以更换邀请码", { statusCode: 403, errCode: "FORBIDDEN" });
       }
 
@@ -3639,7 +3648,7 @@ class InCircleService {
     const scoreRules = scoreRulesResult.rows.map(publicScoreRule).filter((rule) => rule && rule.enabled !== false);
     return {
       members,
-      myCard: members.find((member) => String(member.userId) === String(userId)) || members[0] || null,
+      myCard: members.find((member) => String(member.userId) === String(userId)) || null,
       scoreRules: scoreRules.concat(funBadgeRules()),
       scoreLogs: scoreLogsResult.rows.map((row) =>
         Object.assign(publicScoreLog(row), {
@@ -3654,7 +3663,7 @@ class InCircleService {
   }
 
   async scoreLogs(body) {
-    const ctx = await this.requireCircleContext(body);
+    const ctx = await this.requireCircleContext(body, { allowSuperAdmin: true });
     const keyword = normalizeKeyword(body.keyword || body.search);
     const memberId = String(body.memberId || "").trim();
     const limit = normalizeLimit(body.limit, 20);
@@ -3757,13 +3766,7 @@ class InCircleService {
   }
 
   canManageBusiness(ctx) {
-    return !!(
-      ctx &&
-      ctx.auth &&
-      ctx.auth.user &&
-      (this.isSuperAdmin(ctx.auth.identity && ctx.auth.identity.openid, ctx.auth.user) ||
-        (ctx.membership && canManageRole(ctx.membership.role)))
-    );
+    return !!(ctx && this.canManageCircle(ctx.auth, ctx.membership));
   }
 
   businessEditDisabledReason(row, kind) {
@@ -3794,8 +3797,7 @@ class InCircleService {
 
   canEditBusinessActor(row, ctx, kind) {
     if (!row || !ctx || !ctx.auth || !ctx.auth.user) return false;
-    if (this.isSuperAdmin(ctx.auth.identity && ctx.auth.identity.openid, ctx.auth.user)) return true;
-    if (ctx.membership && canManageRole(ctx.membership.role)) return true;
+    if (this.canManageCircle(ctx.auth, ctx.membership)) return true;
     if (row.created_by_user_id && String(row.created_by_user_id) === String(ctx.auth.user.id)) return true;
     const payload = row.payload || {};
     const openid = (ctx.auth.user && ctx.auth.user.openid) || (ctx.auth.identity && ctx.auth.identity.openid) || "";
@@ -4456,7 +4458,8 @@ class InCircleService {
   }
 
   async home(body) {
-    const ctx = await this.requireCircleContext(body);
+    const ctx = await this.requireCircleContext(body, { allowSuperAdmin: true });
+    const isSuperAdmin = this.isSuperAdmin(ctx.auth.identity && ctx.auth.identity.openid, ctx.auth.user);
     const [circleResult, membersData] = await Promise.all([
       this.db.query("SELECT * FROM incircle_circles WHERE id = $1 LIMIT 1", [ctx.circleId]),
       this.listMembersData(ctx.circleId, ctx.auth.user.id),
@@ -4471,7 +4474,7 @@ class InCircleService {
     const pendingVote = votes.find((vote) => !CLOSED_VOTE_STATUSES.has(vote.status));
     const pendingBill = bills.find((bill) => bill.status !== "已结清");
     return {
-      circle: publicCircle(circleResult.rows[0], ctx.membership, ctx.circleId),
+      circle: publicCircle(circleResult.rows[0], ctx.membership, ctx.circleId, { isSuperAdmin }),
       recentActivity: activities[0],
       pendingVote,
       pendingBill,
@@ -4480,7 +4483,7 @@ class InCircleService {
       leaderboard: scoreLeaderboard(membersData.members, 3),
       myCard: membersData.myCard,
       monthlyHonors: membersData.monthlyHonors,
-      isSuperAdmin: !!ctx.auth.user.is_super_admin,
+      isSuperAdmin,
     };
   }
 
@@ -4630,7 +4633,7 @@ class InCircleService {
   }
 
   async deleteActivity(body) {
-    const ctx = await this.requireCircleContext(body);
+    const ctx = await this.requireCircleContext(body, { allowSuperAdmin: true });
     await this.deleteBusiness("activities", body.id, ctx);
     return this.activities(body);
   }
@@ -4681,7 +4684,7 @@ class InCircleService {
   }
 
   async finishActivity(body) {
-    const ctx = await this.requireCircleContext(body);
+    const ctx = await this.requireCircleContext(body, { allowSuperAdmin: true });
     const row = await this.getBusinessRow("activities", body.id, ctx.circleId);
     if (!row) return null;
     this.assertCanManageBusinessRow(row, ctx, "结束活动");
@@ -4700,7 +4703,7 @@ class InCircleService {
   }
 
   async addActivityPhoto(body) {
-    const ctx = await this.requireCircleContext(body);
+    const ctx = await this.requireCircleContext(body, { allowSuperAdmin: true });
     const row = await this.getBusinessRow("activities", body.id, ctx.circleId);
     if (!row) return null;
     this.assertCanManageBusinessRow(row, ctx, "上传活动照片");
@@ -4861,13 +4864,13 @@ class InCircleService {
   }
 
   async deleteBill(body) {
-    const ctx = await this.requireCircleContext(body);
+    const ctx = await this.requireCircleContext(body, { allowSuperAdmin: true });
     await this.deleteBusiness("bills", body.id, ctx);
     return this.tools(body).then((data) => data.bills);
   }
 
   async createBillFromActivity(body) {
-    const ctx = await this.requireCircleContext(body);
+    const ctx = await this.requireCircleContext(body, { allowSuperAdmin: true });
     return this.db.withTransaction(async () => {
       const locked = await this.db.query(
         "SELECT * FROM incircle_activities WHERE id = $1 AND circle_id = $2 FOR UPDATE",
@@ -4922,19 +4925,21 @@ class InCircleService {
         postBillId: bill.id,
         postBillStatus: "已生成账单",
       });
-      await this.awardRule(ctx, ctx.memberCard, "create_bill", `create_bill:${bill.id}`, {
-        type: "发起AA",
-        billId: bill.id,
-        activityId: activity.id,
-        memberName: ctx.memberCard.name,
-        avatar: ctx.memberCard.avatar,
-      });
+      if (ctx.memberCard) {
+        await this.awardRule(ctx, ctx.memberCard, "create_bill", `create_bill:${bill.id}`, {
+          type: "发起AA",
+          billId: bill.id,
+          activityId: activity.id,
+          memberName: ctx.memberCard.name,
+          avatar: ctx.memberCard.avatar,
+        });
+      }
       return this.getBusiness("activities", activity.id, ctx.circleId, { ctx });
     });
   }
 
   async settleBill(body) {
-    const ctx = await this.requireCircleContext(body);
+    const ctx = await this.requireCircleContext(body, { allowSuperAdmin: true });
     const row = await this.getBusinessRow("bills", body.id, ctx.circleId);
     if (!row) throw new AppError("AA 账单不存在或已删除", { statusCode: 404, errCode: "NOT_FOUND" });
     this.assertCanManageBusinessRow(row, ctx, "结清账单");
@@ -4946,18 +4951,20 @@ class InCircleService {
         status: "已结清",
         punchline: "全员结清。",
       });
-      await this.awardRule(ctx, ctx.memberCard, "settle_bill", `settle_bill:${body.id}`, {
-        type: "完成结算",
-        billId: body.id,
-        memberName: ctx.memberCard.name,
-        avatar: ctx.memberCard.avatar,
-      });
+      if (ctx.memberCard) {
+        await this.awardRule(ctx, ctx.memberCard, "settle_bill", `settle_bill:${body.id}`, {
+          type: "完成结算",
+          billId: body.id,
+          memberName: ctx.memberCard.name,
+          avatar: ctx.memberCard.avatar,
+        });
+      }
     });
     return this.tools(body).then((data) => data.bills);
   }
 
   async remindBill(body) {
-    const ctx = await this.requireCircleContext(body);
+    const ctx = await this.requireCircleContext(body, { allowSuperAdmin: true });
     const row = await this.getBusinessRow("bills", body.id, ctx.circleId);
     if (!row) return null;
     this.assertCanManageBusinessRow(row, ctx, "提醒结算");
@@ -5134,7 +5141,7 @@ class InCircleService {
   }
 
   async deleteVote(body) {
-    const ctx = await this.requireCircleContext(body);
+    const ctx = await this.requireCircleContext(body, { allowSuperAdmin: true });
     await this.deleteBusiness("votes", body.id, ctx);
     return this.tools(body).then((data) => data.votes);
   }
@@ -5201,7 +5208,7 @@ class InCircleService {
   }
 
   async vetoVoteOption(body) {
-    const ctx = await this.requireCircleContext(body);
+    const ctx = await this.requireCircleContext(body, { allowSuperAdmin: true });
     const row = await this.getBusinessRow("votes", body.id, ctx.circleId);
     if (!row) return this.tools(body).then((data) => data.votes);
     this.assertCanManageBusinessRow(row, ctx, "否决投票选项");
@@ -5221,14 +5228,14 @@ class InCircleService {
       VALUES ($1, $2, $3, $4, $5)
       ON CONFLICT (vote_id, user_id, option_name) DO NOTHING
       `,
-      [ctx.circleId, vote.id, ctx.auth.user.id, ctx.memberCard.id, optionName]
+      [ctx.circleId, vote.id, ctx.auth.user.id, ctx.memberCard ? ctx.memberCard.id : null, optionName]
     );
     const vetoRecords = normalizeArray(vote.vetoRecords);
     if (!vetoRecords.some((record) => String(record.userId || "") === String(ctx.auth.user.id) && record.optionName === optionName)) {
       vetoRecords.unshift({
-        memberId: ctx.memberCard.id,
+        memberId: ctx.memberCard ? ctx.memberCard.id : "",
         userId: ctx.auth.user.id,
-        memberName: ctx.memberCard.name,
+        memberName: ctx.memberCard ? ctx.memberCard.name : ctx.auth.user.nickname || "超管",
         optionName,
         createdAt: nowIso(),
       });
@@ -5241,7 +5248,7 @@ class InCircleService {
   }
 
   async finishVote(body) {
-    const ctx = await this.requireCircleContext(body);
+    const ctx = await this.requireCircleContext(body, { allowSuperAdmin: true });
     const row = await this.getBusinessRow("votes", body.id, ctx.circleId);
     if (!row) return null;
     this.assertCanManageBusinessRow(row, ctx, "提前结束投票");
@@ -5332,7 +5339,7 @@ class InCircleService {
   }
 
   async deleteCheckin(body) {
-    const ctx = await this.requireCircleContext(body);
+    const ctx = await this.requireCircleContext(body, { allowSuperAdmin: true });
     await this.deleteBusiness("checkins", body.id, ctx);
     return this.tools(body).then((data) => data.checkins);
   }
@@ -5444,7 +5451,7 @@ class InCircleService {
   }
 
   async runCheckinPunishment(body) {
-    const ctx = await this.requireCircleContext(body);
+    const ctx = await this.requireCircleContext(body, { allowSuperAdmin: true });
     const row = await this.getBusinessRow("checkins", body.id, ctx.circleId);
     if (!row) return null;
     this.assertCanManageBusinessRow(row, ctx, "抽取惩罚任务");
@@ -5563,18 +5570,18 @@ class InCircleService {
   }
 
   async deleteDoc(body) {
-    const ctx = await this.requireCircleContext(body);
+    const ctx = await this.requireCircleContext(body, { allowSuperAdmin: true });
     await this.deleteBusiness("docs", body.id, ctx);
     return this.docs(body);
   }
 
   async members(body) {
-    const ctx = await this.requireCircleContext(body);
+    const ctx = await this.requireCircleContext(body, { allowSuperAdmin: true });
     return this.listMembersData(ctx.circleId, ctx.auth.user.id);
   }
 
   async memberDetail(body) {
-    const ctx = await this.requireCircleContext(body);
+    const ctx = await this.requireCircleContext(body, { allowSuperAdmin: true });
     const data = await this.listMembersData(ctx.circleId, ctx.auth.user.id);
     const member = data.members.find((item) => item.id === body.id || item.openid === body.id) || data.myCard;
     if (!member) return null;
@@ -5678,7 +5685,7 @@ class InCircleService {
       .map((row) => `${recentLabels[row.kind] || "动态"} · ${row.title || (row.payload && row.payload.title) || "未命名"} · ${formatBeijingDateTime(row.created_at)}`);
     return Object.assign({}, member, {
       friendlyTagPresets: friendlyTagPresets(),
-      myMemberCardId: String(ctx.memberCard.id || ""),
+      myMemberCardId: String((ctx.memberCard && ctx.memberCard.id) || ""),
       myUserId: String(ctx.auth.user.id || ""),
       isSelf: String(member.userId || "") === String(ctx.auth.user.id || ""),
       showSocialFeedback: String(member.userId || "") !== String(ctx.auth.user.id || ""),
@@ -5686,7 +5693,9 @@ class InCircleService {
         String(member.userId || "") === String(ctx.auth.user.id || "") ? [] : normalizeArray(member.friendlyTags),
       tagProposals:
         String(member.userId || "") === String(ctx.auth.user.id || "") ? [] : normalizeArray(member.tagProposals),
-      canEditTags: String(member.userId || "") === String(ctx.auth.user.id || "") || canManageRole(ctx.membership.role),
+      canEditTags:
+        String(member.userId || "") === String(ctx.auth.user.id || "") ||
+        this.canManageCircle(ctx.auth, ctx.membership),
       scoreLogs: scoreLogsResult.rows.map((row) =>
         Object.assign(publicScoreLog(row), {
           memberName: row.member_name || row.user_name || (row.payload && row.payload.memberName) || member.name || "成员",
@@ -6047,9 +6056,12 @@ class InCircleService {
   }
 
   async removeMemberTag(body) {
-    const ctx = await this.requireCircleContext(body);
+    const ctx = await this.requireCircleContext(body, { allowSuperAdmin: true });
     const target = await this.getMemberCardForTag(ctx, body.id);
-    if (String(target.member.userId || "") !== String(ctx.auth.user.id || "") && !canManageRole(ctx.membership.role)) {
+    if (
+      String(target.member.userId || "") !== String(ctx.auth.user.id || "") &&
+      !this.canManageCircle(ctx.auth, ctx.membership)
+    ) {
       throw new AppError("只有本人、圈主或超管可以移除标签", { statusCode: 403, errCode: "FORBIDDEN" });
     }
     const tag = normalizeFriendlyTag(body.tag);
@@ -6251,7 +6263,7 @@ class InCircleService {
       `,
       params.concat([limit, offset])
     );
-    const circles = result.rows.map((row) => Object.assign(publicCircle(row, null, ""), {
+    const circles = result.rows.map((row) => Object.assign(publicCircle(row, null, "", { isSuperAdmin: true }), {
       ownerName: row.owner_name || "未设置",
       ownerAccountMasked: maskAccount(row.owner_account),
     }));
@@ -6731,7 +6743,7 @@ class InCircleService {
     await this.logOperation(body.circleId, auth, status === "active" ? "超管解冻圈子" : "超管冻结圈子", "circle", body.circleId, {
       status,
     });
-    return { circle: publicCircle(updated.rows[0], null, "") };
+    return { circle: publicCircle(updated.rows[0], null, "", { isSuperAdmin: true }) };
   }
 
   async adminDeleteCircle(body) {
