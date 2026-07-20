@@ -505,6 +505,7 @@ function aiAccessFlags(circleRow, userId, isSuperAdmin) {
     isCircleSuperAdmin,
     isSuperAdmin: !!isSuperAdmin,
     canManage: isOwner || isCircleSuperAdmin || !!isSuperAdmin,
+    canUseCustomProvider: isOwner || !!isSuperAdmin,
   };
 }
 
@@ -727,7 +728,7 @@ class AiService {
     const status = await this.status(body);
     return Object.assign({}, status, {
       systemPrompt: row.system_prompt || DEFAULT_SETTINGS.systemPrompt,
-      providerPresets: listProviderPresets(ctx.isSuperAdmin),
+      providerPresets: listProviderPresets(ctx.canUseCustomProvider),
     });
   }
 
@@ -814,8 +815,8 @@ class AiService {
     const result = await this.providerRows(ctx.circleId);
     return {
       providers: result.rows.map(publicProvider),
-      presets: listProviderPresets(ctx.isSuperAdmin),
-      canUseCustomBaseUrl: ctx.isSuperAdmin,
+      presets: listProviderPresets(ctx.canUseCustomProvider),
+      canUseCustomBaseUrl: ctx.canUseCustomProvider,
     };
   }
 
@@ -868,7 +869,7 @@ class AiService {
     const ctx = await this.requireManager(body);
     const input = (body && body.provider) || {};
     const existing = body.providerId ? await this.providerById(ctx, body.providerId) : null;
-    const normalized = await normalizeProviderDraft(input, ctx.isSuperAdmin);
+    const normalized = await normalizeProviderDraft(input, ctx.canUseCustomProvider);
     const apiKey = String(input.apiKey || "").trim();
     if (!apiKey && (!existing || !existing.credential_ciphertext)) {
       throw new AppError("请填写 API Key", { statusCode: 400, errCode: "AI_API_KEY_REQUIRED" });

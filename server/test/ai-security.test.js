@@ -117,7 +117,7 @@ test("private and link-local IP ranges are blocked", () => {
   assert.equal(blockedIp("2606:4700:4700::1111"), false);
 });
 
-test("custom provider preset is visible only to super admins", () => {
+test("custom provider preset visibility follows the explicit custom-provider permission", () => {
   assert.equal(listProviderPresets(false).some((item) => item.key === "custom"), false);
   assert.equal(listProviderPresets(true).some((item) => item.key === "custom"), true);
 });
@@ -149,11 +149,72 @@ test("AI configuration permission allows circle and platform super admins", () =
     true
   );
   assert.equal(owner.canManage, true);
+  assert.equal(owner.canUseCustomProvider, true);
   assert.equal(circleSuperAdmin.isMember, true);
   assert.equal(circleSuperAdmin.canManage, true);
+  assert.equal(circleSuperAdmin.canUseCustomProvider, false);
   assert.equal(legacyAdmin.canManage, true);
+  assert.equal(legacyAdmin.canUseCustomProvider, false);
   assert.equal(member.canManage, false);
+  assert.equal(member.canUseCustomProvider, false);
   assert.equal(platformSuperAdmin.canManage, true);
+  assert.equal(platformSuperAdmin.canUseCustomProvider, true);
+});
+
+test("custom provider preset is visible to circle owners and platform super admins only", async () => {
+  const cases = [
+    {
+      label: "circle owner",
+      access: {
+        isOwner: true,
+        isCircleSuperAdmin: false,
+        isSuperAdmin: false,
+        canManage: true,
+        canUseCustomProvider: true,
+      },
+      expected: true,
+    },
+    {
+      label: "circle super admin",
+      access: {
+        isOwner: false,
+        isCircleSuperAdmin: true,
+        isSuperAdmin: false,
+        canManage: true,
+        canUseCustomProvider: false,
+      },
+      expected: false,
+    },
+    {
+      label: "platform super admin",
+      access: {
+        isOwner: false,
+        isCircleSuperAdmin: false,
+        isSuperAdmin: true,
+        canManage: true,
+        canUseCustomProvider: true,
+      },
+      expected: true,
+    },
+  ];
+
+  for (const item of cases) {
+    const service = new AiService({ db: {}, config: {} }, {});
+    service.requireManager = async () => ({
+      circleId: "22222222-2222-4222-8222-222222222222",
+      auth: { user: { id: "33333333-3333-4333-8333-333333333333" } },
+      ...item.access,
+    });
+    service.providerRows = async () => ({ rows: [] });
+
+    const result = await service.listProviders({ circleId: "22222222-2222-4222-8222-222222222222" });
+    assert.equal(
+      result.presets.some((preset) => preset.key === "custom"),
+      item.expected,
+      `${item.label} custom preset visibility`
+    );
+    assert.equal(result.canUseCustomBaseUrl, item.expected, `${item.label} custom save capability`);
+  }
 });
 
 test("circle AI can stay enabled before a provider or default model is configured", async () => {
@@ -777,6 +838,105 @@ test("provider token metadata recognizes 1M contexts and independent output limi
   assert.deepEqual(providerModelTokenCapabilities({ id: "opaque-model" }), {
     contextWindow: 0,
     maxOutputTokens: 0,
+  });
+});
+
+test("custom provider saving allows circle owners and platform super admins but rejects circle super admins", async () => {
+  await withPublicDns(async () => {
+    const circleId = "22222222-2222-4222-8222-222222222222";
+    const userId = "33333333-3333-4333-8333-333333333333";
+    const providerDraft = {
+      presetKey: "custom",
+      protocol: "openai",
+      name: "Owner Compatible API",
+      baseUrl: "https://api.example.com/v1",
+      privacyUrl: "https://example.com/privacy",
+      apiKey: "custom-provider-secret",
+    };
+
+    function serviceFor(access) {
+      const queries = [];
+      let transactionStarted = false;
+      const savedProvider = providerRow({
+        circle_id: circleId,
+        preset_key: "custom",
+        name: providerDraft.name,
+        base_url: providerDraft.baseUrl,
+        credential_ciphertext: "encrypted-custom-secret",
+        credential_last_four: "cret",
+        privacy_url: providerDraft.privacyUrl,
+        is_custom: true,
+      });
+      const db = {
+        async query(text, params) {
+          const sql = String(text);
+          queries.push({ sql, params });
+          if (sql.includes("INSERT INTO incircle_ai_providers")) return { rows: [savedProvider] };
+          return { rows: [] };
+        },
+        async withTransaction(callback) {
+          transactionStarted = true;
+          return callback();
+        },
+      };
+      const service = new AiService({
+        db,
+        config: { aiCredentialsEncryptionKey: crypto.randomBytes(32).toString("hex") },
+      }, {});
+      service.requireManager = async () => ({
+        circleId,
+        auth: { user: { id: userId } },
+        canManage: true,
+        ...access,
+      });
+      service.core.logOperation = async () => {};
+      return { service, queries, transactionStarted: () => transactionStarted };
+    }
+
+    for (const item of [
+      {
+        label: "circle owner",
+        access: {
+          isOwner: true,
+          isCircleSuperAdmin: false,
+          isSuperAdmin: false,
+          canUseCustomProvider: true,
+        },
+      },
+      {
+        label: "platform super admin",
+        access: {
+          isOwner: false,
+          isCircleSuperAdmin: false,
+          isSuperAdmin: true,
+          canUseCustomProvider: true,
+        },
+      },
+    ]) {
+      const fixture = serviceFor(item.access);
+      const result = await fixture.service.saveProvider({ circleId, provider: providerDraft });
+      assert.equal(result.provider.presetKey, "custom", `${item.label} saved preset`);
+      assert.equal(result.provider.isCustom, true, `${item.label} saved custom marker`);
+      assert.equal(fixture.transactionStarted(), true, `${item.label} transaction started`);
+      assert.equal(
+        fixture.queries.some((query) => query.sql.includes("INSERT INTO incircle_ai_providers")),
+        true,
+        `${item.label} provider inserted`
+      );
+    }
+
+    const circleSuperAdmin = serviceFor({
+      isOwner: false,
+      isCircleSuperAdmin: true,
+      isSuperAdmin: false,
+      canUseCustomProvider: false,
+    });
+    await assert.rejects(
+      () => circleSuperAdmin.service.saveProvider({ circleId, provider: providerDraft }),
+      (error) => error.statusCode === 403 && error.errCode === "AI_PROVIDER_PRESET_FORBIDDEN"
+    );
+    assert.equal(circleSuperAdmin.transactionStarted(), false);
+    assert.equal(circleSuperAdmin.queries.length, 0);
   });
 });
 

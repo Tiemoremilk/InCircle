@@ -91,7 +91,7 @@ const PROVIDER_PRESETS = Object.freeze({
     protocol: "openai",
     baseUrl: "",
     privacyUrl: "",
-    superAdminOnly: true,
+    requiresCustomAccess: true,
   },
 });
 
@@ -110,9 +110,9 @@ const PROVIDER_PRESENTATION = Object.freeze({
   custom: { shortName: "API", description: "自定义兼容协议与服务地址" },
 });
 
-function listProviderPresets(isSuperAdmin) {
+function listProviderPresets(canUseCustomProvider) {
   return Object.values(PROVIDER_PRESETS)
-    .filter((preset) => isSuperAdmin || !preset.superAdminOnly)
+    .filter((preset) => canUseCustomProvider || !preset.requiresCustomAccess)
     .map((preset) => {
       const presentation = PROVIDER_PRESENTATION[preset.key] || {};
       return {
@@ -148,11 +148,11 @@ function httpsPrivacyUrl(value) {
   }
 }
 
-async function normalizeProviderDraft(input, isSuperAdmin) {
+async function normalizeProviderDraft(input, canUseCustomProvider) {
   const draft = input && typeof input === "object" ? input : {};
   const presetKey = String(draft.presetKey || "openai").trim().toLowerCase();
   const preset = PROVIDER_PRESETS[presetKey];
-  if (!preset || (preset.superAdminOnly && !isSuperAdmin)) {
+  if (!preset || (preset.requiresCustomAccess && !canUseCustomProvider)) {
     throw new AppError("无权使用这个供应商配置", { statusCode: 403, errCode: "AI_PROVIDER_PRESET_FORBIDDEN" });
   }
   const protocol = presetKey === "custom" ? normalizeProtocol(draft.protocol || "openai") : preset.protocol;
