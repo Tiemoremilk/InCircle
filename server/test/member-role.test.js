@@ -5,16 +5,17 @@ const test = require("node:test");
 
 const {
   MEMBER_ROLES,
-  canManageCircleRole,
-  hasGlobalSuperAdminClaim,
   isOwnerRole,
   normalizeMemberRole,
 } = require("../src/member-role");
 const { InCircleService } = require("../src/services/incircle");
+const clientMemberRole = require("../../inCircleClient/utils/memberRole");
 
-test("member roles normalize to owner or member without promoting legacy admins", () => {
+test("member roles accept only the two canonical database values", () => {
   assert.equal(normalizeMemberRole("圈主"), MEMBER_ROLES.OWNER);
-  assert.equal(normalizeMemberRole("owner"), MEMBER_ROLES.OWNER);
+  assert.equal(normalizeMemberRole(" 圈主 "), MEMBER_ROLES.MEMBER);
+  assert.equal(normalizeMemberRole("owner"), MEMBER_ROLES.MEMBER);
+  assert.equal(normalizeMemberRole("circle_owner"), MEMBER_ROLES.MEMBER);
   assert.equal(normalizeMemberRole("管理员"), MEMBER_ROLES.MEMBER);
   assert.equal(normalizeMemberRole("admin"), MEMBER_ROLES.MEMBER);
   assert.equal(normalizeMemberRole("超管"), MEMBER_ROLES.MEMBER);
@@ -22,21 +23,29 @@ test("member roles normalize to owner or member without promoting legacy admins"
   assert.equal(normalizeMemberRole("未知角色"), MEMBER_ROLES.MEMBER);
 });
 
-test("only circle owners receive management rights from a membership role", () => {
-  assert.equal(isOwnerRole("owner"), true);
-  assert.equal(canManageCircleRole("圈主"), true);
-  assert.equal(canManageCircleRole("超管"), false);
-  assert.equal(canManageCircleRole("管理员"), false);
-  assert.equal(canManageCircleRole("成员"), false);
+test("only the canonical circle-owner role receives ownership semantics", () => {
+  assert.equal(isOwnerRole("圈主"), true);
+  assert.equal(isOwnerRole("owner"), false);
+  assert.equal(isOwnerRole("超管"), false);
+  assert.equal(isOwnerRole("管理员"), false);
+  assert.equal(isOwnerRole("成员"), false);
 });
 
-test("legacy circle roles never become global super admin claims", () => {
-  assert.equal(hasGlobalSuperAdminClaim({ role: "超管" }), false);
-  assert.equal(hasGlobalSuperAdminClaim({ role: "管理员" }), false);
-  assert.equal(hasGlobalSuperAdminClaim({ role: "管理员" }, { allowLegacyRole: true }), false);
-  assert.equal(hasGlobalSuperAdminClaim({ globalRole: "超管" }), true);
-  assert.equal(hasGlobalSuperAdminClaim({ permissions: { globalAdmin: true } }), true);
-  assert.equal(hasGlobalSuperAdminClaim({ isSuperAdmin: "false" }), false);
+test("Mini Program role decoration uses the same two-value circle contract", () => {
+  assert.equal(clientMemberRole.normalizeMemberRole("圈主"), "圈主");
+  assert.equal(clientMemberRole.normalizeMemberRole("成员"), "成员");
+  assert.equal(clientMemberRole.normalizeMemberRole("超管"), "成员");
+  assert.equal(clientMemberRole.normalizeMemberRole("owner"), "成员");
+  assert.deepEqual(clientMemberRole.decorateMemberRole({ id: "member-1", role: "圈主" }), {
+    id: "member-1",
+    role: "圈主",
+    roleClass: "pill-green",
+  });
+  const circleSettings = fs.readFileSync(
+    path.join(__dirname, "..", "..", "inCircleClient", "pages", "circle-settings", "index.js"),
+    "utf8"
+  );
+  assert.match(circleSettings, /source\.role === "未加入"/);
 });
 
 test("circle management combines ownership with either global super admin source", () => {
@@ -140,6 +149,54 @@ test("non-member global super admin access remains explicit per circle endpoint"
   assert.equal(context.membership, null);
   assert.equal(context.memberCard, null);
   assert.equal(context.superAdminAccess, true);
+});
+
+test("a non-member global super admin can remove an ordinary circle member", async () => {
+  const circleId = "11111111-1111-4111-8111-111111111111";
+  const membershipId = "22222222-2222-4222-8222-222222222222";
+  const targetUserId = "33333333-3333-4333-8333-333333333333";
+  const writes = [];
+  const db = {
+    async query(sql, params) {
+      const normalized = String(sql).replace(/\s+/g, " ").trim();
+      if (normalized.startsWith("SELECT * FROM incircle_circle_members WHERE circle_id = $1")) {
+        return { rows: [] };
+      }
+      if (normalized.includes("SELECT membership.*, circle.owner_user_id")) {
+        return {
+          rows: [{
+            id: membershipId,
+            circle_id: circleId,
+            user_id: targetUserId,
+            owner_user_id: "44444444-4444-4444-8444-444444444444",
+            member_name: "普通成员",
+            role: "成员",
+            status: "active",
+          }],
+        };
+      }
+      writes.push({ sql: normalized, params });
+      return { rows: [], rowCount: 1 };
+    },
+    async withTransaction(work) {
+      return work();
+    },
+  };
+  const service = new InCircleService({ db, config: { superAdminOpenids: ["configured-admin"] } }, {});
+  service.requireUser = async () => ({
+    identity: { openid: "configured-admin" },
+    user: { id: "admin-user", openid: "configured-admin", is_super_admin: false },
+  });
+  service.logOperation = async () => {};
+  service.circleSettings = async () => ({ canManage: true });
+
+  const result = await service.removeCircleMember({ circleId, membershipId });
+
+  assert.equal(result.canManage, true);
+  const membershipUpdate = writes.find((entry) => entry.sql.includes("UPDATE incircle_circle_members"));
+  assert.ok(membershipUpdate);
+  assert.equal(membershipUpdate.params[1], "管理中心移除成员");
+  assert.equal(membershipUpdate.params[2], "admin-user");
 });
 
 test("role migration keeps platform claims separate and canonicalizes every circle row", () => {

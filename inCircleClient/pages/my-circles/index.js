@@ -1,12 +1,13 @@
 const api = require("../../utils/api");
+const memberRole = require("../../utils/memberRole");
 const time = require("../../utils/time");
 
 const PAGE_SIZE = 20;
 
 function decorateCircle(circle) {
-  return Object.assign({}, circle, {
+  return memberRole.decorateMemberRole(Object.assign({}, circle, {
     lastEnteredText: circle.lastEnteredAt ? time.displayDateTime(circle.lastEnteredAt) : "尚未进入",
-  });
+  }));
 }
 
 Page({

@@ -30,8 +30,7 @@ function rankTabByKey(key) {
 }
 
 function decorateMember(member) {
-  const role = memberRole.normalizeMemberRole(member.role);
-  return Object.assign({}, member, { role, roleClass: memberRole.roleClass(role) });
+  return memberRole.decorateMemberRole(member);
 }
 
 function hasRankData(members, rankKey) {

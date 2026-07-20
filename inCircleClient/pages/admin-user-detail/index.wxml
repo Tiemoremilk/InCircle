@@ -1,11 +1,215 @@
 <page-meta page-style="{{themeStyle}} {{incircleKeyboardPageStyle}}"></page-meta>
 
 <view class="page admin-user-page {{themeClass}}" wx:if="{{!loading && user}}">
-  <view class="user-identity motion-hero"><image class="user-avatar" src="{{user.avatar}}" mode="aspectFill"></image><view class="identity-copy"><view class="identity-name">{{user.nickName}}</view><view class="identity-account">{{user.accountName || '未设置账号'}}</view></view><view class="status-badge motion-state status-{{user.status}}">{{user.statusText}}</view></view>
-  <view class="detail-section"><view class="section-title">账号信息</view><view class="detail-rows"><view class="detail-row"><text>手机号</text><text>{{user.phone || '未填写'}}</text></view><view class="detail-row"><text>微信状态</text><text>{{user.wechatBound ? '已绑定' : '未绑定'}}</text></view><view class="detail-row"><text>注册时间</text><text>{{user.createdAtText}}</text></view><view class="detail-row"><text>最近登录</text><text>{{user.lastLoginAtText}}</text></view><view class="detail-row" wx:if="{{user.status === 'blocked'}}"><text>封禁时间</text><text>{{user.blockedAtText}}</text></view></view></view>
-  <view class="detail-section"><view class="section-head"><view class="section-title">圈子关系</view><view class="section-meta">{{circles.length}} 条</view></view><view wx:if="{{circles.length}}"><view class="relation-row {{circleIndex < 6 ? 'motion-list-item' : ''}}" wx:for="{{circles}}" wx:key="membershipId" wx:for-index="circleIndex" data-id="{{item.id}}" bindtap="openCircle" style="animation-delay: {{circleIndex * 35}}ms;"><view class="relation-copy"><view class="relation-name">{{item.name}}</view><view class="relation-meta">{{item.role}} · {{item.relationText}} · {{item.joinedAtText}}</view></view><view class="row-arrow">›</view></view></view><empty-state wx:else kind="circle" icon="/images/ui-icons/layers.svg" title="没有圈子关系" description="该用户尚未加入任何有效圈子。" embedded="{{true}}" compact="{{true}}" /></view>
-  <view class="detail-section account-actions" wx:if="{{user.canManage}}"><view class="section-title">账号操作</view><view class="account-action status-action" bindtap="toggleBlocked"><view><view class="action-title">{{user.status === 'blocked' ? '解除封禁' : '封禁用户'}}</view><view class="action-copy">{{user.status === 'blocked' ? '恢复账号登录资格' : '立即撤销登录并停止访问'}}</view></view><text>{{busyAction === 'status' ? '处理中' : '›'}}</text></view><view class="account-action {{!user.wechatBound ? 'disabled' : ''}}" bindtap="unbindWechat"><view><view class="action-title">解绑微信</view><view class="action-copy">保留账号密码与圈子数据</view></view><text>{{busyAction === 'unbind' ? '处理中' : '›'}}</text></view><view class="account-action delete-action" bindtap="deleteUser"><view><view class="action-title">物理删除用户</view><view class="action-copy">同时删除 {{deleteImpact.ownedCircleCount}} 个名下圈子</view></view><text>{{busyAction === 'delete' ? '删除中' : '›'}}</text></view></view>
-  <view class="protected-note" wx:else>当前账号受保护，不能执行封禁、解绑或删除。</view>
+  <view class="identity-card motion-hero">
+    <view class="identity-avatar-shell">
+      <image class="identity-avatar" src="{{user.avatar}}" mode="aspectFill"></image>
+      <view class="identity-presence status-{{user.status}}"></view>
+    </view>
+    <view class="identity-copy">
+      <view class="identity-name-line">
+        <view class="identity-name">{{user.nickName}}</view>
+        <view class="identity-protected" wx:if="{{user.protected}}">受保护</view>
+      </view>
+      <view class="identity-account">{{user.accountName || '未设置账号'}}</view>
+      <view class="identity-meta">用户 ID {{user.id}}</view>
+    </view>
+    <view class="status-badge status-{{user.status}}">{{user.statusText}}</view>
+  </view>
+
+  <view class="detail-section">
+    <view class="section-heading">
+      <view class="detail-heading-icon"><image src="/images/ui-icons/palette.svg" mode="aspectFit"></image></view>
+      <view class="section-title">当前主题</view>
+    </view>
+    <view class="theme-card">
+      <view class="user-theme-visual" aria-label="当前主题色样">
+        <view class="user-theme-color" style="{{user.themeSwatchStyle}}"></view>
+        <view class="user-theme-symbol"><image src="/images/ui-icons/palette.svg" mode="aspectFit"></image></view>
+      </view>
+      <view class="theme-copy">
+        <view class="theme-name-line">
+          <view class="theme-name">{{user.themeNameText}}</view>
+          <view class="theme-kind">{{user.themeKindText}}</view>
+        </view>
+        <view class="theme-value">{{user.themeValueText}}</view>
+      </view>
+    </view>
+  </view>
+
+  <view class="detail-section">
+    <view class="section-heading">
+      <view class="detail-heading-icon"><image src="/images/ui-icons/account.svg" mode="aspectFit"></image></view>
+      <view class="section-title">账号信息</view>
+      <view class="section-meta">{{user.statusText}}</view>
+    </view>
+    <view class="detail-surface">
+      <view class="detail-row"><text class="detail-label">登录账号</text><text class="detail-value selectable">{{user.accountName || '未设置'}}</text></view>
+      <view class="detail-row"><text class="detail-label">手机号</text><text class="detail-value selectable">{{user.phone || '未填写'}}</text></view>
+      <view class="detail-row"><text class="detail-label">注册时间</text><text class="detail-value">{{user.createdAtText}}</text></view>
+      <view class="detail-row"><text class="detail-label">最近登录</text><text class="detail-value">{{user.lastLoginAtText}}</text></view>
+      <view class="detail-row" wx:if="{{user.status === 'blocked'}}"><text class="detail-label">封禁时间</text><text class="detail-value danger-text">{{user.blockedAtText}}</text></view>
+      <view class="detail-row detail-row-stacked" wx:if="{{user.status === 'blocked' && user.blockedReason}}"><text class="detail-label">封禁原因</text><text class="detail-value">{{user.blockedReason}}</text></view>
+    </view>
+  </view>
+
+  <view class="detail-section">
+    <view class="section-heading">
+      <view class="detail-heading-icon"><image src="/images/ui-icons/fingerprint.svg" mode="aspectFit"></image></view>
+      <view class="section-title">微信身份</view>
+      <view class="section-meta state-{{user.wechatBound ? 'on' : 'off'}}">{{user.wechatBound ? '已绑定' : '未绑定'}}</view>
+    </view>
+    <view class="detail-surface identity-surface">
+      <view class="identity-summary">
+        <view class="identity-summary-icon"><image src="{{user.wechatBound ? '/images/ui-icons/link.svg' : '/images/ui-icons/unlink.svg'}}" mode="aspectFit"></image></view>
+        <view class="identity-summary-copy">
+          <view>{{user.wechatBound ? '微信身份有效' : '当前未绑定微信'}}</view>
+          <text>{{user.wechatBound ? ('绑定于 ' + user.wechatBoundAtText) : ('解绑于 ' + user.wechatUnboundAtText)}}</text>
+        </view>
+        <view class="state-pill {{user.wechatBound ? 'enabled' : 'disabled-state'}}">{{user.wechatBound ? '已连接' : '未连接'}}</view>
+      </view>
+      <view class="detail-row detail-row-stacked"><text class="detail-label">OpenID</text><text class="detail-value mono selectable">{{user.wechatOpenidText}}</text></view>
+      <view class="detail-row detail-row-stacked"><text class="detail-label">UnionID</text><text class="detail-value mono selectable">{{user.wechatUnionidText}}</text></view>
+    </view>
+  </view>
+
+  <view class="detail-section">
+    <view class="section-heading">
+      <view class="detail-heading-icon"><image src="/images/ui-icons/shield-check.svg" mode="aspectFit"></image></view>
+      <view class="section-title">账号安全</view>
+    </view>
+    <view class="security-grid">
+      <view class="security-item">
+        <view class="security-item-head"><text>微信登录校验</text><view class="state-pill {{user.verifyWechatOnLogin === false ? 'disabled-state' : 'enabled'}}">{{user.verifyWechatOnLoginText}}</view></view>
+        <view class="security-item-value">登录时核验微信身份</view>
+      </view>
+      <view class="security-item">
+        <view class="security-item-head"><text>精确登录位置</text><view class="state-pill {{user.preciseLoginLocationEnabled ? 'enabled' : 'disabled-state'}}">{{user.preciseLoginLocationText}}</view></view>
+        <view class="security-item-value">{{user.preciseLoginLocationEnabled ? '按授权记录登录坐标' : '未采集精确登录坐标'}}</view>
+      </view>
+      <view class="security-item">
+        <view class="security-item-head"><text>账号绑定时间</text></view>
+        <view class="security-item-value strong">{{user.accountBoundAtText}}</view>
+      </view>
+      <view class="security-item">
+        <view class="security-item-head"><text>密码更新时间</text></view>
+        <view class="security-item-value strong">{{user.passwordUpdatedAtText}}</view>
+      </view>
+    </view>
+  </view>
+
+  <view class="detail-section login-section">
+    <view class="section-heading">
+      <view class="detail-heading-icon"><image src="/images/ui-icons/history.svg" mode="aspectFit"></image></view>
+      <view class="section-title">最近登录</view>
+      <view class="section-meta">{{loginSessionSummary.activeSessionCount}} 台有效 · {{loginSessionSummary.sessionCount}} 条记录</view>
+    </view>
+
+    <view class="session-list" wx:if="{{recentLoginSessions.length}}">
+      <view class="session-card {{session.statusClass}}" wx:for="{{recentLoginSessions}}" wx:for-item="session" wx:for-index="sessionIndex" wx:key="id">
+        <view class="session-head">
+          <view class="session-device-icon"><image src="{{session.deviceIcon}}" mode="aspectFit"></image></view>
+          <view class="session-device-copy">
+            <view class="session-device-name">{{session.deviceName}}</view>
+            <view class="session-environment">{{session.environment}}</view>
+          </view>
+          <view class="session-status {{session.statusClass}}">{{session.statusText}}</view>
+        </view>
+
+        <view class="session-facts">
+          <view class="session-fact"><image src="/images/ui-icons/clock.svg" mode="aspectFit"></image><text>登录时间</text><view>{{session.lastLoginText}}</view></view>
+          <view class="session-fact"><image src="/images/ui-icons/globe.svg" mode="aspectFit"></image><text>网络出口</text><view class="mono selectable">{{session.networkAddressText}}</view></view>
+        </view>
+
+        <view class="session-location {{session.hasLoginLocation ? 'recorded' : 'empty'}}" data-index="{{sessionIndex}}" bindtap="openSessionLocation" hover-class="{{session.hasLoginLocation ? 'session-location-pressed' : 'none'}}" hover-start-time="0" hover-stay-time="90">
+          <view class="session-location-head">
+            <view class="session-location-title"><image src="/images/ui-icons/map-pin.svg" mode="aspectFit"></image><text>精确登录位置</text></view>
+            <view class="session-map-action" wx:if="{{session.hasLoginLocation}}">查看地图<image src="/images/ui-icons/arrow-right.svg" mode="aspectFit"></image></view>
+            <view class="session-location-state" wx:else>未记录</view>
+          </view>
+          <view class="session-location-address">{{session.loginLocationText}}</view>
+          <view class="location-detail-grid" wx:if="{{session.hasLoginLocation}}">
+            <view class="location-detail-item coordinate"><text>GCJ-02 坐标</text><view class="mono selectable">{{session.coordinateValueText}}</view></view>
+            <view class="location-detail-item"><text>定位精度</text><view>{{session.accuracyText}}</view></view>
+            <view class="location-detail-item captured"><text>采集时间</text><view>{{session.loginLocationCapturedText || '未记录'}}</view></view>
+          </view>
+        </view>
+      </view>
+      <view class="session-more-note" wx:if="{{loginSessionSummary.hasMore}}">仅展示最近 {{loginSessionSummary.shownCount}} 条，账号共保留 {{loginSessionSummary.sessionCount}} 条登录记录</view>
+    </view>
+    <view class="section-empty" wx:else>
+      <view class="section-empty-icon"><image src="/images/ui-icons/history.svg" mode="aspectFit"></image></view>
+      <view><view>暂无登录记录</view><text>该账号完成登录后会记录设备与环境。</text></view>
+    </view>
+  </view>
+
+  <view class="detail-section">
+    <view class="section-heading">
+      <view class="detail-heading-icon"><image src="/images/ui-icons/layers.svg" mode="aspectFit"></image></view>
+      <view class="section-title">圈子关系</view>
+      <view class="section-meta">{{circles.length}} 条</view>
+    </view>
+    <view class="relation-surface" wx:if="{{circles.length}}">
+      <view class="relation-row {{circleIndex < 6 ? 'motion-list-item' : ''}}" wx:for="{{circles}}" wx:key="membershipId" wx:for-index="circleIndex" data-id="{{item.id}}" bindtap="openCircle" style="animation-delay: {{circleIndex * 35}}ms;">
+        <view class="relation-avatar"><text>{{item.initial}}</text></view>
+        <view class="relation-copy">
+          <view class="relation-name">{{item.name}}</view>
+          <view class="relation-meta"><text class="relation-role">{{item.role}}</text><text>{{item.relationText}}</text><text>{{item.joinedAtText}}</text></view>
+        </view>
+        <image class="row-arrow" src="/images/ui-icons/arrow-right.svg" mode="aspectFit"></image>
+      </view>
+    </view>
+    <view class="section-empty" wx:else>
+      <view class="section-empty-icon"><image src="/images/ui-icons/layers.svg" mode="aspectFit"></image></view>
+      <view><view>没有圈子关系</view><text>该用户尚未加入任何有效圈子。</text></view>
+    </view>
+  </view>
+
+  <view class="detail-section action-section" wx:if="{{user.canManage}}">
+    <view class="section-heading">
+      <view class="detail-heading-icon"><image src="/images/ui-icons/lock-keyhole.svg" mode="aspectFit"></image></view>
+      <view class="section-title">账号操作</view>
+    </view>
+    <view class="action-surface">
+      <view class="account-action {{user.status === 'blocked' ? 'primary-action' : 'danger-action'}}" bindtap="toggleBlocked">
+        <view class="action-icon"><image src="{{user.status === 'blocked' ? '/images/ui-icons/user-check.svg' : '/images/ui-icons/lock-keyhole.svg'}}" mode="aspectFit"></image></view>
+        <view class="action-copy"><view>{{user.status === 'blocked' ? '解除封禁' : '封禁用户'}}</view><text>{{user.status === 'blocked' ? '恢复账号登录资格' : '立即撤销登录并停止访问'}}</text></view>
+        <view class="action-state" wx:if="{{busyAction === 'status'}}">处理中</view><image class="action-arrow" wx:else src="/images/ui-icons/arrow-right.svg" mode="aspectFit"></image>
+      </view>
+      <view class="account-action danger-action {{!user.wechatBound ? 'disabled' : ''}}" bindtap="unbindWechat">
+        <view class="action-icon"><image src="/images/ui-icons/unlink.svg" mode="aspectFit"></image></view>
+        <view class="action-copy"><view>解绑微信</view><text>{{user.wechatBound ? '保留账号密码与圈子数据' : '当前账号未绑定微信'}}</text></view>
+        <view class="action-state" wx:if="{{busyAction === 'unbind'}}">处理中</view><image class="action-arrow" wx:else src="/images/ui-icons/arrow-right.svg" mode="aspectFit"></image>
+      </view>
+      <view class="account-action danger-action" bindtap="deleteUser">
+        <view class="action-icon"><image src="/images/ui-icons/trash-2.svg" mode="aspectFit"></image></view>
+        <view class="action-copy"><view>物理删除用户</view><text>同时删除 {{deleteImpact.ownedCircleCount}} 个名下圈子</text></view>
+        <view class="action-state" wx:if="{{busyAction === 'delete'}}">删除中</view><image class="action-arrow" wx:else src="/images/ui-icons/arrow-right.svg" mode="aspectFit"></image>
+      </view>
+    </view>
+  </view>
+
+  <view class="protected-note" wx:else>
+    <image src="/images/ui-icons/shield-check.svg" mode="aspectFit"></image>
+    <text>当前账号受保护，不能执行封禁、解绑或删除。</text>
+  </view>
 </view>
-<view class="page loading-page {{themeClass}}" wx:else><view class="loading-panel"><view class="loading-illustration"><view class="loading-card-line first"></view><view class="loading-card-line second"></view><view class="loading-card-line third"></view><view class="loading-card-mark"></view></view><view class="loading-text">正在读取用户详情...</view><view class="loading-dots"><view></view><view></view><view></view></view></view></view>
+
+<view class="page loading-page {{themeClass}}" wx:elif="{{loading}}">
+  <view class="loading-panel">
+    <view class="loading-illustration"><view class="loading-card-line first"></view><view class="loading-card-line second"></view><view class="loading-card-line third"></view><view class="loading-card-mark"></view></view>
+    <view class="loading-text">正在读取用户详情...</view>
+    <view class="loading-dots"><view></view><view></view><view></view></view>
+  </view>
+</view>
+
+<view class="page error-page {{themeClass}}" wx:else>
+  <view class="load-error-card">
+    <view class="load-error-icon"><image src="/images/ui-icons/alert.svg" mode="aspectFit"></image></view>
+    <view class="load-error-title">用户详情暂不可用</view>
+    <view class="load-error-copy">{{loadError}}</view>
+    <view class="load-error-action" bindtap="retryLoad">重新加载</view>
+  </view>
+</view>
+
 <theme-dialog id="incircle-theme-dialog" />

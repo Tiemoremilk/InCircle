@@ -4,8 +4,8 @@
     <view class="admin-hero card motion-hero">
       <view class="hero-row">
         <view>
-          <view class="eyebrow">超管后台</view>
-          <view class="hero-title">平台管理中心</view>
+          <view class="eyebrow">运营与安全</view>
+          <view class="hero-title">管理中心</view>
         </view>
         <view class="circle-mark motion-theme-mark">
           <image class="hero-icon" src="/images/ui-icons/admin.svg"></image>
@@ -62,7 +62,7 @@
         </view>
         <view class="platform-ai-note">
           <view class="platform-ai-note-dot"></view>
-          <text>{{platformAiBusy ? "正在同步平台状态" : (platformSettings.circleAiEnabled ? "圈子仍需由管理员单独开启并完成模型配置" : "关闭不会删除已有配置，重新开放后可继续使用")}}</text>
+          <text>{{platformAiBusy ? "正在同步平台状态" : (platformSettings.circleAiEnabled ? "每个圈子仍需单独开启并完成模型配置" : "关闭不会删除已有配置，重新开放后可继续使用")}}</text>
         </view>
       </view>
     </view>
@@ -71,7 +71,7 @@
       <view class="section-head">
         <view class="section-title with-icon">
         <image class="section-icon" src="/images/ui-icons/history.svg"></image>
-          <text>操作日志</text>
+          <text>管理日志</text>
         </view>
         <view class="section-action">{{logTotal}} 条</view>
       </view>
@@ -95,7 +95,7 @@
         wx:else
         kind="log"
         icon="/images/ui-icons/history.svg"
-        title="还没有操作日志"
+        title="还没有管理日志"
         description="圈子状态或成员关系发生管理操作后，会留下必要流水。"
         compact="{{true}}"
       />
@@ -104,8 +104,7 @@
   </view>
 
   <view class="denied-card card" wx:else>
-    <view class="denied-title">没有超管权限</view>
-    <view class="muted">当前账号不是超管，只能进入自己加入的圈子。</view>
+    <view class="denied-title">页面不可用</view>
   </view>
 </view>
 
@@ -117,7 +116,7 @@
       <view class="loading-card-line third"></view>
       <view class="loading-card-mark"></view>
     </view>
-    <view class="loading-text">正在读取超管后台...</view>
+    <view class="loading-text">正在读取管理中心...</view>
     <view class="loading-dots"><view></view><view></view><view></view></view>
   </view>
 </view>

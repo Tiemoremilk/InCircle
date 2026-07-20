@@ -90,7 +90,7 @@ Page({
           refreshing: false,
         });
         wx.showToast({
-          title: (error && error.message) || "操作日志加载失败",
+          title: (error && error.message) || "管理日志加载失败",
           icon: "none",
         });
       })
@@ -139,7 +139,7 @@ Page({
     if (!id) return;
     dialog.show({
       title: "删除日志",
-      content: `确定删除“${log.actionText || "这条"}”操作日志？删除后不可恢复。`,
+      content: `确定删除“${log.actionText || "这条"}”管理日志？删除后不可恢复。`,
       confirmText: "删除",
       confirmColor: "#b34a34",
       success: (res) => {
@@ -179,7 +179,7 @@ Page({
     const hasFilter = !!(keyword || actorId);
     const filterText = hasFilter
       ? `当前筛选命中的 ${this.data.total} 条日志`
-      : `全部 ${this.data.total} 条操作日志`;
+      : `全部 ${this.data.total} 条管理日志`;
     const detailText = [
       actorId && actor ? `人员：${actor.name}` : "",
       keyword ? `搜索：${keyword}` : "",

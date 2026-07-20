@@ -6,7 +6,7 @@
   <view wx:if="{{users.length}}">
     <view class="user-row {{userIndex < 6 ? 'motion-list-item' : ''}}" wx:for="{{users}}" wx:key="id" wx:for-index="userIndex" data-id="{{item.id}}" bindtap="openUser" style="animation-delay: {{userIndex * 35}}ms;">
       <image class="user-avatar" src="{{item.avatar}}" mode="aspectFill"></image>
-      <view class="user-copy"><view class="user-name-line"><text class="user-name">{{item.nickName}}</text><text class="protected-badge" wx:if="{{item.protected}}">超管</text></view><view class="user-account">{{item.accountMasked}} · {{item.circleCount}} 个圈子</view><view class="user-bind">{{item.wechatBound ? '微信已绑定' : '微信未绑定'}}</view></view>
+      <view class="user-copy"><view class="user-name-line"><text class="user-name">{{item.nickName}}</text><text class="protected-badge" wx:if="{{item.protected}}">受保护账号</text></view><view class="user-account">{{item.accountMasked}} · {{item.circleCount}} 个圈子</view><view class="user-bind">{{item.wechatBound ? '微信已绑定' : '微信未绑定'}}</view></view>
       <view class="user-side"><view class="user-status status-{{item.status}}">{{item.statusText}}</view><view class="row-arrow">›</view></view>
     </view>
   </view>

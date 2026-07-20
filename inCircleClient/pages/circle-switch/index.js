@@ -1,5 +1,6 @@
 const api = require("../../utils/api");
 const dialog = require("../../utils/dialog");
+const memberRole = require("../../utils/memberRole");
 const theme = require("../../utils/theme");
 const time = require("../../utils/time");
 
@@ -7,9 +8,9 @@ const DEFAULT_CIRCLE_CREATE_LIMIT = 10;
 const CIRCLE_CREATE_LIMIT_MESSAGE = "每个账号最多创建 10 个圈子，冻结的圈子也会计入。请先解散一个不再使用的圈子后再创建。";
 
 function decorateCircle(circle) {
-  return Object.assign({}, circle, {
+  return memberRole.decorateMemberRole(Object.assign({}, circle, {
     lastEnteredText: circle.lastEnteredAt ? `最近进入 ${time.displayDateTime(circle.lastEnteredAt)}` : "尚未进入",
-  });
+  }));
 }
 
 Page({

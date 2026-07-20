@@ -19,7 +19,6 @@ const { resolveLoginLocation } = require("../location");
 const { publicUrl } = require("../routes/media");
 const {
   MEMBER_ROLES,
-  canManageCircleRole,
   isOwnerRole,
   normalizeMemberRole,
 } = require("../member-role");
@@ -194,10 +193,6 @@ function circleStatusAction(status) {
   };
 }
 
-function canManageRole(role) {
-  return canManageCircleRole(role);
-}
-
 function publicUser(row) {
   if (!row) return null;
   return {
@@ -295,7 +290,7 @@ function publicCircle(row, membership, currentCircleId, options) {
     currentClass: isCurrent ? "active" : "",
     disabledClass: status === "active" ? "" : "disabled",
     canEnter: !!membership && status === "active",
-    canManage: source.isSuperAdmin === true || canManageRole(role),
+    canManage: source.isSuperAdmin === true || isOwnerRole(role),
     memberText: `${row.member_count || 0} 人`,
     activityText: `本月 ${row.monthly_activity_count || 0} 局`,
     debtText: `${row.unsettled_count || 0} 笔待结清`,
@@ -352,6 +347,14 @@ function maskPhone(value) {
   return `${text.slice(0, 2)}***${text.slice(-2)}`;
 }
 
+function maskSensitiveIdentifier(value) {
+  const text = String(value || "").trim();
+  if (!text) return "";
+  if (text.length <= 4) return `${text.slice(0, 1)}***`;
+  const visibleLength = Math.min(4, Math.floor((text.length - 1) / 2));
+  return `${text.slice(0, visibleLength)}****${text.slice(-visibleLength)}`;
+}
+
 function adminUserStatusText(status) {
   if (status === "blocked") return "已封禁";
   if (status === "deleted") return "已注销";
@@ -385,7 +388,15 @@ function publicAdminUser(row, options) {
     result.phone = row.phone || "";
     result.title = row.title || "";
     result.profileNote = row.profile_note || "";
-    result.wechatNickName = row.wechat_nickname || "";
+    result.wechatOpenidMasked = maskSensitiveIdentifier(row.openid);
+    result.wechatUnionidMasked = maskSensitiveIdentifier(row.unionid);
+    result.wechatBoundAt = row.wechat_bound_at || null;
+    result.accountBoundAt = row.account_bound_at || null;
+    result.passwordUpdatedAt = row.password_updated_at || null;
+    result.verifyWechatOnLogin = row.verify_wechat_on_login !== false;
+    result.preciseLoginLocationEnabled = row.precise_login_location_enabled === true;
+    result.themeKey = normalizeThemeKey(row.theme_key, DEFAULT_THEME_KEY);
+    result.customTheme = normalizeCustomThemeRgba(row.custom_theme_rgba, DEFAULT_CUSTOM_THEME_RGBA);
   }
   return result;
 }
@@ -1811,7 +1822,7 @@ class InCircleService {
     if (!auth || !auth.user) return false;
     return !!(
       this.isSuperAdmin(auth.identity && auth.identity.openid, auth.user) ||
-      (membership && canManageRole(membership.role))
+      (membership && isOwnerRole(membership.role))
     );
   }
 
@@ -1892,14 +1903,13 @@ class InCircleService {
     const result = await this.db.query(
       `
       INSERT INTO incircle_users (
-        openid, unionid, nickname, wechat_nickname, phone, title, profile_note, profile_completed,
+        openid, unionid, nickname, phone, title, profile_note, profile_completed,
         theme_key, avatar_url, wechat_bound, wechat_bound_at, is_super_admin, status, raw_data
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, true, now(), $11, 'active', '{}'::jsonb)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, true, now(), $10, 'active', '{}'::jsonb)
       ON CONFLICT (openid) DO UPDATE SET
         unionid = COALESCE(NULLIF(EXCLUDED.unionid, ''), incircle_users.unionid),
         nickname = EXCLUDED.nickname,
-        wechat_nickname = EXCLUDED.wechat_nickname,
         phone = EXCLUDED.phone,
         title = EXCLUDED.title,
         profile_note = EXCLUDED.profile_note,
@@ -1920,7 +1930,6 @@ class InCircleService {
         identity.openid,
         identity.unionid || "",
         nickName || "微信用户",
-        String((profile && profile.wechatNickName) || (existed && existed.wechat_nickname) || "").trim(),
         phone,
         String((profile && profile.title) || (existed && existed.title) || "").trim(),
         String((profile && profile.profileNote) || (existed && existed.profile_note) || "").trim(),
@@ -3302,7 +3311,7 @@ class InCircleService {
       skills: sanitizeTimelineArray(payload.skills),
       interests: sanitizeTimelineArray(payload.interests),
       canRemove: !!(
-        (viewer && isOwnerRole(viewer.role))
+        this.canManageCircle(auth, viewer)
         && !isOwnerRole(role)
         && String(row.user_id) !== String(auth.user.id)
       ),
@@ -3354,7 +3363,7 @@ class InCircleService {
       );
       const membership = membershipResult.rows[0];
       if (!this.canManageCircle(auth, membership)) {
-        throw new AppError("只有圈主或超管可以更换邀请码", { statusCode: 403, errCode: "FORBIDDEN" });
+        throw new AppError("只有圈主可以更换邀请码", { statusCode: 403, errCode: "FORBIDDEN" });
       }
 
       const qrResult = await this.db.query(
@@ -3814,7 +3823,7 @@ class InCircleService {
 
   assertCanEditBusinessRow(row, ctx, kind) {
     if (!this.canEditBusinessActor(row, ctx, kind)) {
-      throw new AppError(`只有创建人、圈主或超管可以编辑${businessKindLabel(kind)}`, {
+      throw new AppError(`只有创建人或圈主可以编辑${businessKindLabel(kind)}`, {
         statusCode: 403,
         errCode: "FORBIDDEN",
       });
@@ -4190,7 +4199,7 @@ class InCircleService {
 
   assertCanManageBusinessRow(row, ctx, action) {
     if (this.canManageBusinessRow(row, ctx)) return;
-    throw new AppError(`只有发起人、圈主或超管可以${action || "执行此操作"}`, {
+    throw new AppError(`只有发起人或圈主可以${action || "执行此操作"}`, {
       statusCode: 403,
       errCode: "FORBIDDEN",
     });
@@ -4403,7 +4412,7 @@ class InCircleService {
     const row = await this.getBusinessRow(kind, id, ctx.circleId);
     if (!row) throw new AppError(`${businessKindLabel(kind)}不存在或已删除`, { statusCode: 404, errCode: "NOT_FOUND" });
     if (!this.canDeleteBusinessRow(row, ctx, kind)) {
-      throw new AppError(`只有发起人、圈主或超管可以删除${businessKindLabel(kind)}`, {
+      throw new AppError(`只有发起人或圈主可以删除${businessKindLabel(kind)}`, {
         statusCode: 403,
         errCode: "FORBIDDEN",
       });
@@ -5235,7 +5244,7 @@ class InCircleService {
       vetoRecords.unshift({
         memberId: ctx.memberCard ? ctx.memberCard.id : "",
         userId: ctx.auth.user.id,
-        memberName: ctx.memberCard ? ctx.memberCard.name : ctx.auth.user.nickname || "超管",
+        memberName: ctx.memberCard ? ctx.memberCard.name : ctx.auth.user.nickname || "系统管理",
         optionName,
         createdAt: nowIso(),
       });
@@ -6062,7 +6071,7 @@ class InCircleService {
       String(target.member.userId || "") !== String(ctx.auth.user.id || "") &&
       !this.canManageCircle(ctx.auth, ctx.membership)
     ) {
-      throw new AppError("只有本人、圈主或超管可以移除标签", { statusCode: 403, errCode: "FORBIDDEN" });
+      throw new AppError("只有本人或圈主可以移除标签", { statusCode: 403, errCode: "FORBIDDEN" });
     }
     const tag = normalizeFriendlyTag(body.tag);
     if (!tag) throw new AppError("标签不能为空", { statusCode: 400, errCode: "TAG_REQUIRED" });
@@ -6131,7 +6140,7 @@ class InCircleService {
   async requireSuperAdmin(body) {
     const auth = await this.requireUser(body);
     if (!this.isSuperAdmin(auth.identity.openid, auth.user)) {
-      throw new AppError("只有超管可以访问", { statusCode: 403, errCode: "FORBIDDEN" });
+      throw new AppError("没有权限访问此功能", { statusCode: 403, errCode: "FORBIDDEN" });
     }
     return auth;
   }
@@ -6376,6 +6385,16 @@ class InCircleService {
     user.currentAdmin = String(row.id) === String(auth.user.id);
     user.canManage = !protectedAccount && !user.currentAdmin && row.status !== "deleted";
     user.confirmationTarget = row.account_name || row.nickname || String(row.id);
+    const loginSessionCollection = await readAccountSessionCollection(this.db, userId, null, { limit: 5 });
+    const recentLoginSessions = loginSessionCollection.sessions;
+    const locationRecordCount = recentLoginSessions.filter((session) => (
+      session.loginLocation && session.loginLocation.available === true
+    )).length;
+    await this.logOperation(null, auth, "查看用户敏感详情", "user", userId, {
+      totalSessionCount: Number(loginSessionCollection.total || 0),
+      returnedSessionCount: recentLoginSessions.length,
+      returnedLocationRecordCount: locationRecordCount,
+    });
     return {
       user,
       circles: memberships.rows.map((membership) => ({
@@ -6393,16 +6412,23 @@ class InCircleService {
         ownedCircleCount: Number(row.owned_circle_count || 0),
         membershipCount: Number(row.circle_count || 0),
       },
+      recentLoginSessions,
+      loginSessionSummary: {
+        total: Number(loginSessionCollection.total || 0),
+        activeSessionCount: Number(loginSessionCollection.activeSessionCount || 0),
+        shownCount: recentLoginSessions.length,
+        hasMore: loginSessionCollection.hasMore === true,
+      },
     };
   }
 
   assertAdminTargetAllowed(auth, target, action) {
     if (!target) throw new AppError("用户不存在或已被物理删除", { statusCode: 404, errCode: "USER_NOT_FOUND" });
     if (String(target.id) === String(auth.user.id)) {
-      throw new AppError(`不能${action}当前登录的超管`, { statusCode: 409, errCode: "CANNOT_MANAGE_SELF" });
+      throw new AppError(`不能${action}当前登录的管理账号`, { statusCode: 409, errCode: "CANNOT_MANAGE_SELF" });
     }
     if (this.isSuperAdmin(target.openid, target)) {
-      throw new AppError(`不能${action}超管账号`, { statusCode: 409, errCode: "PROTECTED_SUPER_ADMIN" });
+      throw new AppError(`不能${action}受保护账号`, { statusCode: 409, errCode: "PROTECTED_SUPER_ADMIN" });
     }
     if (target.status === "deleted") {
       throw new AppError("账号已经注销", { statusCode: 409, errCode: "ACCOUNT_DELETED" });
@@ -6416,7 +6442,7 @@ class InCircleService {
     if (!isUuid(userId) || !["active", "blocked"].includes(status)) {
       throw new AppError("用户状态参数无效", { statusCode: 400, errCode: "INVALID_USER_STATUS" });
     }
-    const reason = sanitizeTimelineText(body.reason || "超管手动封禁").slice(0, 200);
+    const reason = sanitizeTimelineText(body.reason || "管理中心手动封禁").slice(0, 200);
     await this.db.withTransaction(async () => {
       const locked = await this.db.query("SELECT * FROM incircle_users WHERE id = $1 FOR UPDATE", [userId]);
       const target = locked.rows[0];
@@ -6600,7 +6626,7 @@ class InCircleService {
   async adminOperationLogs(body) {
     const auth = await this.requireUser(body);
     if (!this.isSuperAdmin(auth.identity.openid, auth.user)) {
-      throw new AppError("只有超管可以访问", { statusCode: 403, errCode: "FORBIDDEN" });
+      throw new AppError("没有权限访问此功能", { statusCode: 403, errCode: "FORBIDDEN" });
     }
     const keyword = normalizeKeyword(body.keyword || body.search);
     const actorUserId = String(body.actorUserId || "").trim();
@@ -6674,7 +6700,7 @@ class InCircleService {
   async adminDeleteOperationLogs(body) {
     const auth = await this.requireUser(body);
     if (!this.isSuperAdmin(auth.identity.openid, auth.user)) {
-      throw new AppError("只有超管可以操作", { statusCode: 403, errCode: "FORBIDDEN" });
+      throw new AppError("没有权限执行此操作", { statusCode: 403, errCode: "FORBIDDEN" });
     }
     const rawIds = Array.isArray(body.ids) ? body.ids : body.id ? [body.id] : [];
     const ids = rawIds.map((id) => String(id || "").trim()).filter(Boolean);
@@ -6740,7 +6766,7 @@ class InCircleService {
       status,
     ]);
     if (!updated.rows[0]) throw new AppError("圈子不存在", { statusCode: 404, errCode: "CIRCLE_NOT_FOUND" });
-    await this.logOperation(body.circleId, auth, status === "active" ? "超管解冻圈子" : "超管冻结圈子", "circle", body.circleId, {
+    await this.logOperation(body.circleId, auth, status === "active" ? "管理中心解冻圈子" : "管理中心冻结圈子", "circle", body.circleId, {
       status,
     });
     return { circle: publicCircle(updated.rows[0], null, "", { isSuperAdmin: true }) };
@@ -6755,7 +6781,7 @@ class InCircleService {
       const existed = await this.db.query("SELECT id, name FROM incircle_circles WHERE id = $1 FOR UPDATE", [circleId]);
       if (!existed.rows[0]) throw new AppError("圈子不存在", { statusCode: 404, errCode: "CIRCLE_NOT_FOUND" });
       await this.db.query("UPDATE incircle_users SET current_circle_id = NULL, updated_at = now() WHERE current_circle_id = $1", [circleId]);
-      await this.logOperation(circleId, auth, "超管删除圈子", "circle", circleId, { circleName: existed.rows[0].name || "" });
+      await this.logOperation(circleId, auth, "管理中心删除圈子", "circle", circleId, { circleName: existed.rows[0].name || "" });
       await this.db.query("DELETE FROM incircle_circles WHERE id = $1", [circleId]);
     });
     const cleanup = bestEffortCleanupManagedUploads(this.config, { relativePaths: mediaPaths, circleIds: [circleId] });
@@ -6777,7 +6803,7 @@ class InCircleService {
       [circleId, auth.user.id]
     );
     const viewer = viewerResult.rows[0];
-    if (!viewer || !isOwnerRole(viewer.role)) {
+    if (!this.canManageCircle(auth, viewer)) {
       throw new AppError("只有圈主可以移除成员", { statusCode: 403, errCode: "FORBIDDEN" });
     }
     const targetResult = await this.db.query(
@@ -6800,6 +6826,9 @@ class InCircleService {
     if (String(target.user_id) === String(auth.user.id)) {
       throw new AppError("请使用退出圈子功能离开当前圈子", { statusCode: 409, errCode: "USE_EXIT_CIRCLE" });
     }
+    const defaultReason = this.isSuperAdmin(auth.identity && auth.identity.openid, auth.user)
+      ? "管理中心移除成员"
+      : "圈主移除成员";
     await this.db.withTransaction(async () => {
       await this.db.query("DELETE FROM incircle_ai_reports WHERE circle_id = $1 AND user_id = $2", [circleId, target.user_id]);
       await this.db.query("DELETE FROM incircle_ai_consents WHERE circle_id = $1 AND user_id = $2", [circleId, target.user_id]);
@@ -6814,7 +6843,7 @@ class InCircleService {
             updated_at = now()
         WHERE id = $1
         `,
-        [target.id, body.reason || "圈主移除成员", auth.user.id]
+        [target.id, body.reason || defaultReason, auth.user.id]
       );
       await this.db.query(
         `
@@ -6831,7 +6860,7 @@ class InCircleService {
       );
       await this.logOperation(circleId, auth, "移除圈内成员", "member", target.id, {
         targetName: target.member_name || "成员",
-        reason: body.reason || "圈主移除成员",
+        reason: body.reason || defaultReason,
       });
     });
     return this.circleSettings(Object.assign({}, body, { circleId }));

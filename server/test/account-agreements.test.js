@@ -332,6 +332,24 @@ test("login uses one primary flow with themed legal consent and no auth theme gr
   assert.doesNotMatch(styles, /position:\s*fixed[^}]*login-panel/s);
 });
 
+test("circle nickname stays separate and unavailable WeChat profile rows stay hidden", () => {
+  const loginTemplate = read("inCircleClient/pages/login/index.wxml");
+  const loginScript = read("inCircleClient/pages/login/index.js");
+  const adminTemplate = read("inCircleClient/pages/admin-user-detail/index.wxml");
+  const adminScript = read("inCircleClient/pages/admin-user-detail/index.js");
+
+  assert.match(loginTemplate, /type="nickname"/);
+  assert.match(loginTemplate, /仅用于圈内展示，可选择或手动填写/);
+  assert.doesNotMatch(loginScript, /wechatNickName/);
+  assert.match(loginScript, /const nickName = normalizeText\(this\.data\.nickName\)/);
+  assert.match(loginScript, /return \{\s*nickName,\s*avatarUrl:/);
+
+  assert.doesNotMatch(adminScript, /wechatNickName|wechatNameText|wechatAccountText/);
+  assert.doesNotMatch(adminTemplate, />微信名<|>微信账号<|微信昵称|user\.wechatNickName|wechatNameText|wechatAccountText/);
+  assert.match(adminTemplate, />OpenID<\/text>/);
+  assert.match(adminTemplate, />UnionID<\/text>/);
+});
+
 test("public legal profile is stored in PostgreSQL and read without authentication", async () => {
   const migration = read("server/db/migrations/0023_public_legal_profile.sql");
   const versionMigration = read("server/db/migrations/0024_public_legal_versions.sql");

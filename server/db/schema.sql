@@ -625,8 +625,8 @@ WITH refreshed_manual AS (
     docs.id,
     jsonb_agg(
       CASE
-        WHEN entry.value #>> '{}' = '圈主和管理员可以维护圈子资料、移除成员、删除圈内业务；圈主不能退出，只能解散圈子。'
-          THEN to_jsonb('圈主和超管可以维护圈子资料、移除成员、删除圈内业务；圈主不能退出，只能解散圈子。'::text)
+        WHEN entry.value #>> '{}' LIKE '圈主%可以维护圈子资料、移除成员、删除圈内业务；圈主不能退出，只能解散圈子。'
+          THEN to_jsonb('圈主可以维护圈子资料、移除成员、删除圈内业务；圈主不能退出，只能解散圈子。'::text)
         ELSE entry.value
       END
       ORDER BY entry.ordinality

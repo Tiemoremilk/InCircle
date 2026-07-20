@@ -49,7 +49,7 @@
           <text>{{previewing ? "预览中..." : "预览"}}</text>
         </view>
       </view>
-      <view class="hint">加入后默认为成员，圈主和超管负责维护圈内秩序。</view>
+      <view class="hint">加入后默认为成员，圈主负责维护圈内秩序。</view>
     </view>
   </view>
 

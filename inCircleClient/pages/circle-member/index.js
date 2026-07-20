@@ -1,6 +1,7 @@
 const api = require("../../utils/api");
 const time = require("../../utils/time");
 const dialog = require("../../utils/dialog");
+const memberRole = require("../../utils/memberRole");
 
 Page({
   data: { loading: true, member: null, removing: false },
@@ -15,12 +16,12 @@ Page({
     api
       .getCircleMember(this.circleId, this.membershipId)
       .then((member) => this.setData({
-        member: Object.assign({}, member, {
+        member: memberRole.decorateMemberRole(Object.assign({}, member, {
           joinedAtText: member.joinedAt ? time.displayDateTime(member.joinedAt) : "未记录",
           hasTags: !!(member.tags && member.tags.length),
           hasSkills: !!(member.skills && member.skills.length),
           hasInterests: !!(member.interests && member.interests.length),
-        }),
+        })),
         loading: false,
       }))
       .catch((error) => {

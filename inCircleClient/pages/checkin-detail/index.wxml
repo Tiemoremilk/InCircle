@@ -36,7 +36,7 @@
   <view class="manage-strip card" wx:if="{{checkin.canDelete}}">
     <view>
       <view class="manage-title">挑战管理</view>
-      <view class="manage-copy">发起人、圈主或超管可以删除这个打卡挑战。</view>
+      <view class="manage-copy">发起人或圈主可以删除这个打卡挑战。</view>
     </view>
     <view class="danger-btn {{actionLoadingType === 'deleteCheckin' ? 'disabled' : ''}}" bindtap="deleteCheckin">
       {{actionLoadingType === 'deleteCheckin' ? '删除中...' : '删除'}}

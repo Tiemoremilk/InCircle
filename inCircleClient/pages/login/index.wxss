@@ -430,24 +430,66 @@
 .auth-error,
 .setup-error {
   margin-top: 20rpx;
-  padding: 16rpx 18rpx;
   border-radius: 11rpx;
-  font-size: 23rpx;
-  line-height: 1.5;
+  box-sizing: border-box;
 }
 
 .auth-error {
-  border: 1rpx solid rgba(201, 71, 71, 0.16);
-  background: #fff4f3;
-  color: #a63d3d;
+  padding: 16rpx 17rpx;
+  border: 1rpx solid rgba(201, 71, 71, 0.2);
+  background: var(--theme-danger-soft, #fff1ef);
+  box-shadow: 0 7rpx 18rpx rgba(166, 61, 61, 0.05);
+}
+
+.auth-error-heading,
+.auth-error-title-group {
+  display: flex;
+  align-items: center;
+}
+
+.auth-error-heading {
+  justify-content: space-between;
+  gap: 16rpx;
+  min-height: 36rpx;
+}
+
+.auth-error-title-group {
+  min-width: 0;
+  flex: 1;
+  gap: 10rpx;
+}
+
+.auth-error-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34rpx;
+  height: 34rpx;
+  flex: 0 0 34rpx;
+  border-radius: 50%;
+  background: rgba(201, 71, 71, 0.1);
+}
+
+.auth-error-icon image {
+  width: 19rpx;
+  height: 19rpx;
+  filter: invert(36%) sepia(25%) saturate(1719%) hue-rotate(314deg) brightness(91%) contrast(91%);
 }
 
 .auth-error-title {
+  min-width: 0;
+  color: #a63d3d;
+  font-size: 22rpx;
+  line-height: 34rpx;
   font-weight: 900;
 }
 
 .auth-error-copy {
-  margin-top: 5rpx;
+  margin-top: 4rpx;
+  padding-left: 44rpx;
+  color: #8f4b4b;
+  font-size: 21rpx;
+  line-height: 1.45;
   word-break: break-word;
 }
 
@@ -455,22 +497,31 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 128rpx;
-  height: 52rpx;
-  margin-top: 13rpx;
-  padding: 0 16rpx;
+  min-width: 112rpx;
+  height: 42rpx;
+  padding: 0 14rpx;
+  flex: 0 0 auto;
   border: 1rpx solid var(--theme-card-active-border, rgba(47, 125, 80, 0.16));
-  border-radius: 9rpx;
-  background: #ffffff;
+  border-radius: 10rpx;
+  background: var(--theme-soft, #eaf5ed);
   color: var(--theme-primary-dark, #1c5638);
-  font-size: 22rpx;
-  font-weight: 800;
+  font-size: 19rpx;
+  line-height: 1;
+  font-weight: 900;
+  box-sizing: border-box;
+}
+
+.auth-error-action-pressed {
+  opacity: 0.7;
 }
 
 .setup-error {
+  padding: 16rpx 18rpx;
   border: 1rpx solid var(--theme-card-active-border, rgba(47, 125, 80, 0.16));
   background: var(--theme-soft, #eaf5ed);
   color: var(--theme-primary-dark, #1c5638);
+  font-size: 23rpx;
+  line-height: 1.5;
   font-weight: 700;
 }
 

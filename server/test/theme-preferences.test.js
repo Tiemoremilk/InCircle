@@ -83,6 +83,8 @@ test("Mini Program palette metadata and WXSS variables stay synchronized", () =>
     assert.ok(block.includes(`--theme-primary-dark: ${theme.primaryDark.toLowerCase()}`));
     assert.ok(block.includes(`--theme-accent: ${theme.accent.toLowerCase()}`));
     assert.ok(block.includes(theme.pageBg.toLowerCase()));
+    assert.match(block, /--theme-card-border:\s*rgba\(/);
+    assert.match(block, /--theme-soft-shadow:\s*rgba\(/);
   });
 });
 
@@ -204,6 +206,8 @@ test("custom theme derives global variables and every page receives them", () =>
   assert.match(custom.className, /theme-custom/);
   assert.match(custom.pageStyle, /--theme-primary:/);
   assert.match(custom.pageStyle, /--theme-icon-filter:/);
+  assert.match(custom.pageStyle, /--theme-card-border:/);
+  assert.match(custom.pageStyle, /--theme-soft-shadow:/);
   assert.match(custom.tabBarVariables, /--tabbar-active:/);
   assert.equal(custom.swatch, "rgba(220, 180, 35, 0.4)");
 

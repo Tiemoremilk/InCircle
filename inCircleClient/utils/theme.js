@@ -321,6 +321,8 @@ function buildCustomTheme(value) {
     `--theme-soft: ${rgbaCss(raw, softAlpha)}`,
     `--theme-warm: ${rgbaCss(accentRgb, 0.28 + customRgba.a * 0.12)}`,
     "--theme-danger-soft: #fff1ef",
+    `--theme-card-border: ${rgbaCss(raw, 0.06 + customRgba.a * 0.06)}`,
+    `--theme-soft-shadow: ${rgbaCss(raw, 0.035 + customRgba.a * 0.025)}`,
     `--theme-card-active-border: ${rgbaCss(raw, borderAlpha)}`,
     `--theme-hero-shadow: ${rgbaCss(raw, shadowAlpha)}`,
     `--theme-button-shadow: ${rgbaCss(raw, Math.max(0.08, shadowAlpha - 0.02))}`,

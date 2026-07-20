@@ -21,8 +21,7 @@ function hasCurrentVoter(voters, memberCardId, userId) {
 }
 
 function decorateMember(member) {
-  const role = memberRole.normalizeMemberRole(member.role);
-  const roleClass = memberRole.roleClass(role);
+  const decoratedMember = memberRole.decorateMemberRole(member);
   const myMemberCardId = member.myMemberCardId || "";
   const myUserId = member.myUserId || "";
   const isSelf =
@@ -67,9 +66,7 @@ function decorateMember(member) {
       metaText: `${proposal.votes || 0}/${proposal.threshold || 2} 票 · ${proposal.proposerName || "圈友"}提名`,
     });
   });
-  return Object.assign({}, member, {
-    role,
-    roleClass,
+  return Object.assign({}, decoratedMember, {
     skills: member.skills || [],
     interests: member.interests || [],
     taboos: member.taboos || [],

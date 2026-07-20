@@ -32,9 +32,9 @@
       <view class="management-icon"><image src="/images/ui-icons/admin.svg" mode="aspectFit"></image></view>
       <view class="management-copy">
         <view class="management-title">管理中心</view>
-        <view class="management-subtitle">平台圈子、用户与操作日志</view>
+        <view class="management-subtitle">平台圈子、用户与管理日志</view>
       </view>
-      <view class="management-tag">超管</view>
+      <view class="management-tag">管理</view>
       <view class="management-arrow">›</view>
     </view>
   </view>

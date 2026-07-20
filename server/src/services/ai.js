@@ -503,7 +503,6 @@ function aiAccessFlags(circleRow, userId, isSuperAdmin) {
   return {
     isMember,
     isOwner,
-    isCircleSuperAdmin: false,
     isSuperAdmin: globalSuperAdmin,
     canManage,
     canUseCustomProvider: canManage,
@@ -594,7 +593,7 @@ class AiService {
   async requireManager(body) {
     const ctx = await this.accessContext(body);
     if (!ctx.canManage) {
-      throw new AppError("只有圈主或超管可以配置圈内 AI", { statusCode: 403, errCode: "AI_CONFIG_FORBIDDEN" });
+      throw new AppError("只有圈主可以配置圈内 AI", { statusCode: 403, errCode: "AI_CONFIG_FORBIDDEN" });
     }
     if (!ctx.platformAiEnabled) {
       throw new AppError("平台当前未开放圈内 AI", { statusCode: 403, errCode: "AI_PLATFORM_DISABLED" });
@@ -1926,7 +1925,7 @@ class AiService {
 
   async listReports(body) {
     const ctx = await this.requireManager(body);
-    if (!ctx.isSuperAdmin) throw new AppError("只有超管可以查看举报内容", { statusCode: 403, errCode: "FORBIDDEN" });
+    if (!ctx.isSuperAdmin) throw new AppError("没有权限查看举报内容", { statusCode: 403, errCode: "FORBIDDEN" });
     const result = await this.db.query(
       `SELECT id, circle_id, reason, detail, message_excerpt, status, created_at
        FROM incircle_ai_reports WHERE circle_id = $1
@@ -1938,7 +1937,7 @@ class AiService {
 
   async updateReport(body) {
     const ctx = await this.requireManager(body);
-    if (!ctx.isSuperAdmin) throw new AppError("只有超管可以处理举报内容", { statusCode: 403, errCode: "FORBIDDEN" });
+    if (!ctx.isSuperAdmin) throw new AppError("没有权限处理举报内容", { statusCode: 403, errCode: "FORBIDDEN" });
     const reportId = uuidOf(body.reportId, "举报记录");
     const existed = await this.db.query(
       "SELECT id FROM incircle_ai_reports WHERE id = $1 AND circle_id = $2 LIMIT 1",

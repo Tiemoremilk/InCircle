@@ -144,7 +144,7 @@
           <view class="auth-label-row"><view class="auth-label">圈内昵称</view><text class="required-mark">必填</text></view>
           <view class="input-shell">
             <image class="input-icon" src="/images/ui-icons/profile.svg" mode="aspectFit"></image>
-            <input class="auth-input" type="nickname" adjust-position="{{true}}" cursor-spacing="24" value="{{nickName}}" placeholder="选择微信昵称，或手动填写" bindinput="onNickInput" bindblur="onNickInput" />
+            <input class="auth-input" type="nickname" adjust-position="{{true}}" cursor-spacing="24" value="{{nickName}}" placeholder="仅用于圈内展示，可选择或手动填写" bindinput="onNickInput" bindblur="onNickInput" />
           </view>
         </view>
 
@@ -169,9 +169,14 @@
       </view>
 
       <view class="auth-error" wx:if="{{hasBackendError}}">
-        <view class="auth-error-title">操作未完成</view>
+        <view class="auth-error-heading">
+          <view class="auth-error-title-group">
+            <view class="auth-error-icon"><image src="/images/ui-icons/alert.svg" mode="aspectFit"></image></view>
+            <view class="auth-error-title">{{backendErrorTitle || '操作未完成'}}</view>
+          </view>
+          <view class="auth-error-action" wx:if="{{backendErrorRetryable}}" bindtap="retrySession" hover-class="auth-error-action-pressed">重新加载</view>
+        </view>
         <view class="auth-error-copy">{{backendError}}</view>
-        <view class="auth-error-action" bindtap="retrySession">重新加载</view>
       </view>
       <view class="setup-error" wx:if="{{setupError}}">{{setupError}}</view>
 

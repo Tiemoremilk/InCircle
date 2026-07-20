@@ -928,6 +928,8 @@ button.disabled,
   --theme-soft: #e8f5ed;
   --theme-warm: #f5f8de;
   --theme-danger-soft: #fff0ee;
+  --theme-card-border: rgba(47, 130, 89, 0.1);
+  --theme-soft-shadow: rgba(47, 130, 89, 0.06);
   --theme-card-active-border: rgba(47, 130, 89, 0.25);
   --theme-hero-shadow: rgba(47, 130, 89, 0.18);
   --theme-button-shadow: rgba(47, 130, 89, 0.15);
@@ -944,6 +946,8 @@ button.disabled,
   --theme-soft: #e8f2fa;
   --theme-warm: #eff9f7;
   --theme-danger-soft: #fff1f2;
+  --theme-card-border: rgba(52, 114, 168, 0.1);
+  --theme-soft-shadow: rgba(52, 114, 168, 0.06);
   --theme-card-active-border: rgba(52, 114, 168, 0.25);
   --theme-hero-shadow: rgba(52, 114, 168, 0.18);
   --theme-button-shadow: rgba(52, 114, 168, 0.15);
@@ -960,6 +964,8 @@ button.disabled,
   --theme-soft: #faeaf0;
   --theme-warm: #fff4e9;
   --theme-danger-soft: #ffedf1;
+  --theme-card-border: rgba(182, 87, 122, 0.1);
+  --theme-soft-shadow: rgba(182, 87, 122, 0.06);
   --theme-card-active-border: rgba(182, 87, 122, 0.25);
   --theme-hero-shadow: rgba(182, 87, 122, 0.17);
   --theme-button-shadow: rgba(182, 87, 122, 0.15);
@@ -976,6 +982,8 @@ button.disabled,
   --theme-soft: #eef2f4;
   --theme-warm: #f5f6ee;
   --theme-danger-soft: #fff1ee;
+  --theme-card-border: rgba(94, 108, 120, 0.1);
+  --theme-soft-shadow: rgba(65, 77, 87, 0.06);
   --theme-card-active-border: rgba(94, 108, 120, 0.24);
   --theme-hero-shadow: rgba(65, 77, 87, 0.17);
   --theme-button-shadow: rgba(65, 77, 87, 0.14);
@@ -992,6 +1000,8 @@ button.disabled,
   --theme-soft: #fbeae5;
   --theme-warm: #fff4df;
   --theme-danger-soft: #ffebe8;
+  --theme-card-border: rgba(188, 87, 69, 0.1);
+  --theme-soft-shadow: rgba(188, 87, 69, 0.06);
   --theme-card-active-border: rgba(188, 87, 69, 0.25);
   --theme-hero-shadow: rgba(188, 87, 69, 0.17);
   --theme-button-shadow: rgba(188, 87, 69, 0.15);
@@ -1008,6 +1018,8 @@ button.disabled,
   --theme-soft: #e6f4f1;
   --theme-warm: #f4f7e9;
   --theme-danger-soft: #fff2ee;
+  --theme-card-border: rgba(36, 127, 122, 0.1);
+  --theme-soft-shadow: rgba(36, 127, 122, 0.06);
   --theme-card-active-border: rgba(36, 127, 122, 0.24);
   --theme-hero-shadow: rgba(36, 127, 122, 0.16);
   --theme-button-shadow: rgba(36, 127, 122, 0.14);
@@ -1024,6 +1036,8 @@ button.disabled,
   --theme-soft: #efecf9;
   --theme-warm: #fff1f4;
   --theme-danger-soft: #fff0f5;
+  --theme-card-border: rgba(113, 100, 170, 0.1);
+  --theme-soft-shadow: rgba(113, 100, 170, 0.06);
   --theme-card-active-border: rgba(113, 100, 170, 0.24);
   --theme-hero-shadow: rgba(113, 100, 170, 0.16);
   --theme-button-shadow: rgba(113, 100, 170, 0.14);
@@ -1040,6 +1054,8 @@ button.disabled,
   --theme-soft: #f6f0d2;
   --theme-warm: #fff7df;
   --theme-danger-soft: #fff2ef;
+  --theme-card-border: rgba(131, 112, 31, 0.1);
+  --theme-soft-shadow: rgba(131, 112, 31, 0.06);
   --theme-card-active-border: rgba(131, 112, 31, 0.24);
   --theme-hero-shadow: rgba(131, 112, 31, 0.16);
   --theme-button-shadow: rgba(131, 112, 31, 0.14);
@@ -1056,6 +1072,8 @@ button.disabled,
   --theme-soft: #eff4e4;
   --theme-warm: #fff7e7;
   --theme-danger-soft: #fff3ef;
+  --theme-card-border: rgba(104, 120, 61, 0.1);
+  --theme-soft-shadow: rgba(104, 120, 61, 0.06);
   --theme-card-active-border: rgba(104, 120, 61, 0.24);
   --theme-hero-shadow: rgba(104, 120, 61, 0.16);
   --theme-button-shadow: rgba(104, 120, 61, 0.14);
@@ -1072,6 +1090,8 @@ button.disabled,
   --theme-soft: #eaf1f8;
   --theme-warm: #fff3ee;
   --theme-danger-soft: #fff2f1;
+  --theme-card-border: rgba(82, 117, 165, 0.1);
+  --theme-soft-shadow: rgba(82, 117, 165, 0.06);
   --theme-card-active-border: rgba(82, 117, 165, 0.23);
   --theme-hero-shadow: rgba(82, 117, 165, 0.15);
   --theme-button-shadow: rgba(82, 117, 165, 0.13);
@@ -1088,6 +1108,8 @@ button.disabled,
   --theme-soft: #f8ebdd;
   --theme-warm: #fff4d9;
   --theme-danger-soft: #fff0e9;
+  --theme-card-border: rgba(168, 103, 50, 0.1);
+  --theme-soft-shadow: rgba(168, 103, 50, 0.06);
   --theme-card-active-border: rgba(168, 103, 50, 0.24);
   --theme-hero-shadow: rgba(168, 103, 50, 0.16);
   --theme-button-shadow: rgba(168, 103, 50, 0.14);
@@ -1104,6 +1126,8 @@ button.disabled,
   --theme-soft: #f2eaf5;
   --theme-warm: #edf7f4;
   --theme-danger-soft: #fff0f5;
+  --theme-card-border: rgba(139, 105, 156, 0.1);
+  --theme-soft-shadow: rgba(139, 105, 156, 0.06);
   --theme-card-active-border: rgba(139, 105, 156, 0.23);
   --theme-hero-shadow: rgba(139, 105, 156, 0.15);
   --theme-button-shadow: rgba(139, 105, 156, 0.13);
@@ -1120,6 +1144,8 @@ button.disabled,
   --theme-soft: inherit;
   --theme-warm: inherit;
   --theme-danger-soft: inherit;
+  --theme-card-border: inherit;
+  --theme-soft-shadow: inherit;
   --theme-card-active-border: inherit;
   --theme-hero-shadow: inherit;
   --theme-button-shadow: inherit;

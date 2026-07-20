@@ -1,11 +1,20 @@
 const api = require("../../utils/api");
 const dialog = require("../../utils/dialog");
+const memberRole = require("../../utils/memberRole");
 const time = require("../../utils/time");
 
+function decorateCircle(circle) {
+  const source = circle || {};
+  if (source.role === "未加入") {
+    return Object.assign({}, source, { roleClass: "pill-blue" });
+  }
+  return memberRole.decorateMemberRole(source);
+}
+
 function decorateMembers(members) {
-  return (members || []).map((member) => Object.assign({}, member, {
+  return (members || []).map((member) => memberRole.decorateMemberRole(Object.assign({}, member, {
     joinedAtText: member.joinedAt ? `加入于 ${time.displayDateTime(member.joinedAt)}` : "加入时间未记录",
-  }));
+  })));
 }
 
 Page({
@@ -66,7 +75,7 @@ Page({
         platformAiEnabled: platformAiEnabled && (!aiStatus || aiStatus.platformEnabled !== false),
       }));
     }).then(({ data, aiStatus, platformAiEnabled }) => {
-      const circle = data.circle || {};
+      const circle = decorateCircle(data.circle);
       this.setData({
         circle,
         members: decorateMembers(data.members),
@@ -156,7 +165,7 @@ Page({
         slogan: this.data.draft.slogan,
       })
       .then((data) => {
-        const circle = data.circle || {};
+        const circle = decorateCircle(data.circle);
         this.setData({
           circle,
           draft: {
@@ -222,7 +231,7 @@ Page({
       api
         .rotateInviteCode(this.data.circle.id)
         .then((data) => {
-          const circle = data.circle || this.data.circle;
+          const circle = decorateCircle(data.circle || this.data.circle);
           this.setData({
             circle,
             members: decorateMembers(data.members || this.data.members),

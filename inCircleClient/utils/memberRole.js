@@ -1,33 +1,22 @@
-const OWNER_ROLES = ["圈主", "owner", "circle_owner", "circle-owner", "creator"];
-const SUPER_ADMIN_ROLES = [
-  "超管",
-  "管理员",
-  "超级管理员",
-  "admin",
-  "administrator",
-  "manager",
-  "circle_admin",
-  "circle-admin",
-  "super_admin",
-  "super-admin",
-  "superadmin",
-];
-
 function normalizeMemberRole(value) {
-  const role = String(value || "").trim().toLowerCase();
-  if (OWNER_ROLES.indexOf(role) !== -1) return "圈主";
-  if (SUPER_ADMIN_ROLES.indexOf(role) !== -1) return "超管";
-  return "成员";
+  return value === "圈主" ? "圈主" : "成员";
 }
 
 function roleClass(value) {
-  const role = normalizeMemberRole(value);
-  if (role === "圈主") return "pill-green";
-  if (role === "超管") return "pill-red";
-  return "pill-blue";
+  return normalizeMemberRole(value) === "圈主" ? "pill-green" : "pill-blue";
+}
+
+function decorateMemberRole(source) {
+  const member = source || {};
+  const role = normalizeMemberRole(member.role);
+  return Object.assign({}, member, {
+    role,
+    roleClass: roleClass(role),
+  });
 }
 
 module.exports = {
+  decorateMemberRole,
   normalizeMemberRole,
   roleClass,
 };

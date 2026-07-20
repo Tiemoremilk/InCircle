@@ -72,7 +72,6 @@ Page({
     password: "",
     confirmPassword: "",
     nickName: "",
-    wechatNickName: "",
     phone: "",
     title: "",
     profileNote: "",
@@ -84,6 +83,8 @@ Page({
     user: null,
     backendError: "",
     hasBackendError: false,
+    backendErrorTitle: "",
+    backendErrorRetryable: false,
     feedbackText: "",
     feedbackType: "",
     themePreferenceExplicit: false,
@@ -118,6 +119,8 @@ Page({
       loginDisabled: true,
       backendError: "",
       hasBackendError: false,
+      backendErrorTitle: "",
+      backendErrorRetryable: false,
       legalProfileReady: false,
     });
     return api.getPublicLegalProfile({ force: !!(options && options.force) })
@@ -148,6 +151,8 @@ Page({
           agreementAccepted: false,
           backendError: message,
           hasBackendError: true,
+          backendErrorTitle: "暂时无法加载协议",
+          backendErrorRetryable: true,
         });
         this.showFeedback("协议信息加载失败", "error");
         return null;
@@ -160,6 +165,8 @@ Page({
       loading: true,
       backendError: "",
       hasBackendError: false,
+      backendErrorTitle: "",
+      backendErrorRetryable: false,
     });
     return api.getSession({ force: true })
       .then((session) => {
@@ -205,6 +212,8 @@ Page({
           loading: false,
           backendError: message,
           hasBackendError: true,
+          backendErrorTitle: "登录状态读取失败",
+          backendErrorRetryable: true,
         });
         this.showFeedback("后端连接失败", "error");
       });
@@ -217,11 +226,10 @@ Page({
       user,
       account: user.accountName || this.data.account || "",
       nickName: user.nickName || "",
-      wechatNickName: user.wechatNickName || user.nickName || "",
       phone: user.phone || "",
       title: user.title || "",
       profileNote: user.profileNote || "",
-      displayName: user.nickName || user.wechatNickName || "微信用户",
+      displayName: user.nickName || "微信用户",
       avatarUrl: storedAvatar,
       avatarUrlDisplay: displayAvatar,
     });
@@ -239,6 +247,8 @@ Page({
       setupError: "",
       backendError: "",
       hasBackendError: false,
+      backendErrorTitle: "",
+      backendErrorRetryable: false,
       password: "",
       confirmPassword: "",
       passwordVisible: false,
@@ -250,7 +260,6 @@ Page({
     if (!(options && options.keepProfile)) {
       Object.assign(nextData, {
         nickName: "",
-        wechatNickName: "",
         phone: "",
         title: "",
         profileNote: "",
@@ -345,11 +354,27 @@ Page({
   },
 
   onAccountInput(e) {
-    this.setData({ account: normalizeAccount(e.detail.value) });
+    const nextData = { account: normalizeAccount(e.detail.value) };
+    if (this.data.hasBackendError && !this.data.backendErrorRetryable) {
+      Object.assign(nextData, {
+        backendError: "",
+        hasBackendError: false,
+        backendErrorTitle: "",
+      });
+    }
+    this.setData(nextData);
   },
 
   onPasswordInput(e) {
-    this.setData({ password: String(e.detail.value || "") });
+    const nextData = { password: String(e.detail.value || "") };
+    if (this.data.hasBackendError && !this.data.backendErrorRetryable) {
+      Object.assign(nextData, {
+        backendError: "",
+        hasBackendError: false,
+        backendErrorTitle: "",
+      });
+    }
+    this.setData(nextData);
   },
 
   onConfirmPasswordInput(e) {
@@ -360,7 +385,6 @@ Page({
     const value = e.detail.value || "";
     this.setData({
       nickName: value,
-      wechatNickName: value || this.data.wechatNickName,
       displayName: value || "微信用户",
     });
   },
@@ -422,10 +446,9 @@ Page({
   },
 
   buildProfile() {
-    const nickName = normalizeText(this.data.nickName || this.data.wechatNickName);
+    const nickName = normalizeText(this.data.nickName);
     return {
       nickName,
-      wechatNickName: this.data.wechatNickName || "",
       avatarUrl: this.data.avatarUrl || "/images/avatar.png",
       phone: normalizePhone(this.data.phone),
       title: String(this.data.title || "").trim(),
@@ -486,6 +509,8 @@ Page({
       setupError: "",
       backendError: "",
       hasBackendError: false,
+      backendErrorTitle: "",
+      backendErrorRetryable: false,
     });
 
     const action =
@@ -528,6 +553,14 @@ Page({
         this.setData({
           backendError: message,
           hasBackendError: true,
+          backendErrorTitle: mode === "login"
+            ? "登录未成功"
+            : mode === "register"
+              ? "账号创建未成功"
+              : mode === "forgot"
+                ? "密码重置未成功"
+                : "账号绑定未成功",
+          backendErrorRetryable: false,
         });
         this.showFeedback(message, "error");
       })
@@ -557,7 +590,12 @@ Page({
       })
       .catch((error) => {
         const message = (error && error.message) || "绑定失败";
-        this.setData({ backendError: message, hasBackendError: true });
+        this.setData({
+          backendError: message,
+          hasBackendError: true,
+          backendErrorTitle: "微信绑定未成功",
+          backendErrorRetryable: false,
+        });
         this.showFeedback(message, "error");
       })
       .finally(() => {

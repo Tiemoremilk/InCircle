@@ -221,7 +221,7 @@
     <view class="panel-heading">
       <view class="panel-heading-main">
         <view class="panel-title">内容治理</view>
-        <view class="panel-caption">仅超管可查看成员主动提交的举报</view>
+        <view class="panel-caption">仅经严格授权的安全管理人员可查看成员主动提交的举报</view>
       </view>
       <view class="report-count" wx:if="{{reports.length}}">{{reports.length}} 条</view>
     </view>

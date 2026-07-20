@@ -152,7 +152,6 @@ test("AI configuration permission allows only circle owners and global super adm
   assert.equal(owner.canUseCustomProvider, true);
   assert.equal(circleSuperAdmin.isMember, true);
   assert.equal(circleSuperAdmin.isOwner, false);
-  assert.equal(circleSuperAdmin.isCircleSuperAdmin, false);
   assert.equal(circleSuperAdmin.isSuperAdmin, false);
   assert.equal(circleSuperAdmin.canManage, false);
   assert.equal(circleSuperAdmin.canUseCustomProvider, false);
@@ -162,7 +161,6 @@ test("AI configuration permission allows only circle owners and global super adm
   assert.equal(member.canManage, false);
   assert.equal(member.canUseCustomProvider, false);
   assert.equal(platformSuperAdmin.isMember, false);
-  assert.equal(platformSuperAdmin.isCircleSuperAdmin, false);
   assert.equal(platformSuperAdmin.isSuperAdmin, true);
   assert.equal(platformSuperAdmin.canManage, true);
   assert.equal(platformSuperAdmin.canUseCustomProvider, true);

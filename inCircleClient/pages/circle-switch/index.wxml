@@ -15,7 +15,7 @@
     </view>
     <view class="overview-stats">
       <view class="overview-stat"><text class="overview-value">{{joinedCount}}</text><text class="overview-label">已加入</text></view>
-      <view class="overview-stat"><text class="overview-value">{{managedCount}}</text><text class="overview-label">我管理</text></view>
+      <view class="overview-stat"><text class="overview-value">{{managedCount}}</text><text class="overview-label">我创建</text></view>
       <view class="overview-stat"><text class="overview-value">{{currentMemberCount}}</text><text class="overview-label">当前成员</text></view>
     </view>
   </view>

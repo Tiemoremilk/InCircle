@@ -3,7 +3,7 @@
   <view class="admin-log-header card motion-hero">
     <view class="header-top">
       <view>
-        <view class="eyebrow">超管日志</view>
+        <view class="eyebrow">管理日志</view>
         <view class="page-title">全局操作流水</view>
       </view>
       <view class="header-actions">
@@ -66,7 +66,7 @@
     wx:else
     kind="search"
     icon="/images/ui-icons/search.svg"
-    title="没有匹配的操作日志"
+    title="没有匹配的管理日志"
     description="换个操作者或关键字再查，清空筛选可以查看全部流水。"
     compact="{{true}}"
   />
@@ -84,7 +84,7 @@
       <view class="loading-card-line third"></view>
       <view class="loading-card-mark"></view>
     </view>
-    <view class="loading-text">正在读取操作日志...</view>
+    <view class="loading-text">正在读取管理日志...</view>
     <view class="loading-dots"><view></view><view></view><view></view></view>
   </view>
 </view>
