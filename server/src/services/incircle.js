@@ -28,6 +28,7 @@ const { readAgreementAcceptanceState, recordAgreementAcceptance } = require("../
 const { readPublicLegalProfile } = require("../legal-profile");
 const { DEFAULT_CUSTOM_THEME_RGBA, DEFAULT_THEME_KEY, normalizeCustomThemeRgba, normalizeThemeKey } = require("../theme");
 const { beijingDateKey, beijingParts, dateFromBeijingParts, formatBeijingDateTime, parseBeijingDateTime } = require("../time");
+const { validateProviderBaseUrl } = require("./ai/network");
 const { ensureDefaultSystemDocsForCircle, funBadgeRules } = require("../system-docs");
 const { createMiniProgramCode, exchangeWechatLoginCode } = require("./wechat");
 
@@ -6124,7 +6125,7 @@ class InCircleService {
 
   async platformSettings() {
     const result = await this.db.query(
-      `SELECT circle_ai_enabled, updated_by_user_id, updated_at
+      `SELECT circle_ai_enabled, web_search_enabled, updated_by_user_id, updated_at
        FROM incircle_platform_settings
        WHERE singleton_id = 1
        LIMIT 1`
@@ -6132,6 +6133,8 @@ class InCircleService {
     const row = result.rows[0];
     return {
       circleAiEnabled: !!(row && row.circle_ai_enabled === true),
+      webSearchEnabled: !!(row && row.web_search_enabled === true),
+      webSearchConfigured: !!(this.config.searxngEnabled && this.config.searxngBaseUrl),
       updatedByUserId: row ? row.updated_by_user_id || "" : "",
       updatedAt: row ? row.updated_at || null : null,
     };
@@ -6214,7 +6217,7 @@ class InCircleService {
         ON CONFLICT (singleton_id) DO UPDATE SET
           circle_ai_enabled = EXCLUDED.circle_ai_enabled,
           updated_by_user_id = EXCLUDED.updated_by_user_id
-        RETURNING circle_ai_enabled, updated_by_user_id, updated_at
+        RETURNING circle_ai_enabled, web_search_enabled, updated_by_user_id, updated_at
         `,
         [circleAiEnabled, auth.user.id]
       );
@@ -6229,6 +6232,47 @@ class InCircleService {
       const row = result.rows[0] || {};
       return {
         circleAiEnabled: row.circle_ai_enabled === true,
+        updatedByUserId: row.updated_by_user_id || "",
+        updatedAt: row.updated_at || null,
+      };
+    });
+    return { isSuperAdmin: true, platformSettings };
+  }
+
+  async adminUpdatePlatformWebSearch(body) {
+    const auth = await this.requireSuperAdmin(body);
+    if (typeof body.webSearchEnabled !== "boolean") {
+      throw new AppError("联网搜索开关参数无效", { statusCode: 400, errCode: "PLATFORM_WEB_SEARCH_SETTING_INVALID" });
+    }
+    if (body.webSearchEnabled && !(this.config.searxngEnabled && this.config.searxngBaseUrl)) {
+      throw new AppError("搜索服务尚未配置", { statusCode: 409, errCode: "WEB_SEARCH_NOT_CONFIGURED" });
+    }
+    if (body.webSearchEnabled) {
+      try { await validateProviderBaseUrl(this.config.searxngBaseUrl); }
+      catch (error) {
+        throw new AppError("搜索服务地址不可用或不安全", { statusCode: 409, errCode: "WEB_SEARCH_CONFIGURATION_INVALID" });
+      }
+    }
+    const webSearchEnabled = body.webSearchEnabled;
+    const platformSettings = await this.db.withTransaction(async () => {
+      const result = await this.db.query(
+        `INSERT INTO incircle_platform_settings (singleton_id, web_search_enabled, updated_by_user_id)
+         VALUES (1, $1, $2)
+         ON CONFLICT (singleton_id) DO UPDATE SET
+           web_search_enabled = EXCLUDED.web_search_enabled,
+           updated_by_user_id = EXCLUDED.updated_by_user_id
+         RETURNING circle_ai_enabled, web_search_enabled, updated_by_user_id, updated_at`,
+        [webSearchEnabled, auth.user.id]
+      );
+      await this.logOperation(null, auth, webSearchEnabled ? "开放平台联网搜索" : "关闭平台联网搜索",
+        "platform_settings", "web_search", { webSearchEnabled });
+      const row = result.rows[0] || {};
+      return {
+        circleAiEnabled: row.circle_ai_enabled === true,
+        webSearchEnabled: row.web_search_enabled === true,
+        webSearchConfigured: !!(this.config.searxngEnabled && this.config.searxngBaseUrl),
+        webSearchEnabled: row.web_search_enabled === true,
+        webSearchConfigured: !!(this.config.searxngEnabled && this.config.searxngBaseUrl),
         updatedByUserId: row.updated_by_user_id || "",
         updatedAt: row.updated_at || null,
       };

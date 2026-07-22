@@ -41,12 +41,19 @@
         bindchange="onReasoningModeChange"
       >
         <view class="reasoning-mode motion-state {{reasoningEnabled ? 'active' : ''}} {{sending ? 'disabled' : ''}} {{reasoningModeNames.length <= 1 ? 'single' : ''}}">
-          <view class="reasoning-mode-mark"><view></view></view>
+          <image class="reasoning-mode-mark" src="/images/ui-icons/lightbulb.svg" mode="aspectFit"></image>
           <text class="reasoning-mode-label">思考模式</text>
           <view class="reasoning-mode-value">
             <text>{{reasoningModeNames[reasoningModeIndex]}}</text>
             <view class="reasoning-mode-chevron" wx:if="{{reasoningModeNames.length > 1}}"></view>
           </view>
+        </view>
+      </picker>
+      <picker wx:if="{{status.webSearchEnabled}}" class="reasoning-mode-picker" mode="selector" range="{{searchModeNames}}" value="{{searchModeIndex}}" disabled="{{sending}}" bindchange="onSearchModeChange">
+        <view class="reasoning-mode search-mode motion-state {{searchMode !== 'off' ? 'active' : ''}} {{sending ? 'disabled' : ''}}">
+          <image class="search-mode-mark" src="/images/ui-icons/search.svg" mode="aspectFit"></image>
+          <text class="reasoning-mode-label">联网搜索</text>
+          <view class="reasoning-mode-value"><text>{{searchModeNames[searchModeIndex]}}</text><view class="reasoning-mode-chevron"></view></view>
         </view>
       </picker>
     </view>
@@ -86,7 +93,7 @@
 
         <view class="reasoning-panel {{item.reasoningExpanded ? 'expanded' : 'collapsed'}}" wx:if="{{item.isAssistant && item.hasReasoningContent}}">
           <view class="reasoning-toggle" data-index="{{index}}" bindtap="toggleReasoning">
-            <view class="reasoning-mark"><view class="reasoning-mark-core"></view></view>
+            <image class="reasoning-mark" src="/images/ui-icons/lightbulb.svg" mode="aspectFit"></image>
             <text class="reasoning-title">{{item.reasoningStreaming ? "正在思考" : "思考过程"}}</text>
             <view class="reasoning-live" wx:if="{{item.reasoningStreaming}}"><view></view><view></view><view></view></view>
             <text class="reasoning-duration" wx:if="{{item.reasoningDurationText}}">{{item.reasoningDurationText}}</text>
@@ -97,7 +104,28 @@
           </view>
         </view>
 
-        <view class="thinking-bubble" wx:if="{{item.status === 'generating' && !item.content && (item.reasoningEnabled === false || !item.hasReasoningContent)}}">
+        <view class="search-panel" wx:if="{{item.isAssistant && item.hasSearch}}">
+          <view class="search-panel-head" data-index="{{index}}" bindtap="toggleSearchCard">
+            <image class="search-status-icon {{item.search.status === 'searching' || item.search.phase === 'answering' ? 'active' : ''}}" src="/images/ui-icons/search.svg" mode="aspectFit"></image>
+            <text class="search-panel-title">{{item.searchStatusText}}</text>
+            <view class="reasoning-mode-chevron"></view>
+          </view>
+          <view class="search-panel-body" wx:if="{{item.searchExpanded && (item.search.queries.length || item.search.results.length)}}">
+            <view class="search-query-line" wx:if="{{item.search.queries.length}}">
+              <text class="search-query-label">搜索</text>
+              <text class="search-query-text">{{item.searchQueryText}}</text>
+            </view>
+            <view class="search-source" wx:for="{{item.search.results}}" wx:key="id" wx:for-item="source" wx:for-index="sourceIndex" data-url="{{source.url}}" bindtap="copySearchSource">
+              <text class="search-source-number">{{sourceIndex + 1}}</text>
+              <view class="search-source-main">
+                <text class="search-source-title">{{source.title}}</text>
+                <text class="search-source-domain">{{source.source}}{{source.publishedAt ? ' · ' + source.publishedAt : ''}}</text>
+              </view>
+            </view>
+          </view>
+        </view>
+
+        <view class="thinking-bubble" wx:if="{{item.status === 'generating' && !item.content && !item.hasSearch && (item.reasoningEnabled === false || !item.hasReasoningContent)}}">
           <view class="typing-dots"><view></view><view></view><view></view></view>
           <text>{{item.reasoningMode === "on" ? "正在思考" : "正在生成"}}</text>
         </view>

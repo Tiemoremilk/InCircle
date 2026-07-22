@@ -9,6 +9,9 @@ const LAST_CONVERSATION_STORAGE_PREFIX = "incircleAiLastConversation:";
 const REASONING_MODE_STORAGE_PREFIX = "incircleAiReasoningMode:";
 const REASONING_MODE_VALUES = Object.freeze(["auto", "on", "off"]);
 const REASONING_MODE_LABELS = Object.freeze({ auto: "自动", on: "思考开", off: "思考关" });
+const SEARCH_MODE_STORAGE_PREFIX = "incircleAiSearchMode:";
+const SEARCH_MODE_VALUES = Object.freeze(["auto", "on", "off"]);
+const SEARCH_MODE_LABELS = Object.freeze(["自动", "搜索开", "搜索关"]);
 
 function uniqueRequestId() {
   requestSequence = (requestSequence + 1) % 1679616;
@@ -85,7 +88,23 @@ function decorateMessage(message) {
     ? Math.max(storedReasoningDurationMs, Date.now() - reasoningStartedAtMs)
     : storedReasoningDurationMs;
   const isFailed = source.status === "failed" || source.status === "cancelled" || source.status === "blocked";
+  const search = source.search && typeof source.search === "object" ? source.search : {};
+  const searchResultCount = Array.isArray(search.results) ? search.results.length : 0;
+  let searchStatusText = "";
+  if (search.status === "unavailable") searchStatusText = "联网搜索暂时不可用";
+  else if (search.status === "insufficient") searchStatusText = "搜索资料不足";
+  else if (search.phase === "planning") searchStatusText = search.mode === "on" ? "正在联网搜索中" : "正在分析是否需要联网";
+  else if (search.phase === "supplementing") searchStatusText = `正在补充搜索 · 已找到 ${searchResultCount} 条`;
+  else if (search.phase === "answering" && !hasBody) searchStatusText = `正在整理回答 · 已找到 ${searchResultCount} 条`;
+  else if (search.status === "searching") searchStatusText = `正在搜索 · 已找到 ${searchResultCount} 条`;
+  else if (searchResultCount) searchStatusText = `参考 ${searchResultCount} 篇资料`;
   return Object.assign({}, source, {
+    search,
+    hasSearch: !!(search.searched || search.status === "searching"),
+    searchExpanded: typeof source.searchExpanded === "boolean" ? source.searchExpanded : search.status === "searching",
+    searchExpandedManual: !!source.searchExpandedManual,
+    searchStatusText,
+    searchQueryText: Array.isArray(search.queries) ? search.queries.join(" · ") : "",
     reasoningContent,
     hasReasoningContent,
     reasoningExpanded,
@@ -178,6 +197,34 @@ function saveReasoningMode(circleId, mode) {
   }
 }
 
+function mergeSearchSnapshot(currentSearch, incomingSearch) {
+  const current = currentSearch && typeof currentSearch === "object" ? currentSearch : {};
+  const incoming = incomingSearch && typeof incomingSearch === "object" ? incomingSearch : {};
+  const results = [];
+  (Array.isArray(current.results) ? current.results : []).concat(Array.isArray(incoming.results) ? incoming.results : [])
+    .forEach((item) => {
+      if (!item || results.some((value) => value.id === item.id || (item.url && value.url === item.url))) return;
+      results.push(item);
+    });
+  const queries = [];
+  (Array.isArray(current.queries) ? current.queries : []).concat(Array.isArray(incoming.queries) ? incoming.queries : [])
+    .forEach((query) => { if (query && queries.indexOf(query) === -1) queries.push(query); });
+  return Object.assign({}, current, incoming, { results, queries });
+}
+
+function readSearchMode(circleId) {
+  try {
+    const value = String(wx.getStorageSync(scopedStorageKey(SEARCH_MODE_STORAGE_PREFIX, circleId)) || "");
+    return SEARCH_MODE_VALUES.includes(value) ? value : "auto";
+  } catch (error) { return "auto"; }
+}
+
+function saveSearchMode(circleId, mode) {
+  if (!circleId) return;
+  try { wx.setStorageSync(scopedStorageKey(SEARCH_MODE_STORAGE_PREFIX, circleId), SEARCH_MODE_VALUES.includes(mode) ? mode : "auto"); }
+  catch (error) { /* auto remains the default */ }
+}
+
 function reasoningModeSupported(control, mode) {
   if (mode === "auto") return true;
   if (control === "toggle") return true;
@@ -239,6 +286,9 @@ Page({
     reasoningModeIndex: 0,
     reasoningModeValues: ["auto"],
     reasoningModeNames: ["自动"],
+    searchMode: "auto",
+    searchModeIndex: 0,
+    searchModeNames: SEARCH_MODE_LABELS,
     historyOpen: false,
     historySearch: "",
     historyLoading: false,
@@ -260,6 +310,8 @@ Page({
     this.chatRequest = null;
     this.sendLock = false;
     this.searchTimer = null;
+    this.webSearchProgressTimer = null;
+    this.webSearchProgressRequest = null;
     this.historyRequestSeq = 0;
     this.conversationPollTimer = null;
     this.conversationPollId = "";
@@ -270,12 +322,16 @@ Page({
     this.typingBottomToggle = false;
     const circleId = (options && options.circleId) || "";
     this.reasoningPreference = readReasoningMode(circleId);
-    this.setData(Object.assign({ circleId }, reasoningUiState(null, this.reasoningPreference)));
+    this.searchPreference = readSearchMode(circleId);
+    this.setData(Object.assign({ circleId, searchMode: this.searchPreference, searchModeIndex: Math.max(0, SEARCH_MODE_VALUES.indexOf(this.searchPreference)) }, reasoningUiState(null, this.reasoningPreference)));
     this.loadInitial((options && options.conversationId) || "");
   },
 
   onShow() {
     this.syncReasoningClock();
+    if (this.data.circleId && !this.data.loading) {
+      api.getAiStatus(this.data.circleId, { force: true }).then((status) => this.setData({ status })).catch(() => {});
+    }
   },
 
   onHide() {
@@ -285,6 +341,7 @@ Page({
   onUnload() {
     if (this.chatRequest) this.chatRequest.abort();
     if (this.searchTimer) clearTimeout(this.searchTimer);
+    this.clearWebSearchProgressPolling();
     this.clearConversationPoll();
     this.clearReasoningClock();
     this.disposeLiveStream();
@@ -743,6 +800,120 @@ Page({
     saveReasoningMode(this.data.circleId, requestedMode);
   },
 
+  clearWebSearchProgressPolling() {
+    if (this.webSearchProgressTimer) clearTimeout(this.webSearchProgressTimer);
+    this.webSearchProgressTimer = null;
+    this.webSearchProgressRequest = null;
+  },
+
+  applyWebSearchProgress(assistantIndex, incomingSearch, messageStatus) {
+    const current = this.data.messages[assistantIndex];
+    if (!current || !incomingSearch || typeof incomingSearch !== "object") return Promise.resolve();
+    const currentVersion = Number(current.search && current.search.progressVersion || 0);
+    const incomingVersion = Number(incomingSearch.progressVersion || 0);
+    const incomingResults = Array.isArray(incomingSearch.results) ? incomingSearch.results : [];
+    const currentResults = current.search && Array.isArray(current.search.results) ? current.search.results : [];
+    if (incomingVersion < currentVersion && incomingResults.length <= currentResults.length) return Promise.resolve();
+    const search = mergeSearchSnapshot(current.search, incomingSearch);
+    const terminalMessage = ["complete", "failed", "cancelled", "blocked"].indexOf(String(messageStatus || "")) !== -1;
+    if (terminalMessage && search.searched && search.results.length) search.phase = "complete";
+    const next = decorateMessage(Object.assign({}, current, {
+      search,
+      searchExpanded: current.searchExpandedManual
+        ? !!current.searchExpanded
+        : !terminalMessage && !!(search.status === "searching" || search.phase === "answering"),
+    }));
+    return this.commitStreamData({ [`messages[${assistantIndex}]`]: next, scrollIntoView: next.anchorId });
+  },
+
+  async replayWebSearchProgress(active, progress) {
+    const search = progress && progress.search;
+    if (!search || this.webSearchProgressRequest !== active) return;
+    const message = this.data.messages[active.assistantIndex];
+    const currentVersion = Number(message && message.search && message.search.progressVersion || 0);
+    const events = (Array.isArray(search.progressEvents) ? search.progressEvents : [])
+      .filter((event) => Number(event && event.seq || 0) > currentVersion)
+      .sort((left, right) => Number(left.seq || 0) - Number(right.seq || 0));
+    if (!events.length) {
+      await this.applyWebSearchProgress(active.assistantIndex, search, progress.messageStatus);
+      return;
+    }
+    for (const event of events) {
+      if (this.webSearchProgressRequest !== active) return;
+      const type = String(event.type || "");
+      const eventSearch = Object.assign({}, search, { progressVersion: Number(event.seq || 0) });
+      if (type === "planning") {
+        Object.assign(eventSearch, { status: "searching", phase: "planning", searched: false, queries: [], results: [] });
+      } else if (type === "searching" || type === "supplementing") {
+        Object.assign(eventSearch, {
+          status: "searching", phase: type, searched: true, results: [],
+          queries: Array.isArray(event.queries) ? event.queries : search.queries,
+        });
+      } else if (type === "result") {
+        Object.assign(eventSearch, {
+          status: "searching", phase: Number(event.round || 0) > 1 ? "supplementing" : "searching", searched: true,
+          results: (Array.isArray(search.results) ? search.results : []).slice(0, Math.max(0, Number(event.resultCount || 0))),
+        });
+      } else if (type === "complete" && event.searched === false) {
+        Object.assign(eventSearch, { status: "idle", phase: "idle", searched: false, results: [] });
+      } else {
+        eventSearch.phase = type || search.phase;
+      }
+      await this.applyWebSearchProgress(active.assistantIndex, eventSearch, progress.messageStatus);
+      await new Promise((resolve) => setTimeout(resolve, 70));
+    }
+  },
+
+  startWebSearchProgressPolling(requestId, assistantIndex) {
+    this.clearWebSearchProgressPolling();
+    if (!requestId || typeof api.getAiSearchProgress !== "function") return;
+    const active = { requestId, assistantIndex };
+    this.webSearchProgressRequest = active;
+    const poll = () => {
+      if (this.webSearchProgressRequest !== active) return;
+      api.getAiSearchProgress(this.data.circleId, requestId)
+        .then(async (progress) => {
+          if (this.webSearchProgressRequest !== active || !progress) return;
+          if (progress.search) await this.replayWebSearchProgress(active, progress);
+          const searchPhase = String(progress.search && progress.search.phase || "");
+          const searchFinished = ["idle", "answering", "insufficient", "unavailable", "complete"].indexOf(searchPhase) !== -1
+            && Number(progress.search && progress.search.progressVersion || 0) > 0;
+          if (searchFinished || ["complete", "failed", "cancelled", "blocked"].indexOf(String(progress.messageStatus || "")) !== -1) {
+            this.clearWebSearchProgressPolling();
+          }
+        })
+        .catch(() => {})
+        .finally(() => {
+          if (this.webSearchProgressRequest !== active) return;
+          this.webSearchProgressTimer = setTimeout(poll, 500);
+        });
+    };
+    poll();
+  },
+
+  onSearchModeChange(e) {
+    if (this.data.sending || !(this.data.status && this.data.status.webSearchEnabled)) return;
+    const index = Number(e.detail.value || 0);
+    const mode = SEARCH_MODE_VALUES[index] || "auto";
+    this.searchPreference = mode;
+    this.setData({ searchMode: mode, searchModeIndex: index });
+    saveSearchMode(this.data.circleId, mode);
+  },
+
+  toggleSearchCard(e) {
+    const index = Number(e.currentTarget.dataset.index);
+    const message = this.data.messages[index];
+    if (message) this.setData({
+      [`messages[${index}].searchExpanded`]: !message.searchExpanded,
+      [`messages[${index}].searchExpandedManual`]: true,
+    });
+  },
+
+  copySearchSource(e) {
+    const url = String(e.currentTarget.dataset.url || "");
+    if (url) wx.setClipboardData({ data: url });
+  },
+
   usePrompt(e) {
     const content = String(e.currentTarget.dataset.text || "").trim();
     if (!content || this.sendLock || this.data.sending) return;
@@ -824,6 +995,8 @@ Page({
     const model = this.selectedModel();
     if (!model || this.sendLock || this.data.sending) return;
     const reasoningMode = this.data.reasoningMode || "auto";
+    const searchMode = this.data.status && this.data.status.webSearchEnabled ? (this.data.searchMode || "auto") : "off";
+    const searchPending = searchMode !== "off";
     const reasoningEnabled = this.data.reasoningEnabled !== false;
     let activeReasoningEnabled = reasoningEnabled;
     this.sendLock = true;
@@ -844,6 +1017,16 @@ Page({
       providerName: model.providerName,
       reasoningEnabled,
       reasoningMode,
+      search: {
+        mode: searchMode,
+        status: searchPending ? "searching" : "idle",
+        phase: searchPending ? "planning" : "idle",
+        searched: false,
+        results: [],
+        queries: [],
+        progressVersion: 0,
+      },
+      searchExpanded: searchPending,
       reasoningStartedAtMs: generationStartedAt,
       reasoningTimingActive: false,
     });
@@ -857,6 +1040,7 @@ Page({
       scrollIntoView: assistantMessage.anchorId,
     });
     this.beginLiveStream(assistantIndex, assistantMessage);
+    if (searchPending) this.startWebSearchProgressPolling(requestId, assistantIndex);
     let generationStarted = false;
 
     const handlers = {
@@ -893,6 +1077,36 @@ Page({
         }
         await this.appendReasoningDelta(delta);
       },
+      onEvent: (event) => {
+        if (!event || !/^search_/.test(event.type || "")) return;
+        const current = this.data.messages[assistantIndex] || assistantMessage;
+        let search = Object.assign({}, current.search || {}, { searched: true });
+        if (event.type === "search_start") {
+          search = Object.assign(search, {
+            status: "searching", phase: event.phase || "searching", rounds: Number(event.round || search.rounds || 0),
+            queries: (search.queries || []).concat(event.queries || []).filter((value, index, list) => list.indexOf(value) === index),
+            progressVersion: Math.max(Number(search.progressVersion || 0), Number(event.progressVersion || 0)),
+          });
+        } else if (event.type === "search_result") {
+          const results = (search.results || []).slice();
+          const incoming = event.result;
+          if (incoming && !results.some((item) => item.id === incoming.id || item.url === incoming.url)) results.push(incoming);
+          search = Object.assign(search, {
+            status: "searching", results,
+            progressVersion: Math.max(Number(search.progressVersion || 0), Number(event.progressVersion || 0)),
+          });
+        } else if (event.type === "search_results") {
+          search = Object.assign(search, { status: "searching", results: event.results || search.results || [] });
+        } else if (event.type === "search_done") search = event.search || search;
+        const searchExpanded = current.searchExpandedManual
+          ? !!current.searchExpanded
+          : true;
+        const next = decorateMessage(Object.assign({}, current, {
+          search,
+          searchExpanded,
+        }));
+        return this.commitStreamData({ [`messages[${assistantIndex}]`]: next, scrollIntoView: next.anchorId });
+      },
       onReplaceContent: (fullContent, recoveredMessage) => {
         this.disposeLiveStream();
         const current = this.data.messages[assistantIndex] || assistantMessage;
@@ -911,6 +1125,7 @@ Page({
         );
       },
       onDone: async (event) => {
+        this.clearWebSearchProgressPolling();
         await this.freezeReasoningDuration(assistantIndex, event && event.reasoningDurationMs);
         const snapshot = this.finishLiveStream();
         const current = this.data.messages[assistantIndex] || assistantMessage;
@@ -918,7 +1133,9 @@ Page({
           (snapshot && snapshot.reasoningContent) || current.reasoningContent
         );
         const answerContent = String((snapshot && snapshot.content) || current.content || "");
-        await this.commitStreamData({
+        const searchResults = current.search && Array.isArray(current.search.results) ? current.search.results : [];
+        const searchCompleted = !!(current.search && current.search.searched);
+        const completionUpdates = {
           [`messages[${assistantIndex}].status`]: "complete",
           [`messages[${assistantIndex}].content`]: answerContent,
           [`messages[${assistantIndex}].contentHtml`]: markdown.renderMarkdown(answerContent),
@@ -928,7 +1145,17 @@ Page({
           [`messages[${assistantIndex}].reasoningExpanded`]: reasoningContent ? !!current.reasoningExpanded : false,
           [`messages[${assistantIndex}].reasoningStreaming`]: false,
           [`messages[${assistantIndex}].reasoningTimingActive`]: false,
-        }, () => {
+        };
+        if (searchCompleted) {
+          completionUpdates[`messages[${assistantIndex}].search.phase`] = "complete";
+          completionUpdates[`messages[${assistantIndex}].searchExpanded`] = current.searchExpandedManual
+            ? !!current.searchExpanded
+            : false;
+          completionUpdates[`messages[${assistantIndex}].searchStatusText`] = searchResults.length
+            ? `参考 ${searchResults.length} 篇资料`
+            : current.searchStatusText;
+        }
+        await this.commitStreamData(completionUpdates, () => {
           this.loadConversations();
           api.getAiStatus(this.data.circleId, { force: true }).then((status) => this.setData({ status })).catch(() => {});
         });
@@ -944,6 +1171,7 @@ Page({
           content,
           requestId: activeRequestId,
           reasoningMode,
+          searchMode,
         },
         handlers
       );
@@ -975,6 +1203,7 @@ Page({
               [`messages[${assistantIndex}]`]: next,
               scrollIntoView: next.anchorId,
             });
+            if (searchPending) this.startWebSearchProgressPolling(nextRequestId, assistantIndex);
             return runAttempt(nextRequestId, false);
           }
           throw error;
@@ -983,6 +1212,7 @@ Page({
 
     runAttempt(requestId, true)
       .catch((error) => {
+        this.clearWebSearchProgressPolling();
         const cancelled = error && error.errCode === "AI_CANCELLED";
         this.freezeReasoningDuration(
           assistantIndex,
@@ -1019,6 +1249,7 @@ Page({
         this.setData({ [`messages[${assistantIndex}]`]: next });
       })
       .finally(() => {
+        this.clearWebSearchProgressPolling();
         this.chatRequest = null;
         this.sendLock = false;
         this.setData({ sending: false, stopping: false });
@@ -1044,7 +1275,12 @@ Page({
 
   copyMessage(e) {
     const message = this.data.messages.find((item) => item.id === e.currentTarget.dataset.id);
-    if (message) wx.setClipboardData({ data: message.content || "" });
+    if (!message) return;
+    const results = message.search && Array.isArray(message.search.results) ? message.search.results : [];
+    const sources = results.length
+      ? `\n\n来源：\n${results.map((source, index) => `[${index + 1}] ${source.title}：${source.url}`).join("\n")}`
+      : "";
+    wx.setClipboardData({ data: `${message.content || ""}${sources}` });
   },
 
   toggleReasoning(e) {

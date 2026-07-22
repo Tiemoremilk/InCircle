@@ -170,6 +170,192 @@ test("AI chat renders each received reasoning and answer delta immediately", () 
   assert.doesNotMatch(source, /typewriter/i);
 });
 
+test("AI chat shows search sources live and collapses them only after the answer completes", async () => {
+  let handlers;
+  const page = createPage({
+    streamAiChat(payload, callbacks) {
+      handlers = callbacks;
+      return { promise: new Promise(() => {}), abort() {}, stop() { return Promise.resolve(); } };
+    },
+    getAiStatus() { return Promise.resolve(page.data.status); },
+  }, {});
+  page.data.status.webSearchEnabled = true;
+  page.loadConversations = () => {};
+
+  page.startSend("今天有什么新闻");
+  let assistant = page.data.messages[1];
+  assert.equal(assistant.hasSearch, true);
+  assert.equal(assistant.searchExpanded, true);
+  assert.equal(assistant.searchStatusText, "正在分析是否需要联网");
+  await handlers.onStart({ conversationId: "conversation-search", messageId: "message-search" });
+  await handlers.onEvent({ type: "search_start", phase: "planning", round: 0, queries: [] });
+  assistant = page.data.messages[1];
+  assert.equal(assistant.hasSearch, true);
+  assert.equal(assistant.searchExpanded, true);
+  assert.equal(assistant.searchStatusText, "正在分析是否需要联网");
+
+  await handlers.onEvent({ type: "search_start", phase: "searching", round: 1, queries: ["今日新闻"] });
+  await handlers.onEvent({
+    type: "search_result",
+    result: { id: "result_1", title: "第一条", url: "https://example.com/1", source: "example.com" },
+  });
+  assistant = page.data.messages[1];
+  assert.equal(assistant.search.results.length, 1);
+  assert.equal(assistant.searchExpanded, true);
+  assert.equal(assistant.searchStatusText, "正在搜索 · 已找到 1 条");
+
+  await handlers.onEvent({
+    type: "search_done",
+    search: Object.assign({}, assistant.search, { searched: true, status: "complete", phase: "answering" }),
+  });
+  assert.equal(page.data.messages[1].searchExpanded, true);
+  assert.equal(page.data.messages[1].searchStatusText, "正在整理回答 · 已找到 1 条");
+
+  await handlers.onDelta("这是实时回答。", {});
+  assert.equal(page.data.messages[1].searchExpanded, true);
+  assert.equal(page.data.messages[1].searchStatusText, "正在整理回答 · 已找到 1 条");
+
+  await handlers.onDone({});
+  assistant = page.data.messages[1];
+  assert.equal(assistant.searchExpanded, false);
+  assert.equal(assistant.searchStatusText, "参考 1 篇资料");
+  page.disposeLiveStream();
+});
+
+test("AI chat preserves a manual search-card choice while more results arrive", async () => {
+  let handlers;
+  const page = createPage({
+    streamAiChat(payload, callbacks) {
+      handlers = callbacks;
+      return { promise: new Promise(() => {}), abort() {}, stop() { return Promise.resolve(); } };
+    },
+  }, {});
+  page.data.status.webSearchEnabled = true;
+  page.startSend("联网查询");
+  await handlers.onStart({ conversationId: "conversation-manual", messageId: "message-manual" });
+  await handlers.onEvent({ type: "search_start", phase: "searching", round: 1, queries: ["查询"] });
+  page.toggleSearchCard({ currentTarget: { dataset: { index: 1 } } });
+  assert.equal(page.data.messages[1].searchExpanded, false);
+  assert.equal(page.data.messages[1].searchExpandedManual, true);
+
+  await handlers.onEvent({
+    type: "search_result",
+    result: { id: "result_1", title: "结果", url: "https://example.com/1", source: "example.com" },
+  });
+  assert.equal(page.data.messages[1].searchExpanded, false);
+  page.disposeLiveStream();
+});
+
+test("AI chat polling reveals search progress when SSE search events are delayed", async () => {
+  const snapshots = [
+    { messageStatus: "generating", search: { status: "searching", phase: "planning", progressVersion: 1, searched: false, queries: [], results: [] } },
+    { messageStatus: "generating", search: { status: "searching", phase: "searching", progressVersion: 2, searched: true, queries: ["上海今日天气"], results: [] } },
+    {
+      messageStatus: "generating",
+      search: {
+        status: "searching", phase: "searching", progressVersion: 3, searched: true, queries: ["上海今日天气"],
+        results: [{ id: "result_1", title: "上海天气", url: "https://weather.example/today", source: "weather.example" }],
+      },
+    },
+    {
+      messageStatus: "generating",
+      search: {
+        status: "complete", phase: "answering", progressVersion: 4, searched: true, queries: ["上海今日天气"],
+        results: [{ id: "result_1", title: "上海天气", url: "https://weather.example/today", source: "weather.example" }],
+      },
+    },
+  ];
+  let pollIndex = 0;
+  const page = createPage({
+    streamAiChat() { return { promise: new Promise(() => {}), abort() {}, stop() { return Promise.resolve(); } }; },
+    getAiSearchProgress() {
+      const value = snapshots[Math.min(pollIndex, snapshots.length - 1)];
+      pollIndex += 1;
+      return Promise.resolve(value);
+    },
+  }, {});
+  page.data.status.webSearchEnabled = true;
+  page.startSend("今天上海天气");
+  await waitForUi();
+  assert.equal(page.data.messages[1].searchStatusText, "正在分析是否需要联网");
+  await new Promise((resolve) => setTimeout(resolve, 540));
+  assert.equal(page.data.messages[1].searchStatusText, "正在搜索 · 已找到 0 条");
+  await new Promise((resolve) => setTimeout(resolve, 540));
+  assert.equal(page.data.messages[1].search.results.length, 1);
+  assert.equal(page.data.messages[1].searchStatusText, "正在搜索 · 已找到 1 条");
+  await new Promise((resolve) => setTimeout(resolve, 540));
+  assert.equal(page.data.messages[1].searchStatusText, "正在整理回答 · 已找到 1 条");
+  page.clearWebSearchProgressPolling();
+  page.disposeLiveStream();
+});
+
+test("AI chat forced search uses the direct searching copy while auto mode keeps analysis copy", () => {
+  const page = createPage({}, {});
+  page.data.status.webSearchEnabled = true;
+  page.data.searchMode = "on";
+  page.data.messages = [];
+  const forced = {
+    id: "forced-search",
+    role: "assistant",
+    status: "generating",
+    content: "",
+    search: { mode: "on", status: "searching", phase: "planning", searched: false, queries: [], results: [] },
+  };
+  const automatic = Object.assign({}, forced, {
+    id: "auto-search",
+    search: Object.assign({}, forced.search, { mode: "auto" }),
+  });
+  page.data.messages = [forced, automatic];
+  page.applyWebSearchProgress(0, forced.search, "generating");
+  page.applyWebSearchProgress(1, automatic.search, "generating");
+  assert.equal(page.data.messages[0].searchStatusText, "正在联网搜索中");
+  assert.equal(page.data.messages[1].searchStatusText, "正在分析是否需要联网");
+});
+
+test("AI chat replays persisted search stages instead of jumping to the final snapshot", async () => {
+  const page = createPage({}, {});
+  page.data.messages = [{
+    id: "assistant-progress",
+    role: "assistant",
+    status: "generating",
+    content: "",
+    search: { status: "searching", phase: "planning", progressVersion: 0, searched: false, queries: [], results: [] },
+    searchExpanded: true,
+  }];
+  const active = { requestId: "request-progress", assistantIndex: 0 };
+  page.webSearchProgressRequest = active;
+  const seen = [];
+  const originalApply = page.applyWebSearchProgress.bind(page);
+  page.applyWebSearchProgress = async (...args) => {
+    await originalApply(...args);
+    seen.push(page.data.messages[0].searchStatusText);
+  };
+  await page.replayWebSearchProgress(active, {
+    messageStatus: "generating",
+    search: {
+      status: "complete",
+      phase: "answering",
+      searched: true,
+      progressVersion: 4,
+      queries: ["今日新闻"],
+      results: [{ id: "result_1", title: "新闻", url: "https://news.example/1", source: "news.example" }],
+      progressEvents: [
+        { seq: 1, type: "planning" },
+        { seq: 2, type: "searching", round: 1, queries: ["今日新闻"] },
+        { seq: 3, type: "result", round: 1, resultCount: 1, resultId: "result_1" },
+        { seq: 4, type: "answering", resultCount: 1 },
+      ],
+    },
+  });
+  assert.deepEqual(seen, [
+    "正在分析是否需要联网",
+    "正在搜索 · 已找到 0 条",
+    "正在搜索 · 已找到 1 条",
+    "正在整理回答 · 已找到 1 条",
+  ]);
+  page.clearWebSearchProgressPolling();
+});
+
 test("AI chat auto mode does not render an empty reasoning panel", () => {
   const page = createPage({}, {});
   page.data.messages = [{

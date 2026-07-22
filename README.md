@@ -497,6 +497,12 @@ node -e "console.log(require('crypto').randomBytes(48).toString('base64url'))"
 | <code>AI_CREDENTIALS_ENCRYPTION_KEY</code> | 必填 | 32 随机字节 |
 | <code>AI_PROVIDER_TIMEOUT_MS</code> | 可选 | 默认 300000，上游空闲超时 |
 | <code>AI_CONTENT_SECURITY_ENABLED</code> | 生产必须为 true | 关闭时生产服务拒绝启动 |
+| <code>SEARXNG_ENABLED</code> | 可选 | 默认 false；配置完成后开启服务端联网搜索能力 |
+| <code>SEARXNG_BASE_URL</code> | 可选 | 默认 <code>https://search.incircle.asia</code>，仅后端访问 |
+| <code>SEARXNG_TIMEOUT_MS</code> | 可选 | 默认 8000，单次搜索空闲超时 |
+| <code>SEARXNG_MAX_ROUNDS</code> | 可选 | 默认 2，单次回答最多搜索轮数 |
+| <code>SEARXNG_MAX_QUERIES_PER_ROUND</code> | 可选 | 默认 3 |
+| <code>SEARXNG_MAX_RESULTS_PER_QUERY</code> | 可选 | 默认 8 |
 
 `HOST=0.0.0.0` 不会让宿主机公网开放 3000 端口。安全边界由 Compose 的 `127.0.0.1:3000:3000` 映射保证；若改成容器内 `HOST=127.0.0.1`，Docker 端口转发和 Nginx 反向代理会无法连接 API。
 

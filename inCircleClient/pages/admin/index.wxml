@@ -36,33 +36,60 @@
 
     <view class="section platform-capability">
       <view class="section-title">平台能力</view>
-      <view class="platform-ai-panel card motion-section">
-        <view class="platform-ai-main">
-          <view class="platform-ai-icon">
+      <view class="capability-group card motion-section">
+        <view class="capability-item">
+          <view class="capability-icon">
             <image src="/images/ui-icons/sparkles.svg" mode="aspectFit"></image>
           </view>
-          <view class="platform-ai-copy">
-            <view class="platform-ai-title-row">
-              <view class="platform-ai-title">圈内 AI</view>
-              <view class="platform-ai-state {{platformSettings.circleAiEnabled ? 'is-on' : 'is-off'}}">
+          <view class="capability-copy">
+            <view class="capability-title-row">
+              <view class="capability-title">圈内 AI</view>
+              <view class="capability-state {{platformSettings.circleAiEnabled ? 'is-on' : 'is-off'}}">
                 {{platformSettings.circleAiEnabled ? "已开放" : "已关闭"}}
               </view>
             </view>
-            <view class="platform-ai-subtitle">
+            <view class="capability-subtitle">
               {{platformSettings.circleAiEnabled ? "各圈可按需接入第三方模型" : "所有圈子的入口与设置均已隐藏"}}
             </view>
           </view>
           <switch
-            class="platform-ai-switch"
+            class="capability-switch"
             checked="{{platformSettings.circleAiEnabled}}"
             disabled="{{platformAiBusy}}"
             color="{{themePrimary}}"
             bindchange="togglePlatformAi"
           />
         </view>
-        <view class="platform-ai-note">
-          <view class="platform-ai-note-dot"></view>
-          <text>{{platformAiBusy ? "正在同步平台状态" : (platformSettings.circleAiEnabled ? "每个圈子仍需单独开启并完成模型配置" : "关闭不会删除已有配置，重新开放后可继续使用")}}</text>
+
+        <view class="capability-divider"></view>
+
+        <view class="capability-item capability-dependent {{!platformSettings.circleAiEnabled || !platformSettings.webSearchConfigured ? 'is-disabled' : ''}}">
+          <view class="capability-icon">
+            <image src="/images/ui-icons/search.svg" mode="aspectFit"></image>
+          </view>
+          <view class="capability-copy">
+            <view class="capability-title-row">
+              <view class="capability-title">联网搜索</view>
+              <view class="capability-state {{!platformSettings.webSearchConfigured ? 'is-unconfigured' : (platformSettings.webSearchEnabled ? 'is-on' : 'is-off')}}">
+                {{!platformSettings.webSearchConfigured ? "未配置" : (platformSettings.webSearchEnabled ? "已开放" : "已关闭")}}
+              </view>
+            </view>
+            <view class="capability-subtitle">
+              {{!platformSettings.circleAiEnabled ? "需先开放圈内 AI" : (!platformSettings.webSearchConfigured ? "SearXNG 搜索服务尚未配置" : (platformSettings.webSearchEnabled ? "用户可在对话中按需搜索" : "对话页不会显示联网选项"))}}
+            </view>
+          </view>
+          <switch
+            class="capability-switch"
+            checked="{{platformSettings.webSearchEnabled}}"
+            disabled="{{platformSearchBusy || !platformSettings.circleAiEnabled || !platformSettings.webSearchConfigured}}"
+            color="{{themePrimary}}"
+            bindchange="togglePlatformSearch"
+          />
+        </view>
+
+        <view class="capability-note">
+          <view class="capability-note-mark"></view>
+          <text>{{platformAiBusy || platformSearchBusy ? "正在同步平台状态" : (!platformSettings.circleAiEnabled ? "重新开放圈内 AI 后，可继续使用已有配置" : (!platformSettings.webSearchConfigured ? "请先完成 SearXNG 服务配置" : (platformSettings.webSearchEnabled ? "联网搜索已开放，用户可在对话中按需使用" : "普通 AI 对话不受影响，对话页不显示联网选项")))}}</text>
         </view>
       </view>
     </view>

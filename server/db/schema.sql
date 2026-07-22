@@ -255,6 +255,7 @@ ON CONFLICT (singleton_id) DO NOTHING;
 CREATE TABLE IF NOT EXISTS incircle_platform_settings (
   singleton_id smallint PRIMARY KEY DEFAULT 1,
   circle_ai_enabled boolean NOT NULL DEFAULT true,
+  web_search_enabled boolean NOT NULL DEFAULT false,
   updated_by_user_id uuid REFERENCES incircle_users(id) ON DELETE SET NULL,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now(),
@@ -1051,6 +1052,7 @@ CREATE TABLE IF NOT EXISTS incircle_ai_messages (
   input_tokens integer NOT NULL DEFAULT 0,
   output_tokens integer NOT NULL DEFAULT 0,
   error_code text NOT NULL DEFAULT '',
+  search_metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
   generation_owner_id text NOT NULL DEFAULT '',
   generation_lease_expires_at timestamptz,
   created_at timestamptz NOT NULL DEFAULT now(),

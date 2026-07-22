@@ -133,6 +133,8 @@ async function dispatchInCircleType(fastify, body, request) {
       return service.adminOverview(body);
     case "incircleAdminUpdatePlatformAi":
       return service.adminUpdatePlatformAi(body);
+    case "incircleAdminUpdatePlatformWebSearch":
+      return service.adminUpdatePlatformWebSearch(body);
     case "incircleAdminListUsers":
       return service.adminListUsers(body);
     case "incircleAdminUserDetail":
@@ -277,6 +279,8 @@ async function dispatchInCircleType(fastify, body, request) {
       return ai().deleteConversation(body);
     case "incircleAiListMessages":
       return ai().listMessages(body);
+    case "incircleAiSearchProgress":
+      return ai().searchProgress(body);
     case "incircleAiCancelGeneration":
       return ai().cancelGeneration(body);
     case "incircleAiGrantConsent":

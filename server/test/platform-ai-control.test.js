@@ -110,10 +110,18 @@ test("platform switch hides circle AI settings and forces the five-tab FAB to re
   const circleScript = read("inCircleClient/pages/circle-settings/index.js");
   const fabScript = read("inCircleClient/components/ai-fab/index.js");
 
-  assert.match(adminTemplate, /class="platform-ai-panel card/);
+  assert.match(adminTemplate, /class="capability-group card/);
+  assert.equal((adminTemplate.match(/class="capability-item(?:\s[^"]*)?"/g) || []).length, 2);
+  assert.equal((adminTemplate.match(/>联网搜索</g) || []).length, 1);
+  assert.equal(adminTemplate.indexOf(">平台能力<") < adminTemplate.indexOf(">联网搜索<"), true);
+  assert.equal(adminTemplate.indexOf(">圈内 AI<") < adminTemplate.indexOf(">联网搜索<"), true);
   assert.match(adminTemplate, /checked="\{\{platformSettings\.circleAiEnabled\}\}"/);
+  assert.match(adminTemplate, /disabled="\{\{platformSearchBusy \|\| !platformSettings\.circleAiEnabled \|\| !platformSettings\.webSearchConfigured\}\}"/);
   assert.match(adminTemplate, /color="\{\{themePrimary\}\}"/);
-  assert.match(adminStyles, /\.platform-ai-icon image\s*\{[^}]*var\(--theme-icon-filter/s);
+  assert.match(adminStyles, /\.capability-icon image\s*\{[^}]*var\(--theme-icon-filter/s);
+  assert.match(adminStyles, /\.capability-divider\s*\{/);
+  assert.match(adminStyles, /\.capability-dependent\s*\{[^}]*padding-left:\s*21rpx/s);
+  assert.doesNotMatch(adminTemplate, /capability-relation/);
   assert.match(circleTemplate, /wx:if="\{\{platformAiEnabled && aiStatus && aiStatus\.canManage\}\}"/);
   assert.match(circleScript, /getCircleSettings\(this\.data\.circleId, \{ force: true \}\)/);
   assert.match(fabScript, /getAiStatus\(circleId, \{ force: true \}\)/);

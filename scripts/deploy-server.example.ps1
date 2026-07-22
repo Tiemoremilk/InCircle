@@ -357,6 +357,14 @@ JWT_TTL_SECONDS=86400
 AI_CREDENTIALS_ENCRYPTION_KEY=$(random_hex 32)
 AI_PROVIDER_TIMEOUT_MS=300000
 AI_CONTENT_SECURITY_ENABLED=true
+SEARXNG_ENABLED=true
+SEARXNG_BASE_URL=https://search.incircle.asia
+SEARXNG_TIMEOUT_MS=8000
+SEARXNG_MAX_ROUNDS=2
+SEARXNG_MAX_QUERIES_PER_ROUND=3
+SEARXNG_MAX_RESULTS_PER_QUERY=8
+SEARXNG_LANGUAGE=zh-CN
+SEARXNG_SAFESEARCH=1
 EOF
     chmod 600 .env
     return
@@ -399,6 +407,14 @@ EOF
     echo "Upgraded legacy AI provider idle timeout to 300000ms."
   fi
   ensure_line AI_CONTENT_SECURITY_ENABLED 'true'
+  set_line SEARXNG_ENABLED 'true'
+  set_line SEARXNG_BASE_URL 'https://search.incircle.asia'
+  ensure_line SEARXNG_TIMEOUT_MS '8000'
+  ensure_line SEARXNG_MAX_ROUNDS '2'
+  ensure_line SEARXNG_MAX_QUERIES_PER_ROUND '3'
+  ensure_line SEARXNG_MAX_RESULTS_PER_QUERY '8'
+  ensure_line SEARXNG_LANGUAGE 'zh-CN'
+  ensure_line SEARXNG_SAFESEARCH '1'
   fill_empty_line AI_CREDENTIALS_ENCRYPTION_KEY "$(random_hex 32)"
   fill_empty_line WECHAT_APP_ID "$WECHAT_APP_ID_VALUE"
   if [ -n "$WECHAT_APP_SECRET_VALUE" ]; then
@@ -458,6 +474,7 @@ backup_database
 
 echo "Extracting package $PACKAGE_PATH"
 tar -xzf "$PACKAGE_PATH" -C .
+
 ensure_env
 
 echo "Building API image"
@@ -469,7 +486,7 @@ compose stop api >/dev/null 2>&1 || true
 compose run --rm api npm run db:migrate
 
 echo "Starting API container"
-compose up -d api
+compose up -d --remove-orphans api
 
 map_key_value="$(env_value TENCENT_MAP_KEY)"
 map_key_value="$(printf '%s' "$map_key_value" | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')"
@@ -570,7 +587,8 @@ try {
     exit 0
   }
 
-  [System.IO.File]::WriteAllText($tempRemoteScript, $remoteDeployScriptContent, [System.Text.UTF8Encoding]::new($false))
+  $normalizedRemoteDeployScriptContent = $remoteDeployScriptContent.Replace("`r`n", "`n").Replace("`r", "`n")
+  [System.IO.File]::WriteAllText($tempRemoteScript, $normalizedRemoteDeployScriptContent, [System.Text.UTF8Encoding]::new($false))
 
   $quotedRemoteDir = Quote-RemoteValue $RemoteDir
   $quotedRemoteScript = Quote-RemoteValue $remoteScript

@@ -36,7 +36,17 @@ JWT_SECRET=your-long-random-secret
 AI_CREDENTIALS_ENCRYPTION_KEY=64-random-hex-characters
 AI_PROVIDER_TIMEOUT_MS=300000
 AI_CONTENT_SECURITY_ENABLED=true
+SEARXNG_ENABLED=false
+SEARXNG_BASE_URL=https://search.incircle.asia
+SEARXNG_TIMEOUT_MS=8000
+SEARXNG_MAX_ROUNDS=2
+SEARXNG_MAX_QUERIES_PER_ROUND=3
+SEARXNG_MAX_RESULTS_PER_QUERY=8
+SEARXNG_LANGUAGE=zh-CN
+SEARXNG_SAFESEARCH=1
 ```
+
+Set `SEARXNG_ENABLED=true` after the private SearXNG endpoint is reachable, run migrations, and then let a platform super administrator enable “联网搜索” in the management center. The Mini Program never calls SearXNG directly.
 
 `WECHAT_APP_SECRET` is required because the backend validates every login request with WeChat `jscode2session` and generates official WeChat Mini Program invite codes with `getwxacodeunlimit`.
 

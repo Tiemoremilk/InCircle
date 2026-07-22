@@ -65,6 +65,7 @@ const READ_TTL = {
   incircleAiListModels: 10000,
   incircleAiListConversations: 5000,
   incircleAiListMessages: 3000,
+  incircleAiSearchProgress: 0,
   incircleAiUsage: 10000,
   incircleAiReports: 10000,
 };
@@ -88,6 +89,7 @@ const WRITE_INVALIDATION = {
     "incircleAiUsage",
     "incircleAiReports",
   ],
+  incircleAdminUpdatePlatformWebSearch: ["incircleAdminOverview", "incircleAiStatus"],
   incircleAiUpdateSettings: ["incircleAiStatus", "incircleAiSettings"],
   incircleAiSaveProvider: ["incircleAiStatus", "incircleAiSettings", "incircleAiListProviders", "incircleAiListModels"],
   incircleAiArchiveProvider: ["incircleAiStatus", "incircleAiSettings", "incircleAiListProviders", "incircleAiListModels"],
@@ -702,6 +704,10 @@ function adminUpdatePlatformAi(circleAiEnabled) {
   return requestAction("incircleAdminUpdatePlatformAi", { circleAiEnabled: circleAiEnabled === true });
 }
 
+function adminUpdatePlatformWebSearch(webSearchEnabled) {
+  return requestAction("incircleAdminUpdatePlatformWebSearch", { webSearchEnabled: webSearchEnabled === true });
+}
+
 function adminListCircles(params) {
   return requestAction("incircleAdminListCircles", params || {});
 }
@@ -1014,6 +1020,10 @@ function listAiMessages(circleId, conversationId, params) {
   );
 }
 
+function getAiSearchProgress(circleId, requestId) {
+  return requestAction("incircleAiSearchProgress", { circleId, requestId });
+}
+
 function cancelAiGeneration(circleId, messageId) {
   return requestAction("incircleAiCancelGeneration", { circleId, messageId });
 }
@@ -1161,6 +1171,9 @@ function streamAiChat(payload, handlers) {
   };
   const syncRecoveredMessage = async (assistant, terminal) => {
     if (!assistant) return;
+    if (assistant.search && assistant.search.searched && typeof callbacks.onEvent === "function") {
+      await callbacks.onEvent({ type: "search_done", search: assistant.search, recovered: true });
+    }
     const fullContent = String(assistant.content || "");
     const fullReasoning = String(assistant.reasoningContent || "");
     const canAppendContent = fullContent.indexOf(receivedText) === 0;
@@ -1464,6 +1477,7 @@ module.exports = {
   getInviteQrCode,
   adminOverview,
   adminUpdatePlatformAi,
+  adminUpdatePlatformWebSearch,
   adminListCircles,
   adminUpdateCircleStatus,
   adminDeleteCircle,
@@ -1537,6 +1551,7 @@ module.exports = {
   createAiConversation,
   deleteAiConversation,
   listAiMessages,
+  getAiSearchProgress,
   cancelAiGeneration,
   grantAiConsent,
   reportAiMessage,

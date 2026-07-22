@@ -19,8 +19,9 @@ Page({
     metrics: [],
     circleSummary: { total: 0, frozen: 0 },
     userSummary: { total: 0, blocked: 0 },
-    platformSettings: { circleAiEnabled: true },
+    platformSettings: { circleAiEnabled: true, webSearchEnabled: false, webSearchConfigured: false },
     platformAiBusy: false,
+    platformSearchBusy: false,
     logsPreview: [],
     logTotal: 0,
     hasMoreLogs: false,
@@ -98,6 +99,42 @@ Page({
     }).finally(() => {
       this.setData({ platformAiBusy: false });
     });
+  },
+
+  togglePlatformSearch(e) {
+    const enabled = !!(e && e.detail && e.detail.value);
+    const settings = this.data.platformSettings || {};
+    const current = !!settings.webSearchEnabled;
+    this.setData({ "platformSettings.webSearchEnabled": current });
+    if (this.data.platformSearchBusy || enabled === current) return;
+    if (enabled && !settings.webSearchConfigured) {
+      wx.showToast({ title: "搜索服务尚未配置", icon: "none" });
+      return;
+    }
+    if (enabled) {
+      this.updatePlatformSearch(true);
+      return;
+    }
+    dialog.show({
+      title: "关闭联网搜索",
+      content: "关闭后，对话页将隐藏联网搜索选项，普通 AI 对话不受影响。",
+      cancelText: "保持开放",
+      confirmText: "确认关闭",
+      tone: "primary",
+      success: (res) => { if (res.confirm) this.updatePlatformSearch(false); },
+    });
+  },
+
+  updatePlatformSearch(webSearchEnabled) {
+    if (this.data.platformSearchBusy) return;
+    this.setData({ platformSearchBusy: true });
+    api.adminUpdatePlatformWebSearch(webSearchEnabled).then((data) => {
+      this.setData({ platformSettings: data.platformSettings || Object.assign({}, this.data.platformSettings, { webSearchEnabled }) });
+      wx.showToast({ title: webSearchEnabled ? "联网搜索已开放" : "联网搜索已关闭", icon: "success" });
+    }).catch((error) => {
+      wx.showToast({ title: (error && error.message) || "设置失败", icon: "none" });
+      this.loadAdmin();
+    }).finally(() => this.setData({ platformSearchBusy: false }));
   },
 
   openAdminLogs() {

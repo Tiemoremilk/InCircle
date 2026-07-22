@@ -72,13 +72,16 @@ async function resolvePublicAddresses(hostname) {
       errCode: "AI_PROVIDER_DNS_FAILED",
     });
   }
-  if (!records.length || records.some((record) => blockedIp(record.address))) {
+  const publicRecords = records.filter((record) => !blockedIp(record.address));
+  if (!publicRecords.length) {
     throw new AppError("供应商地址解析到了本机或内网，已拒绝连接", {
       statusCode: 400,
       errCode: "AI_PROVIDER_DNS_BLOCKED",
     });
   }
-  return records;
+  // Pin only public answers. Some public DNS providers return an unusable private
+  // IPv6 compatibility record alongside a valid public IPv4 address.
+  return publicRecords;
 }
 
 async function validateProviderBaseUrl(value) {

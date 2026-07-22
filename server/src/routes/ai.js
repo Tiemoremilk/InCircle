@@ -3,10 +3,14 @@ const { AiService, registerActiveGeneration } = require("../services/ai");
 
 const STREAM_HEARTBEAT_MS = 2000;
 const STREAM_TRANSPORT_VERSION = "sse-v2";
+const SEARCH_EVENT_MIN_BYTES = 4096;
 const STREAM_PRELUDE = `:${" ".repeat(4096)}\n\n`;
 
-function streamFrame(event) {
-  return `data: ${JSON.stringify(event)}\n\n`;
+function streamFrame(event, minBytes) {
+  const frame = `data: ${JSON.stringify(event)}\n\n`;
+  const targetBytes = Math.max(0, Number(minBytes || 0));
+  const missingBytes = targetBytes - Buffer.byteLength(frame, "utf8") - 3;
+  return missingBytes > 0 ? `${frame}:${" ".repeat(missingBytes)}\n\n` : frame;
 }
 
 function writeResponseChunk(response, content) {
@@ -101,7 +105,9 @@ async function aiRoutes(fastify, options) {
         await writeResponseChunk(reply.raw, STREAM_PRELUDE);
         startHeartbeat();
       }
-      await writeResponseChunk(reply.raw, streamFrame(Object.assign({}, event, { sentAt: Date.now() })));
+      const outgoing = Object.assign({}, event, { sentAt: Date.now() });
+      const minBytes = /^search_/.test(String(outgoing.type || "")) ? SEARCH_EVENT_MIN_BYTES : 0;
+      await writeResponseChunk(reply.raw, streamFrame(outgoing, minBytes));
     };
 
     try {
